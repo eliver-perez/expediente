@@ -1,0 +1,43 @@
+name: H2 and H3 checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  native-checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.15.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm --prefix web ci
+      - run: npm --prefix web run build
+      - run: python scripts/check_format.py
+      - run: go vet ./...
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-spa fonts-dejavu-core
+      - run: go test ./...
+      - run: go test -tags development ./...
+      - if: runner.os != 'Windows'
+        run: go test -race -tags development ./...
+      - run: go build -trimpath -o build/gestor-documental ./cmd/gestor-documental
+      - if: runner.os == 'Linux'
+        run: python3 scripts/check_design.py
+      - if: runner.os == 'Linux'
+        working-directory: web
+        run: npx playwright install --with-deps chrome
+      - if: runner.os == 'Linux'
+        run: npm --prefix web run test:e2e

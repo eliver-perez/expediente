@@ -1,0 +1,33 @@
+# Archivos operativos, documentos y secretos: nunca versionar.
+.DS_Store
+.env
+.env.*
+!.env.example
+/var/
+/data/
+/tmp/
+/backups/
+/dist/
+/build/
+/web/dist/
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.lic
+*.licreq
+*.key
+*.pem
+*.p12
+*.log
+__pycache__/
+coverage.out
+/.cache/
+/web/test-results/
+/web/playwright-report/
+/internal/httpapi/assets/*
+!/internal/httpapi/assets/.gitkeep
+# Los vectores públicos de desarrollo futuros usarán nombres .json/.txt
+# explícitos; nunca una excepción global para claves o licencias reales.
