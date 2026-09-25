@@ -151,3 +151,48 @@ summary { cursor: pointer; color: var(--accent); font-size: 12px; padding: 6px 0
 @media (max-width: 800px) { .document-preview-grid { grid-template-columns: 1fr; } .document-dialog { padding: 18px; } .document-dialog .section-heading { flex-wrap: wrap; } .document-preview-grid iframe { height: 420px; } }
 @media (max-width: 550px) { .document-row { flex-wrap: wrap; gap: 10px; } .document-row > button { margin-left: 51px; } .search-line { flex-direction: column; align-items: stretch; } .section-heading { flex-wrap: wrap; } .actions { flex-wrap: wrap; } .library-grid { grid-template-columns: 1fr; } }
 @media (max-width: 550px) { .document-summary { flex-basis: calc(100% - 56px); } }
+.tabs { flex-wrap: wrap; gap: 12px 20px; }
+.inset-form { padding: 22px; margin: 20px 0; background: #f5f8f3; border: 1px solid var(--line); border-radius: 8px; }
+.catalog-list { margin-bottom: 24px; }
+.catalog-list details { padding: 13px 0; border-bottom: 1px solid var(--line); }
+.requirement-editor, .metadata-row { display: flex; gap: 15px; align-items: end; flex-wrap: wrap; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.requirement-editor > label, .metadata-row > label { flex: 1 160px; }
+.classification-panel, .naming-preview { border-top: 1px solid var(--line); padding: 20px 0; margin-top: 20px; }
+.classification-panel summary, .naming-preview summary { margin-bottom: 18px; font-weight: 650; cursor: pointer; }
+.naming-result { padding: 14px; background: #edf5ef; border-radius: 6px; }
+.case-grid { display: grid; gap: 15px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.case-card { background: #f6f9f3; border: 1px solid var(--line); color: var(--ink); text-align: left; padding: 22px; }
+.case-card:hover { background: #eaf2e8; }
+.case-card strong, .case-card span { display: block; }
+.case-card span { margin-top: 16px; font-size: 12px; color: var(--accent); }
+.case-progress { padding: 24px 0; margin-top: 16px; border-top: 1px solid var(--line); }
+.case-progress strong { font-size: 30px; }
+progress { display: block; width: 100%; height: 10px; accent-color: var(--accent); margin: 12px 0; }
+.requirement-card { border: 1px solid var(--line); border-radius: 8px; padding: 20px; margin: 14px 0; }
+.upload-dropzone { display: grid; place-items: center; gap: 10px; text-align: center; padding: 32px; border: 2px dashed #9bb7aa; border-radius: 10px; background: #f4f8f0; }
+.upload-dropzone > strong { font-size: 20px; }
+.upload-dropzone label { max-width: 100%; }
+.upload-dropzone input { max-width: 100%; background: #fff; }
+.upload-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.upload-row > div { flex: 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.upload-list { margin: 18px 0; }
+.batch-link { display: block; }
+@media (max-width: 600px) { .upload-dropzone { padding: 20px 12px; } .case-card { padding: 18px; } .requirement-card .section-heading { flex-wrap: wrap; } .metadata-row > label { flex-basis: 100%; } }
+
+/* AIBID SVG assets are the originals supplied by the product owner. */
+:root { --navy: #0f172a; }
+.aibid-brand { display: block; object-fit: contain; height: auto; max-width: 100%; }
+.login-brand { width: 440px; margin: -10px auto 25px; }
+.sidebar-brand { width: 100%; margin: -8px 0 24px; }
+.topbar-brand { width: 360px; }
+@media (max-width: 1100px) { .topbar-brand { width: 280px; } }
+@media (max-width: 800px) { .sidebar-brand { width: 255px; margin: -10px 0 12px; } .topbar-brand { display: none; } .topbar > div { width: 100%; justify-content: space-between; } }
+
+.workflow-panel { border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
+.workflow-panel form { margin-top: 1rem; }
+.materialization-progress { padding: 1rem; background: var(--background); border-radius: .75rem; margin-block: 1rem; }
+.materialization-progress progress { display: block; width: 100%; margin-top: .75rem; }
+.review-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-block: 1rem; border-bottom: 1px solid var(--line); }
+.review-row small { display: block; margin-top: .3rem; }
+fieldset { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; min-width: 0; }
+@media (max-width: 600px) { .review-row { align-items: stretch; flex-direction: column; } }

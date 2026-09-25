@@ -71,3 +71,21 @@ de revisores autorizados); no imponer ejercicio ni tipo de recurso.
 
 En híbrida, las escrituras comprueban además ambas capacidades de modalidad
 (`linked_libraries` y `managed_libraries`); no se introduce una clave `hybrid`.
+
+## Roles implementados en H4
+
+Colaborador añade carga, clasificación, asociación y cancelación propia a lectura.
+Revisor añade consulta de temporales ajenos en su biblioteca; las decisiones de
+aprobación/rechazo se entregarán en H5. Gestor administra catálogos, plantillas,
+expedientes, requerimientos y reasignaciones, y puede cargar/clasificar; no tiene
+acceso implícito a temporales ajenos. Los perfiles pueden combinarse expresamente.
+Los controles de privacidad preceden a los totales y a la paginación de resultados.
+
+## Roles implementados en H5
+
+Colaborador y gestor añaden `documents.submit`; gestor añade `documents.finalize`.
+Revisor añade `documents.approve` y `documents.reject`. La consulta de la bandeja
+requiere `documents.review` y filtra asignación/cola compartida. Ningún rol estándar
+recibe `documents.approve_own`; concederlo explícitamente no elimina la auditoría
+ni la comprobación de aprobación. El revisor que autorizó puede reintentar su
+materialización; el gestor necesita `indexing.retry` y acceso al documento.

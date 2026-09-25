@@ -87,14 +87,11 @@ func run(ctx context.Context, timeout int, maximum int, program, directory strin
 	}
 	return stdout.Bytes(), nil
 }
-func (options Options) Extract(ctx context.Context, documentPath, languages string) ([]Page, error) {
-	if languages != "spa" && languages != "eng" && languages != "spa+eng" {
-		return nil, fmt.Errorf("unsupported OCR languages")
-	}
+func (options Options) ValidatePDF(ctx context.Context, documentPath string) (int, error) {
 	directory := filepath.Dir(documentPath)
 	info, err := run(ctx, options.PageTimeoutSeconds, 1<<20, options.PDFInfo, directory, documentPath)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	pageCount := 0
 	for _, line := range strings.Split(string(info), "\n") {
@@ -103,8 +100,19 @@ func (options Options) Extract(ctx context.Context, documentPath, languages stri
 		}
 	}
 	if pageCount < 1 || pageCount > options.MaximumPages {
-		return nil, domain.Failure("PAGE_LIMIT", "El número de páginas supera el límite configurado o es inválido.", 409)
+		return 0, domain.Failure("PAGE_LIMIT", "El número de páginas supera el límite configurado o es inválido.", 409)
 	}
+	return pageCount, nil
+}
+func (options Options) Extract(ctx context.Context, documentPath, languages string) ([]Page, error) {
+	if languages != "spa" && languages != "eng" && languages != "spa+eng" {
+		return nil, fmt.Errorf("unsupported OCR languages")
+	}
+	pageCount, err := options.ValidatePDF(ctx, documentPath)
+	if err != nil {
+		return nil, err
+	}
+	directory := filepath.Dir(documentPath)
 	pages := make([]Page, 0, pageCount)
 	totalBytes := 0
 	for number := 1; number <= pageCount; number++ {

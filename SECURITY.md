@@ -1,4 +1,4 @@
-# Seguridad y controles por hito
+# AIBID — Seguridad y controles por hito
 
 D-01 a D-05 fueron aprobadas por el propietario. H2 implementa identidad, cookies,
 CSRF, permisos globales, límites y auditoría descritos en [H2](docs/H2.md). Los
@@ -146,3 +146,37 @@ por otro usuario, aprobación cruzada, fallo entre copia/commit. H6: firmas, ent
 retroceso de revisión, reloj y read-only. H7: instalación, upgrade, restore y revisión
 de superficie expuesta en cada SO. Los casos concretos están en
 [hitos](docs/MILESTONES.md).
+
+## Controles entregados en H4
+
+Temporales en disco local privado (directorio 0700, archivos 0600 en Unix), fuera
+de raíces públicas/documentales. Recepción por streaming con dos plazas, hasta
+100 intentos por lote, tamaño máximo de `indexing.maximum_file_mb`, reserva de
+64 MiB además del máximo y deadline HTTP de cinco minutos. Validación de cabecera
+y estructura PDF mediante `pdfinfo` antes de crear el documento; publicación con
+hash, comprobación de sesión/permisos y licencia nuevamente en transacción.
+El multipart exige clave y un único archivo, y rechaza partes adicionales.
+
+Ficha, original, descarga, texto, historial, búsquedas, duplicados, trabajos y
+conteos de expedientes filtran temporales al autor/revisor autorizado. Ser gestor
+o administrador global no concede acceso implícito a cargas privadas ajenas.
+Revocar el rol de revisor tiene efecto en la siguiente petición. Los DTO no
+incluyen localizadores ni rutas temporales, tampoco con `storage.view_paths`.
+
+La recuperación al arrancar limpia exclusivamente nombres de transferencias
+`receiving` registrados y las marca fallidas. Cancelar conserva bytes y evidencia;
+no hay purga automática. Cambiar `upload_directory` requiere mantenimiento y
+trasladar íntegramente su contenido preservando permisos; no hay migración de
+almacenamiento por interfaz en H4. [Evidencia y límites](docs/H4.md).
+
+## Controles entregados en H5
+
+Separación autor/solicitante/revisor, asignación, revisión optimista y versión de
+contenido. Un permiso explícito de autoaprobación exige evento y se revalida antes
+del commit asíncrono, junto con usuario activo, capacidades y permiso de decisión.
+La publicación no reemplaza archivos existentes y verifica bytes/ubicación antes
+de aprobar. Los handles de directorio impiden seguir enlaces internos. El fencing
+rechaza trabajadores anteriores a un reinicio. La limpieza ocurre después del
+commit y vuelve a verificar el definitivo. Retención de rechazados/cancelados
+conserva la privacidad aun cuando ya no quedan bytes temporales.
+[Pruebas y límites de filesystem](docs/H5.md).

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, formatDate, message } from './api';
+import { WorkflowPanel } from './Workflow';
+import { ClassificationForm } from './ClassificationForm';
+import { approvalLabel } from './organizationTypes';
 import { Notice } from './components';
 import { availabilityLabel, type Document } from './libraryTypes';
 
@@ -8,13 +11,13 @@ export function DocumentList({ documents, open }: { documents: Document[]; open:
     <div className="pdf-symbol" aria-hidden="true">PDF</div><div className="document-summary">
       <button className="text-button document-title" onClick={() => open(document)}>{document.title || document.original_filename}</button>
       <small className="path-text">{document.relative_path}</small>
-      <div className="document-badges"><span className={`badge ${document.availability === 'available' ? 'positive' : ''}`}>{availabilityLabel[document.availability]}</span><span className="muted">{document.page_count} {document.page_count === 1 ? 'página' : 'páginas'}</span>{document.extraction_freshness === 'stale' && <span className="badge">Texto anterior conservado</span>}{document.extraction_freshness === 'none' && <span className="badge">Pendiente de extracción</span>}</div>
+      <div className="document-badges"><span className={`badge ${document.availability === 'available' ? 'positive' : ''}`}>{availabilityLabel[document.availability]}</span><span className="badge">{approvalLabel[document.approval_status]}</span><span className="muted">{document.page_count} {document.page_count === 1 ? 'página' : 'páginas'}</span>{document.extraction_freshness === 'stale' && <span className="badge">Texto anterior conservado</span>}{document.extraction_freshness === 'none' && <span className="badge">Pendiente de extracción</span>}</div>
       {document.matches.map(match => <button className="snippet" key={match.page_number} onClick={() => open(document, match.page_number)}><span className="page-number">Pág. {match.page_number}</span>{match.segments.map((segment, index) => segment.highlighted ? <mark key={index}>{segment.text}</mark> : <span key={index}>{segment.text}</span>)}</button>)}
     </div><button className="secondary compact" onClick={() => open(document)}>Ver ficha</button>
   </article>)}</div>;
 }
 
-export function DocumentViewer({ document: initial, initialPage = 1, canRemove, close, changed }: { document: Document; initialPage?: number; canRemove: boolean; close: () => void; changed: () => void }) {
+export function DocumentViewer({ document: initial, initialPage = 1, preferredCaseID, canRemove, close, changed }: { document: Document; initialPage?: number; preferredCaseID?: string; canRemove: boolean; close: () => void; changed: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [document, setDocument] = useState(initial);
   const [page, setPage] = useState(initialPage);
@@ -30,16 +33,22 @@ export function DocumentViewer({ document: initial, initialPage = 1, canRemove, 
     api<{ text: string; extraction_method: string }>(`/documents/${document.id}/pages/${page}/text`, { signal: controller.signal })
       .then(value => { setText(value.text); setMethod(value.extraction_method); }).catch(error => { if (!controller.signal.aborted) setError(message(error)); });
     return () => controller.abort();
-  }, [document.id, document.page_count, page]);
+  }, [document.id, document.page_count, document.revision, page]);
   return <dialog ref={dialog} className="document-dialog" onCancel={close} aria-labelledby="document-heading">
-    <div className="section-heading"><div><p className="eyebrow">DOCUMENTO VINCULADO</p><h2 id="document-heading">{document.title || document.original_filename}</h2></div><button className="secondary" onClick={close}>Cerrar ficha</button></div>
+    <div className="section-heading"><div><p className="eyebrow">DOCUMENTO {document.storage_source === 'managed' ? 'ADMINISTRADO' : 'VINCULADO'}</p><h2 id="document-heading">{document.title || document.original_filename}</h2></div><button className="secondary" onClick={close}>Cerrar ficha</button></div>
     <Notice text={error} /><div className="document-badges"><span className="badge">{availabilityLabel[document.availability]}</span>{document.extraction_freshness === 'stale' && <span className="badge">Texto anterior conservado</span>}{document.can_download && <a className="button-link" href={`/api/v1/documents/${document.id}/download`}>Descargar PDF</a>}</div>
-    {document.original_path && <p className="path-text muted">Ruta original: {document.original_path}</p>}
+    <p>{approvalLabel[document.approval_status]}{document.case_identifier ? ` · Expediente ${document.case_identifier}` : ' · Sin expediente'}</p>
+    {(document.category_name || document.document_type_name) && <p>{document.category_name} · {document.document_type_name}</p>}
+    {document.original_path && <p className="path-text muted">{document.storage_source === 'managed' ? 'Ruta definitiva' : 'Ruta original'}: {document.original_path}</p>}
     <div className="document-preview-grid">
       {document.can_preview_original ? <iframe title="Vista previa del PDF" src={`/api/v1/documents/${document.id}/content#page=${page}`} /> : <div className="unavailable-preview"><h3>Original no disponible</h3><p>El texto extraído permanece disponible para consulta.</p></div>}
       <section className="retained-text"><div className="section-heading"><h3>Texto extraído</h3><label>Página<input type="number" min={1} max={Math.max(document.page_count, 1)} value={page} onChange={event => { const number = Number(event.target.value); if (number >= 1 && number <= document.page_count) setPage(number); }} /></label></div><small>{method === 'ocr' ? 'Reconocimiento OCR' : method === 'native' ? 'Texto nativo' : ''}</small><pre>{text || (document.page_count ? 'Esta página no contiene texto.' : 'La extracción está pendiente.')}</pre></section>
     </div>
+    {document.approval_status === 'pending_review' && document.can_classify && <p className="muted">Cambiar la clasificación invalida el envío actual y requiere enviarlo nuevamente a revisión.</p>}
+    {['draft', 'rejected', 'pending_review', 'needs_review'].includes(document.approval_status) && (document.can_classify || document.can_associate || document.can_reassign) && <ClassificationForm key={document.revision} document={document} preferredCaseID={preferredCaseID} saved={updated => { setDocument(updated); changed(); }} />}
+    <WorkflowPanel document={document} saved={updated => { setDocument(updated); changed(); }} />
+    {document.can_cancel && <details><summary>Cancelar mi carga</summary><form className="filters" onSubmit={async event => { event.preventDefault(); try { await api(`/documents/${document.id}/cancel`, { method: 'POST', revision: document.revision, body: { reason: new FormData(event.currentTarget).get('reason') } }); setDocument(await api<Document>(`/documents/${document.id}`)); changed(); } catch (error) { setError(message(error)); } }}><label>Motivo de cancelación<input name="reason" required maxLength={1000} /></label><button className="secondary">Cancelar carga y conservar evidencia</button></form></details>}
     <details><summary>Huella y trazabilidad</summary><p className="path-text">SHA-256: {document.sha256}</p><button className="secondary" onClick={() => void api<{ items: { id: string; event_type: string; occurred_at: string }[] }>(`/documents/${document.id}/history`).then(value => setHistory(value.items)).catch(error => setError(message(error)))}>Consultar historial</button>{history && <ul>{history.map(event => <li key={event.id}>{formatDate(event.occurred_at)} · {event.event_type}</li>)}</ul>}</details>
-    {canRemove && <details className="remove-index"><summary>Retirar del índice</summary><p>Conserva el archivo original y la evidencia histórica. Dejará de aparecer en búsquedas.</p><form className="filters" onSubmit={async event => { event.preventDefault(); const data = new FormData(event.currentTarget); try { await api(`/documents/${document.id}/remove-index`, { method: 'POST', revision: document.revision, body: { reason: data.get('reason') } }); changed(); close(); } catch (error) { setError(message(error)); } }}><label>Motivo<input name="reason" required maxLength={1000} /></label><button className="secondary">Confirmar retiro del índice</button></form></details>}
+    {canRemove && document.approval_status !== 'materializing' && <details className="remove-index"><summary>Retirar del índice</summary><p>Conserva el archivo original y la evidencia histórica. Dejará de aparecer en búsquedas.</p><form className="filters" onSubmit={async event => { event.preventDefault(); const data = new FormData(event.currentTarget); try { await api(`/documents/${document.id}/remove-index`, { method: 'POST', revision: document.revision, body: { reason: data.get('reason'), expected_case_id: document.case_id } }); changed(); close(); } catch (error) { setError(message(error)); } }}>{document.case_id && <label className="check"><input type="checkbox" required />Entiendo que este archivo dejará de contar en el expediente {document.case_identifier}.</label>}<label>Motivo<input name="reason" required maxLength={1000} /></label><button className="secondary">Confirmar retiro del índice</button></form></details>}
   </dialog>;
 }

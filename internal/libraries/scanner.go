@@ -51,7 +51,9 @@ func (service *Service) root(ctx context.Context, rootID string) (Root, error) {
 	}
 	return Root{}, notFound()
 }
-func activeRoot(root Root) bool { return root.Status == "active" || root.Status == "inaccessible" }
+func activeRoot(root Root) bool {
+	return root.Source != "managed" && (root.Status == "active" || root.Status == "inaccessible")
+}
 func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes int64, registerDirectory func(string) error) error {
 	if err := licensing.Check(licensing.WriteDocuments); err != nil {
 		return err
@@ -205,10 +207,10 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		if _, err := transaction.ExecContext(ctx, "UPDATE physical_file_locations SET retired_at=? WHERE root_id=? AND retired_at IS NULL AND NOT EXISTS(SELECT 1 FROM scan_file_observations WHERE scan_id=? AND location_id=physical_file_locations.id)", now(), root.ID, scanID); err != nil {
 			return err
 		}
-		if _, err := transaction.ExecContext(ctx, "UPDATE physical_files SET primary_location_id=coalesce((SELECT location.id FROM physical_file_locations location JOIN storage_roots owner ON owner.id=location.root_id WHERE location.physical_file_id=physical_files.id AND location.retired_at IS NULL AND owner.status<>'superseded' ORDER BY CASE owner.status WHEN 'active' THEN 0 ELSE 1 END,location.id LIMIT 1),primary_location_id) WHERE library_id=?", root.LibraryID); err != nil {
+		if _, err := transaction.ExecContext(ctx, "UPDATE physical_files SET primary_location_id=coalesce((SELECT location.id FROM physical_file_locations location JOIN storage_roots owner ON owner.id=location.root_id WHERE location.physical_file_id=physical_files.id AND location.retired_at IS NULL AND owner.status<>'superseded' ORDER BY CASE owner.status WHEN 'active' THEN 0 ELSE 1 END,location.id LIMIT 1),primary_location_id) WHERE library_id=? AND storage_source='linked' AND EXISTS(SELECT 1 FROM physical_file_locations touched WHERE touched.physical_file_id=physical_files.id AND touched.root_id=?)", root.LibraryID, root.ID); err != nil {
 			return err
 		}
-		missingRows, err := transaction.QueryContext(ctx, "SELECT d.id,coalesce(f.current_content_version_id,'') FROM physical_files f JOIN documents d ON d.physical_file_id=f.id WHERE f.library_id=? AND f.availability<>'missing' AND NOT EXISTS(SELECT 1 FROM physical_file_locations WHERE physical_file_id=f.id AND retired_at IS NULL)", root.LibraryID)
+		missingRows, err := transaction.QueryContext(ctx, "SELECT d.id,coalesce(f.current_content_version_id,'') FROM physical_files f JOIN documents d ON d.physical_file_id=f.id WHERE f.library_id=? AND f.storage_source='linked' AND f.availability<>'missing' AND EXISTS(SELECT 1 FROM physical_file_locations touched WHERE touched.physical_file_id=f.id AND touched.root_id=?) AND NOT EXISTS(SELECT 1 FROM physical_file_locations WHERE physical_file_id=f.id AND retired_at IS NULL)", root.LibraryID, root.ID)
 		if err != nil {
 			return err
 		}
@@ -228,7 +230,7 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		if err != nil {
 			return err
 		}
-		if _, err := transaction.ExecContext(ctx, "UPDATE physical_files SET availability='missing' WHERE library_id=? AND NOT EXISTS(SELECT 1 FROM physical_file_locations WHERE physical_file_id=physical_files.id AND retired_at IS NULL)", root.LibraryID); err != nil {
+		if _, err := transaction.ExecContext(ctx, "UPDATE physical_files SET availability='missing' WHERE library_id=? AND storage_source='linked' AND EXISTS(SELECT 1 FROM physical_file_locations touched WHERE touched.physical_file_id=physical_files.id AND touched.root_id=?) AND NOT EXISTS(SELECT 1 FROM physical_file_locations WHERE physical_file_id=physical_files.id AND retired_at IS NULL)", root.LibraryID, root.ID); err != nil {
 			return err
 		}
 		if _, err := transaction.ExecContext(ctx, "UPDATE root_scans SET status='complete',completed_at=?,can_confirm_absence=1 WHERE id=?", now(), scanID); err != nil {

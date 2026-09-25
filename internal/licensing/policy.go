@@ -22,3 +22,16 @@ func Check(operation Operation) error {
 }
 
 func DevelopmentEnabled() bool { return developmentEnabled }
+
+// Capability names are the V1 contract names. H6 will evaluate signed features
+// here; until then only the explicitly tagged development build can write.
+func CheckFeatures(features ...string) error {
+	for _, feature := range features {
+		switch feature {
+		case "linked_libraries", "managed_libraries", "expedientes", "review_workflow", "ocr":
+		default:
+			return domain.Failure("LICENSE_FEATURE", "Capacidad no reconocida.", 403)
+		}
+	}
+	return Check(WriteDocuments)
+}

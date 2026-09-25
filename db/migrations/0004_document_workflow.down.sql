@@ -1,0 +1,14 @@
+CREATE TEMP TABLE h5_rollback_guard(value INTEGER CHECK(value=0));
+INSERT INTO h5_rollback_guard SELECT count(*) FROM libraries;
+DROP TABLE h5_rollback_guard;
+DROP TABLE materializations;
+DROP TABLE review_requests;
+DROP TABLE library_document_sequences;
+ALTER TABLE documents DROP COLUMN approved_content_version_id;
+ALTER TABLE documents DROP COLUMN approved_by;
+ALTER TABLE documents DROP COLUMN approved_at;
+ALTER TABLE upload_items DROP COLUMN retain_until;
+DELETE FROM role_permissions WHERE role_id IN ('library_contributor','library_manager') AND permission_key='documents.submit';
+DELETE FROM role_permissions WHERE role_id='library_manager' AND permission_key='documents.finalize';
+DELETE FROM role_permissions WHERE role_id='library_reviewer' AND permission_key IN ('documents.approve','documents.reject');
+DELETE FROM schema_migrations WHERE name='0004_document_workflow.up.sql';

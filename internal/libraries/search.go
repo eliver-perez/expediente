@@ -22,6 +22,12 @@ type Filters struct {
 	Prefix       string `json:"prefix"`
 	Availability string `json:"availability"`
 	Approval     string `json:"approval_status"`
+	CaseID       string `json:"case_id"`
+	CategoryID   string `json:"category_id"`
+	TypeID       string `json:"document_type_id"`
+	Exercise     string `json:"exercise"`
+	Source       string `json:"storage_source"`
+	Unassigned   bool   `json:"unassigned"`
 }
 type SearchInput struct {
 	Query     string   `json:"query"`
@@ -40,24 +46,39 @@ type Match struct {
 	Segments []Segment `json:"segments"`
 }
 type Document struct {
-	ID           string  `json:"id"`
-	LibraryID    string  `json:"library_id"`
-	Title        string  `json:"title"`
-	Filename     string  `json:"original_filename"`
-	Availability string  `json:"availability"`
-	Approval     string  `json:"approval_status"`
-	Freshness    string  `json:"extraction_freshness"`
-	Revision     int64   `json:"revision"`
-	RootID       string  `json:"root_id"`
-	RelativePath string  `json:"relative_path"`
-	OriginalPath string  `json:"original_path,omitempty"`
-	FileID       string  `json:"-"`
-	Identity     string  `json:"-"`
-	Hash         string  `json:"sha256"`
-	Pages        int     `json:"page_count"`
-	Preview      bool    `json:"can_preview_original"`
-	Download     bool    `json:"can_download"`
-	Matches      []Match `json:"matches"`
+	Integrity      string            `json:"integrity_status"`
+	CategoryName   string            `json:"category_name"`
+	TypeName       string            `json:"document_type_name"`
+	CanCancel      bool              `json:"can_cancel"`
+	Source         string            `json:"storage_source"`
+	CaseID         string            `json:"case_id"`
+	CaseIdentifier string            `json:"case_identifier"`
+	CategoryID     string            `json:"category_id"`
+	TypeID         string            `json:"document_type_id"`
+	CreatedBy      string            `json:"created_by"`
+	Metadata       map[string]string `json:"metadata"`
+	MetadataJSON   string            `json:"-"`
+	CanClassify    bool              `json:"can_classify"`
+	CanAssociate   bool              `json:"can_associate"`
+	CanReassign    bool              `json:"can_reassign"`
+	ID             string            `json:"id"`
+	LibraryID      string            `json:"library_id"`
+	Title          string            `json:"title"`
+	Filename       string            `json:"original_filename"`
+	Availability   string            `json:"availability"`
+	Approval       string            `json:"approval_status"`
+	Freshness      string            `json:"extraction_freshness"`
+	Revision       int64             `json:"revision"`
+	RootID         string            `json:"root_id"`
+	RelativePath   string            `json:"relative_path"`
+	OriginalPath   string            `json:"original_path,omitempty"`
+	FileID         string            `json:"-"`
+	Identity       string            `json:"-"`
+	Hash           string            `json:"sha256"`
+	Pages          int               `json:"page_count"`
+	Preview        bool              `json:"can_preview_original"`
+	Download       bool              `json:"can_download"`
+	Matches        []Match           `json:"matches"`
 }
 type SearchResult struct {
 	Items     []Document `json:"items"`
@@ -66,15 +87,18 @@ type SearchResult struct {
 	Libraries []string   `json:"consulted_library_ids"`
 }
 
-const documentColumns = "d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,l.root_id,l.relative_path,l.canonical_path,f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0)"
-const documentJoins = " FROM documents d JOIN physical_files f ON f.id=d.physical_file_id JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN storage_roots r ON r.id=l.root_id LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id "
+const documentColumns = "d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,coalesce(l.root_id,''),coalesce(l.relative_path,''),coalesce(l.canonical_path,''),f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0),f.storage_source,coalesce(d.case_id,''),coalesce(c.identifier,''),coalesce(d.category_id,''),coalesce(d.document_type_id,''),coalesce(d.created_by,''),d.metadata_json,coalesce(cat.name,''),coalesce(dt.name,''),f.integrity_status"
+const documentJoins = " FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id LEFT JOIN storage_roots r ON r.id=l.root_id LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id LEFT JOIN cases c ON c.id=d.case_id LEFT JOIN categories cat ON cat.id=d.category_id LEFT JOIN document_types dt ON dt.id=d.document_type_id "
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanDocument(row rowScanner) (Document, error) {
 	var document Document
-	err := row.Scan(&document.ID, &document.LibraryID, &document.Title, &document.Filename, &document.Availability, &document.Approval, &document.Freshness, &document.Revision, &document.RootID, &document.RelativePath, &document.OriginalPath, &document.FileID, &document.Identity, &document.Hash, &document.Pages)
+	err := row.Scan(&document.ID, &document.LibraryID, &document.Title, &document.Filename, &document.Availability, &document.Approval, &document.Freshness, &document.Revision, &document.RootID, &document.RelativePath, &document.OriginalPath, &document.FileID, &document.Identity, &document.Hash, &document.Pages, &document.Source, &document.CaseID, &document.CaseIdentifier, &document.CategoryID, &document.TypeID, &document.CreatedBy, &document.MetadataJSON, &document.CategoryName, &document.TypeName, &document.Integrity)
 	document.Matches = []Match{}
+	if err == nil {
+		err = json.Unmarshal([]byte(document.MetadataJSON), &document.Metadata)
+	}
 	return document, err
 }
 func searchKey(value string) string {
@@ -142,8 +166,8 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 	if input.Type == "" {
 		input.Type = "general"
 	}
-	if input.Type != "general" && input.Type != "ocr" && input.Type != "name" {
-		return result, invalid("El tipo de búsqueda no está disponible en bibliotecas vinculadas.")
+	if input.Type != "general" && input.Type != "ocr" && input.Type != "name" && input.Type != "identifier" {
+		return result, invalid("Tipo de búsqueda inválido.")
 	}
 	if input.Limit == 0 {
 		input.Limit = 50
@@ -154,7 +178,7 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 	if input.Filters.Prefix != "" && !relativeSafe(input.Filters.Prefix) {
 		return result, invalid("Prefijo relativo inválido.")
 	}
-	if input.Filters.Availability != "" && input.Filters.Availability != "available" && input.Filters.Availability != "missing" && input.Filters.Availability != "unknown" {
+	if input.Filters.Availability != "" && input.Filters.Availability != "available" && input.Filters.Availability != "missing" && input.Filters.Availability != "unknown" && input.Filters.Availability != "staged" {
 		return result, invalid("Disponibilidad inválida.")
 	}
 	expression, tokens, err := compileQuery(input.Query)
@@ -202,8 +226,8 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			}
 			sort.Strings(result.Libraries)
 		}
-		conditions := []string{"d.deleted_at IS NULL"}
-		arguments := []any{}
+		conditions := []string{"d.deleted_at IS NULL", visibleDocumentSQL}
+		arguments := []any{current.User.ID, current.User.ID}
 		if len(result.Libraries) == 0 {
 			conditions = append(conditions, "0=1")
 		} else {
@@ -241,6 +265,17 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			conditions = append(conditions, "(CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END)=?")
 			arguments = append(arguments, input.Filters.Availability)
 		}
+
+		for _, filter := range []struct{ column, value string }{{"d.case_id", input.Filters.CaseID}, {"d.category_id", input.Filters.CategoryID}, {"d.document_type_id", input.Filters.TypeID}, {"c.exercise", input.Filters.Exercise}, {"f.storage_source", input.Filters.Source}} {
+			if filter.value != "" {
+				conditions = append(conditions, filter.column+"=?")
+				arguments = append(arguments, filter.value)
+			}
+		}
+		if input.Filters.Unassigned {
+			conditions = append(conditions, "d.case_id IS NULL")
+		}
+
 		if input.Filters.Approval != "" {
 			conditions = append(conditions, "d.approval_status=?")
 			arguments = append(arguments, input.Filters.Approval)
@@ -254,16 +289,21 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 				nameArgs = append(nameArgs, searchKey(token))
 			}
 			nameCondition := "(" + strings.Join(names, " AND ") + ")"
-			if input.Type == "ocr" {
+			identifierCondition := "instr(coalesce(c.identifier_key,''),?)>0"
+			if input.Type == "identifier" {
+				conditions = append(conditions, identifierCondition)
+				arguments = append(arguments, searchKey(strings.TrimSpace(input.Query)))
+			} else if input.Type == "ocr" {
 				conditions = append(conditions, textCondition)
 				arguments = append(arguments, expression)
 			} else if input.Type == "name" {
 				conditions = append(conditions, nameCondition)
 				arguments = append(arguments, nameArgs...)
 			} else {
-				conditions = append(conditions, "("+textCondition+" OR "+nameCondition+")")
+				conditions = append(conditions, "("+textCondition+" OR "+nameCondition+" OR "+identifierCondition+")")
 				arguments = append(arguments, expression)
 				arguments = append(arguments, nameArgs...)
+				arguments = append(arguments, searchKey(strings.TrimSpace(input.Query)))
 			}
 		}
 		scope := domain.Digest(encode([]any{current.User.ID, input.Query, input.Type, result.Libraries, input.Filters}))
@@ -315,12 +355,16 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			for _, permission := range permissions {
 				allowed[permission] = true
 			}
-			document.Preview = document.Availability == "available" && allowed["documents.read"]
-			document.Download = document.Availability == "available" && allowed["documents.download"]
-			if !allowed["storage.view_paths"] {
+			document.Preview = (document.Availability == "available" || document.Availability == "staged") && allowed["documents.read"]
+			document.CanCancel = document.Availability == "staged" && document.CreatedBy == current.User.ID && allowed["documents.cancel_own"] && (document.Approval == "draft" || document.Approval == "rejected")
+			document.CanClassify = allowed["documents.classify"]
+			document.CanAssociate = allowed["documents.associate"] && document.Source == "linked"
+			document.CanReassign = allowed["documents.reassign"]
+			document.Download = document.Preview && allowed["documents.download"]
+			if document.Availability == "staged" || !allowed["storage.view_paths"] {
 				document.OriginalPath = ""
 			}
-			if expression != "" && input.Type != "name" {
+			if expression != "" && input.Type != "name" && input.Type != "identifier" {
 				matches, err := transaction.QueryContext(ctx, "SELECT p.page_number,snippet(pages_fts,0,char(1),char(2),' … ',24) FROM pages_fts JOIN indexed_pages p ON p.id=pages_fts.rowid WHERE pages_fts MATCH ? AND p.physical_file_id=? ORDER BY p.page_number LIMIT 5", expression, document.FileID)
 				if err != nil {
 					return err

@@ -1,7 +1,8 @@
 # Estados independientes
 
 Una sola columna «estado» no representa disponibilidad, integridad, revisión y OCR.
-Estos diagramas son contratos a implementar, no flujos disponibles todavía.
+Disponibilidad, revisión y cola están implementadas hasta H5. El diagrama de
+licencia sigue como contrato para H6.
 
 ## Disponibilidad física e integridad
 

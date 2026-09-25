@@ -1,6 +1,7 @@
-# Desarrollo, distribución y operación
+# AIBID — Desarrollo, distribución y operación
 
-**H3 ejecutable:** bibliotecas vinculadas, OCR/búsqueda e identidad con Go/React. Los instaladores
+**H5 ejecutable:** bibliotecas vinculadas/administradas/híbridas, cargas privadas,
+expedientes, revisión, guardado definitivo, integridad, OCR/búsqueda e identidad. Los instaladores
 y el registro como servicio del SO corresponden a H7. No se configura Apache/XAMPP.
 
 ## Ejecutar en macOS / Visual Studio Code
@@ -16,7 +17,7 @@ make build-dev
 ./build/gestor-documental-dev serve
 ```
 
-Para actualizar H2, detener su proceso y ejecutar `make build-dev` y `serve`.
+Para actualizar H2/H3/H4, detener su proceso y ejecutar `make build-dev` y `serve`.
 No repetir `init`/`bootstrap`; los datos se conservan. El sufijo `-dev` identifica
 el permiso de desarrollo: licencia comercial pendiente H6. No distribuir ese build.
 [Configuración de extracción y herramientas](docs/H3.md).
@@ -60,7 +61,7 @@ race detector y comprobaciones SQL H1 (Python 3.9+ con FTS5, sin paquetes pip).
 El segundo requiere Chrome y puerto loopback 8099 disponible: utiliza cuentas
 ficticias, DB temporal y dos contextos independientes de navegador. No toca el
 estado de trabajo. Si falta Chrome, instalarlo desde `web/` con
-`npx playwright install chrome`. Alcance y evidencia en [H3](docs/H3.md).
+`npx playwright install chrome`. Alcance y evidencia en [H4](docs/H4.md).
 
 Dependencias fijadas en `go.mod`/`go.sum` y `web/package-lock.json`. Node usado
 localmente: 22.15.0. SQLite del sistema/Python: 3.51.0, utilizado solo para checks
@@ -75,7 +76,7 @@ administrador existente y nueva contraseña, rehabilita esa cuenta, invalida sus
 sesiones y deja auditoría. No crea una cuenta oculta. Usar el mismo `--config` de
 la instalación. El lock impide recuperación/bootstrap/migración con servicio activo.
 
-`migrate` verifica/aplica migraciones embebidas. `rollback-empty` revierte H3 y H2
+`migrate` verifica/aplica migraciones embebidas. `rollback-empty` revierte H4, H3 y H2
 en una sola transacción únicamente si no hay bibliotecas, usuarios, sesiones,
 intentos, contadores ni auditoría. Si ya existen datos se niega sin alterar el
 esquema. No hay reversión destructiva automática.
@@ -199,3 +200,35 @@ Remapear rutas mediante plan auditado conservando historial; no tratarlas como
 carpetas nuevas para duplicar índice. En otro equipo, usar recuperación/transferencia
 de licencia, no aceptar silenciosamente huella anterior ni bajar revisión máxima.
 Ensayar pérdida de energía, disco lleno y restore completo en los cuatro objetivos.
+
+## Almacenamiento privado de cargas H4
+
+Por defecto se usa `state/uploads`. `upload_directory` permite una ruta absoluta
+local y privada, fuera de `htdocs`, `wwwroot` y cualquier raíz documental. Puede
+omitirse en configuraciones H2/H3. No requiere cambiar las rutas de instalación
+al adoptar la marca AIBID; los nombres técnicos anteriores permanecen compatibles.
+
+Para cambiar esa ruta después de cargar archivos: detener el servicio, conservar
+una copia de DB/estado/temporales, trasladar **todo** el directorio preservando
+nombres y permisos, actualizar `upload_directory` y comprobar las cargas al
+reiniciar. No apuntar a una carpeta vacía dejando archivos pendientes en la
+anterior. H4 no ofrece traslado automático ni purgas. Los destinos managed se
+registran separadamente en Carpetas y se seleccionan en Configuración; su uso
+para materializar documentos está disponible en H5. [Recorrido y recuperación](docs/H5.md).
+
+### Corrección del escaneo en bibliotecas híbridas
+
+Detener el proceso anterior y arrancar el binario actualizado evita que el escaneo
+linked marque como ausentes las nuevas cargas temporales managed. Esta corrección
+no cambia el esquema ni repara los datos de prueba anteriores por indicación del
+propietario. [Detalle y regresión](docs/H4.md).
+
+## Actualizar a H5
+
+Conservar copia consistente de estado/configuración y temporales con el servicio
+detenido. Iniciar el nuevo binario sobre la misma configuración aplica 0004 sin
+reparar ni reclasificar documentos H4. Registrar/seleccionar un destino administrado
+y decidir si se exige revisión. Por defecto ambas políticas están desactivadas y
+la retención conserva temporales. Las cargas previas sanas pueden confirmarse o
+enviarse a revisión. No se debe mover el destino ni borrar sus parciales durante
+un guardado. [Diagnósticos y reintentos](docs/H5.md).

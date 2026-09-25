@@ -1,7 +1,7 @@
 # Decisiones para revisión
 
 Fecha: 2026-09-23. **D-01 a D-05 aprobadas por el propietario** al responder
-«Adelante con las propuestas, continuemos». H2 autorizado. No se necesita resolver ahora marca, dominio del
+«Adelante con las propuestas, continuemos». H2 autorizado. El nombre visible acordado posteriormente es AIBID. No se necesita resolver ahora el dominio del
 repositorio, tamaño de corpus ni equipo de cada cliente; se documentan después.
 
 ## Alcance ya fijado por el usuario
@@ -146,3 +146,27 @@ vigilancia nativa con reconciliación; Poppler y Tesseract son programas externo
 para extracción por página. Español por defecto. Se conserva el límite de V1:
 consolidación propia, conflictos entre bibliotecas sin reorganización automática.
 Detalles, presupuestos, licencias de terceros y validación en [H3](docs/H3.md).
+
+## Aplicación en H4 y marca
+
+El propietario autorizó continuar H4 y eligió **AIBID — Aplicación de Indexación
+de Bibliotecas Digitales**, con el eslogan **Tu biblioteca digital, ordenada y al
+alcance.** Los cuatro SVG originales se conservan íntegros; las variantes oscuras
+se usan sobre fondos oscuros. La marca visual no modifica el product identifier
+del contrato de licencias, el módulo Go, binarios ni directorios de instalaciones
+anteriores. `LICENSE_CONTRACT.md` permanece byte por byte sin cambios.
+
+H4 entrega cargas/organización según D-02/D-03. Los temporales están separados
+de raíces managed/linked y el autor/revisor controla su consulta. Versionar una
+plantilla nunca propaga cambios a expedientes existentes. La conversión a híbrida
+amplía capacidades sin mover ni reextraer documentos. D-04 (decisiones de revisión
+y finalización) se aplicará en H5. [Implementación y verificación H4](docs/H4.md).
+
+## Aplicación de D-03/D-04 en H5
+
+H5 incorpora revisión por biblioteca y materialización con diario persistente.
+La publicación sin reemplazo utiliza un enlace duro dentro del destino después
+de copiar/verificar/sincronizar el parcial. Un filesystem que no soporte esa
+operación falla conservando el temporal. Confirmación directa y aprobación por
+revisor comparten el protocolo; las diferencias linked/managed se mantienen en
+integridad y cumplimiento. [Entrega, recuperación y límites](docs/H5.md).

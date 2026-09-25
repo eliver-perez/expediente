@@ -53,3 +53,22 @@ export const closeReasons: Record<string, string> = {
   logout: 'Cierre voluntario', expired: 'Sesión expirada', new_login: 'Otro inicio de sesión',
   password_changed: 'Contraseña modificada', admin_revoked: 'Cerrada por administración'
 };
+
+export function uploadPDF<T>(batchID: string, clientID: string, file: File, progress: (percent: number) => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', `/api/v1/upload-batches/${batchID}/files`);
+    request.setRequestHeader('X-CSRF-Token', csrfToken);
+    request.upload.onprogress = event => { if (event.lengthComputable) progress(Math.round(100 * event.loaded / event.total)); };
+    request.onerror = () => reject(new APIError('NETWORK_ERROR', 'Se interrumpió la conexión. Puedes reintentar el archivo.', 0));
+    request.onload = () => {
+      let payload;
+      try { payload = JSON.parse(request.responseText); } catch { reject(new Error('El servidor no pudo completar la carga.')); return; }
+      if (request.status >= 200 && request.status < 300) { resolve(payload as T); return; }
+      const failure = new APIError(payload.error?.code || 'UPLOAD_FAILED', payload.error?.message || 'La carga no se completó.', request.status);
+      if (request.status === 401) { setCSRF(''); window.dispatchEvent(new CustomEvent('session-ended', { detail: failure })); }
+      reject(failure);
+    };
+    const body = new FormData(); body.append('client_file_id', clientID); body.append('file', file); request.send(body);
+  });
+}

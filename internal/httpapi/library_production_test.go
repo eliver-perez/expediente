@@ -20,8 +20,10 @@ func TestProductionBuildBlocksDocumentWritesAndKeepsSecurityAvailable(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = fixture.server.libraries.Create(context.Background(), principal, "Blocked", "linked", principal.User.ID, domain.NewID(), domain.RequestMetadata{}); err == nil {
-		t.Fatal("production library write accepted")
+	for _, mode := range []string{"linked", "managed", "hybrid"} {
+		if _, err = fixture.server.libraries.Create(context.Background(), principal, "Blocked", mode, principal.User.ID, domain.NewID(), domain.RequestMetadata{}); err == nil {
+			t.Fatal("production library write accepted", mode)
+		}
 	}
 	runtime, err := fixture.server.libraries.Start(context.Background())
 	if err != nil {

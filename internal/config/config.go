@@ -20,6 +20,7 @@ type Config struct {
 	ListenAddress        string             `json:"listen_address"`
 	PublicURL            string             `json:"public_url"`
 	StateDirectory       string             `json:"state_directory"`
+	UploadDirectory      string             `json:"upload_directory,omitempty"`
 	TLSCertificate       string             `json:"tls_certificate"`
 	TLSPrivateKey        string             `json:"tls_private_key"`
 	TrustedProxies       []string           `json:"trusted_proxies"`
@@ -136,8 +137,11 @@ func (configuration Config) Validate() error {
 	if !filepath.IsAbs(configuration.StateDirectory) || filepath.Clean(configuration.StateDirectory) == string(filepath.Separator) {
 		return fmt.Errorf("state_directory must be an absolute private directory")
 	}
+	if configuration.UploadDirectory != "" && (!filepath.IsAbs(configuration.UploadDirectory) || filepath.Clean(configuration.UploadDirectory) == string(filepath.Separator)) {
+		return fmt.Errorf("upload_directory must be an absolute private local directory")
+	}
 	// Explicitly exclude common web roots; an installer cannot discover every custom server root.
-	for _, component := range strings.Split(filepath.ToSlash(configuration.StateDirectory), "/") {
+	for _, component := range strings.Split(filepath.ToSlash(configuration.StateDirectory)+"/"+filepath.ToSlash(configuration.UploadDirectory), "/") {
 		if strings.EqualFold(component, "htdocs") || strings.EqualFold(component, "wwwroot") {
 			return fmt.Errorf("state_directory cannot be inside a public web root")
 		}
@@ -149,4 +153,11 @@ func (configuration Config) Validate() error {
 		return fmt.Errorf("login rate limits outside allowed range")
 	}
 	return nil
+}
+
+func (configuration Config) PrivateUploadDirectory() string {
+	if configuration.UploadDirectory != "" {
+		return configuration.UploadDirectory
+	}
+	return filepath.Join(configuration.StateDirectory, "uploads")
 }

@@ -133,7 +133,7 @@ func run() error {
 			serverError <- server.ListenAndServe()
 		}
 	}()
-	logger.Info("service starting", "address", configuration.ListenAddress, "stage", "H3")
+	logger.Info("service starting", "address", configuration.ListenAddress, "stage", "H4")
 	select {
 	case err := <-serverError:
 		if !errors.Is(err, http.ErrServerClosed) {

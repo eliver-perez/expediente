@@ -1,13 +1,19 @@
-# Gestor documental local
+# AIBID
 
-Producto comercial genérico. Identificador técnico: `gestor_documental`; marca pendiente.
-Go + React + SQLite WAL/FTS5. Instalación local, acceso por LAN y fuentes privados.
+**Aplicación de Indexación de Bibliotecas Digitales**  
+Tu biblioteca digital, ordenada y al alcance.
 
-**H3 implementado: bibliotecas vinculadas, vigilancia, OCR y búsqueda.** Incluye
-identidad/sesiones/auditoría de H2, permisos por biblioteca, raíces y vistas,
-reconciliación, texto retenido y consulta por página. Contraseñas de 6–128 caracteres,
-según la instrucción del propietario. Detalles: [entrega H3](docs/H3.md).
-Licencias comerciales se entregan en H6 e instaladores/servicios del SO en H7.
+Producto comercial genérico de instalación local, con Go + React + SQLite WAL/FTS5
+y acceso por LAN. **H5 implementado:** revisión, aprobación/rechazo,
+guardado definitivo recuperable y verificación de integridad administrada. Incluye
+bibliotecas híbridas, cargas privadas, expedientes, catálogos y clasificación. Conserva
+identidad, auditoría, bibliotecas vinculadas, vigilancia y OCR de H2/H3.
+Contraseñas de **6–128 caracteres**. Detalles: [entrega H5](docs/H5.md).
+Licencias comerciales corresponden a H6 e instaladores/servicios del SO a H7.
+
+Los cuatro logotipos SVG suministrados están en `web/public/assets/brand/`.
+Se conservan el identificador técnico `gestor_documental`, el nombre de los
+binarios y las rutas de estado existentes para mantener compatibilidad.
 
 ## Ejecutar en macOS / VS Code
 
@@ -21,7 +27,7 @@ make build-dev
 ./build/gestor-documental-dev serve
 ```
 
-Si ya utilizas H2, conserva su configuración y administrador: ejecuta únicamente
+Si ya utilizas H2/H3/H4, conserva su configuración y administrador: ejecuta únicamente
 `make build-dev` y `serve`, con el servicio anterior detenido. La migración es automática.
 El binario `-dev` habilita funciones documentales para estas pruebas; no es una release
 comercial. `make build` sigue excluyendo el permiso simulado de licencia.
@@ -44,7 +50,7 @@ make test-e2e
 El primer comando compila React, valida formato, ejecuta vet, pruebas Go con detector
 de carreras y las comprobaciones SQL H1. El segundo requiere Chrome instalado;
 usa servidor temporal en `127.0.0.1:8099`, cuentas ficticias y DB desechable.
-Detalle del módulo y limitaciones: [entrega H3](docs/H3.md).
+Detalle del módulo y limitaciones: [entrega H5](docs/H5.md).
 
 ## Revisar primero
 
@@ -65,7 +71,7 @@ cmd/gestor-documental/  CLI y servidor Go
 internal/               Configuración, SQLite, identidad, auditoría, HTTP y pruebas
 web/                    React/TypeScript y pruebas de navegador
 db/schema.proposed.sql  Modelo de referencia de V1; NO es una migración
-db/migrations/          Migraciones H2/H3, checksum y reversión protegida
+db/migrations/          Migraciones H2/H3/H4/H5, checksum y reversión protegida
 docs/                   Especificaciones y criterios de aceptación
 packaging/              Instaladores por SO, a implementar en H7
 testdata/license/       Vectores de desarrollo del contrato, a crear en H6
@@ -88,5 +94,5 @@ al terminar; no inicializa el producto ni descarga paquetes. Comprueba integrida
 restricciones relevantes, sesión única, conservación y publicación de texto FTS,
 y enlaces locales de documentación. Se ejecuta también dentro de make check.
 
-El siguiente hito es **H4: bibliotecas administradas e híbridas, cargas y expedientes**,
-después de revisar esta entrega de H3.
+El siguiente hito es **H6: cliente de licencias V1.0 online/offline**,
+después de revisar esta entrega de H5.

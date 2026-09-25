@@ -11,6 +11,8 @@ import (
 )
 
 func (server *Server) libraryRoutes(mux *http.ServeMux) {
+	server.organizationRoutes(mux)
+	server.workflowRoutes(mux)
 	routes := map[string]authorizedHandler{
 		"GET /api/v1/libraries/{library}": server.getLibrary, "GET /api/v1/jobs/{job}": server.getJob, "POST /api/v1/storage/path-inspections": server.inspectPath,
 		"GET /api/v1/libraries/{library}/folders": server.libraryFolders,
@@ -60,8 +62,10 @@ func (server *Server) createLibrary(writer http.ResponseWriter, request *http.Re
 }
 func (server *Server) updateLibrary(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
 	var input struct {
-		Name      string `json:"name"`
-		Languages string `json:"ocr_languages"`
+		Name      string              `json:"name"`
+		Languages string              `json:"ocr_languages"`
+		Mode      string              `json:"mode"`
+		Settings  *libraries.Settings `json:"settings"`
 	}
 	if err := decodeJSON(writer, request, &input); err != nil {
 		server.fail(writer, request, err)
@@ -72,7 +76,7 @@ func (server *Server) updateLibrary(writer http.ResponseWriter, request *http.Re
 		server.fail(writer, request, err)
 		return
 	}
-	err = server.libraries.Update(request.Context(), principal, request.PathValue("library"), input.Name, input.Languages, revision, metadata(request))
+	err = server.libraries.UpdateConfiguration(request.Context(), principal, request.PathValue("library"), input.Name, input.Languages, input.Mode, input.Settings, revision, metadata(request))
 	server.libraryResult(writer, request, 204, nil, err)
 }
 func (server *Server) libraryMembers(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
@@ -99,11 +103,14 @@ func (server *Server) planRoot(writer http.ResponseWriter, request *http.Request
 		server.fail(writer, request, err)
 		return
 	}
-	if input.Source != "" && input.Source != "linked" {
-		server.fail(writer, request, domain.Failure("INVALID_REQUEST", "H3 admite raíces vinculadas.", 422))
+	if input.Source != "" && input.Source != "linked" && input.Source != "managed" {
+		server.fail(writer, request, domain.Failure("INVALID_REQUEST", "Selecciona un origen válido.", 422))
 		return
 	}
-	result, err := server.libraries.PlanRoot(request.Context(), principal, request.PathValue("library"), input.Path, metadata(request))
+	if input.Source == "" {
+		input.Source = "linked"
+	}
+	result, err := server.libraries.PlanStorageRoot(request.Context(), principal, request.PathValue("library"), input.Path, input.Source, metadata(request))
 	server.libraryResult(writer, request, 201, result, err)
 }
 func (server *Server) confirmRoot(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
@@ -203,7 +210,7 @@ func (server *Server) explorer(writer http.ResponseWriter, request *http.Request
 		}
 		limit = parsed
 	}
-	input := libraries.SearchInput{Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability")}}
+	input := libraries.SearchInput{Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
 	result, err := server.libraries.Search(request.Context(), principal, input, metadata(request), false)
 	server.libraryResult(writer, request, 200, result, err)
 }
@@ -250,6 +257,7 @@ func (server *Server) documentHistory(writer http.ResponseWriter, request *http.
 func (server *Server) removeDocumentIndex(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
 	var input struct {
 		Reason string `json:"reason"`
+		CaseID string `json:"expected_case_id"`
 	}
 	if err := decodeJSON(writer, request, &input); err != nil {
 		server.fail(writer, request, err)
@@ -260,7 +268,7 @@ func (server *Server) removeDocumentIndex(writer http.ResponseWriter, request *h
 		server.fail(writer, request, err)
 		return
 	}
-	err = server.libraries.RemoveIndex(request.Context(), principal, request.PathValue("document"), input.Reason, revision, metadata(request))
+	err = server.libraries.RemoveIndexConfirmed(request.Context(), principal, request.PathValue("document"), input.Reason, input.CaseID, revision, metadata(request))
 	server.libraryResult(writer, request, 204, nil, err)
 }
 func (server *Server) duplicates(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
@@ -338,10 +346,10 @@ func (server *Server) inspectPath(writer http.ResponseWriter, request *http.Requ
 		server.fail(writer, request, err)
 		return
 	}
-	if input.Source != "linked" {
-		server.fail(writer, request, domain.Failure("INVALID_REQUEST", "Selecciona almacenamiento vinculado.", 422))
+	if input.Source != "linked" && input.Source != "managed" {
+		server.fail(writer, request, domain.Failure("INVALID_REQUEST", "Selecciona almacenamiento vinculado o administrado.", 422))
 		return
 	}
-	result, err := server.libraries.PlanRoot(request.Context(), principal, input.Library, input.Path, metadata(request))
+	result, err := server.libraries.PlanStorageRoot(request.Context(), principal, input.Library, input.Path, input.Source, metadata(request))
 	server.libraryResult(writer, request, 200, result, err)
 }

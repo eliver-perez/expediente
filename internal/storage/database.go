@@ -109,13 +109,33 @@ func (database *Database) Write(ctx context.Context, operation func(*sql.Tx) err
 	return transaction.Commit()
 }
 
-// RollbackEmpty is deliberately restricted to a never-used H2 database.
+// RollbackEmpty is deliberately restricted to a never-used installation.
 // Once there is any user or audit evidence, recovery requires a consistent backup.
 func (database *Database) RollbackEmpty(ctx context.Context) error {
 	return database.Write(ctx, func(transaction *sql.Tx) error {
 		var count int
 		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
 			return err
+		}
+		if count == 4 {
+			contents, err := db.Migrations.ReadFile("migrations/0004_document_workflow.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return fmt.Errorf("rollback refused: H5 contains data")
+			}
+			count--
+		}
+		if count == 3 {
+			contents, err := db.Migrations.ReadFile("migrations/0003_managed_organization.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err := transaction.ExecContext(ctx, string(contents)); err != nil {
+				return fmt.Errorf("rollback refused: H4 contains data")
+			}
+			count--
 		}
 		if count == 2 {
 			contents, err := db.Migrations.ReadFile("migrations/0002_linked_libraries.down.sql")

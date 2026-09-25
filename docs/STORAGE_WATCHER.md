@@ -168,3 +168,13 @@ puntos/espacios finales, longitud y normalización; comparar con semántica del 
 Consecutivo reservado en transacción; sufijo estable por identidad si hay colisión.
 Guardar nombre visible/original separado de ruta física. Cambiar categoría, etiqueta,
 plantilla o configuración solo afecta destinos futuros, nunca reorganiza disco.
+
+## Verificación administrada H5
+
+La reconciliación managed consulta únicamente ubicaciones definitivas registradas,
+por lotes de 100; no importa otros archivos ni procesa cargas temporales. Se puede
+solicitar manualmente y usa el intervalo de verificación de cada raíz. Una raíz
+inaccesible cambia la disponibilidad efectiva sin declarar ausencias masivas.
+Hash/identidad nuevos crean versión/aviso; aprobado pasa a `needs_review`. Una
+escritura propia ya registrada por la materialización no genera alerta externa.
+La política linked aprobada permanece sin cambios. [Detalle H5](H5.md).

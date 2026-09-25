@@ -17,12 +17,14 @@ import (
 )
 
 type Service struct {
-	Identity *identity.Service
-	Database *storage.Database
+	Identity             *identity.Service
+	Database             *storage.Database
+	uploadSlots          chan struct{}
+	materializationFault func(string) error
 }
 
 func New(identityService *identity.Service) *Service {
-	return &Service{Identity: identityService, Database: identityService.Database}
+	return &Service{Identity: identityService, Database: identityService.Database, uploadSlots: make(chan struct{}, 2)}
 }
 func invalid(message string) error { return domain.Failure("INVALID_REQUEST", message, 422) }
 func notFound() error              { return domain.Failure("NOT_FOUND", "No se encontró el recurso.", 404) }
@@ -54,6 +56,13 @@ func (service *Service) write(ctx context.Context, principal domain.Principal, l
 			return err
 		}
 		if libraryID != "" {
+			_, mode, err := settingsFor(ctx, transaction, libraryID)
+			if err != nil {
+				return err
+			}
+			if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
+				return err
+			}
 			if err := service.require(ctx, transaction, current, libraryID, permission); err != nil {
 				return err
 			}
@@ -72,6 +81,7 @@ type Library struct {
 	Revision     int64    `json:"revision"`
 	OCRLanguages string   `json:"ocr_languages"`
 	Permissions  []string `json:"permissions"`
+	Settings     Settings `json:"settings"`
 }
 
 func (service *Service) Libraries(ctx context.Context, principal domain.Principal) ([]Library, error) {
@@ -99,6 +109,11 @@ func (service *Service) Libraries(ctx context.Context, principal domain.Principa
 			return nil, err
 		}
 		result[index].Permissions = permissions
+		settings, _, err := settingsFor(ctx, service.Database.Reader, result[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		result[index].Settings = settings
 	}
 	return result, nil
 }
@@ -120,8 +135,8 @@ func (service *Service) permissions(ctx context.Context, query storage.Querier, 
 }
 func (service *Service) Create(ctx context.Context, principal domain.Principal, name, mode, managerID, requestID string, metadata domain.RequestMetadata) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || utf8.RuneCountInString(name) > 160 || mode != "linked" || managerID == "" {
-		return "", invalid("Escribe un nombre y selecciona gestor. H3 admite bibliotecas vinculadas.")
+	if name == "" || utf8.RuneCountInString(name) > 160 || len(modeCapabilities(mode)) == 0 || managerID == "" {
+		return "", invalid("Escribe un nombre y selecciona gestor. Selecciona una modalidad disponible.")
 	}
 	if len(requestID) < 16 || len(requestID) > 100 {
 		return "", invalid("Se requiere una clave de idempotencia de 16 a 100 caracteres.")
@@ -151,7 +166,10 @@ func (service *Service) Create(ctx context.Context, principal domain.Principal, 
 		if enabled == 0 {
 			return invalid("Selecciona un usuario habilitado.")
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO libraries(id,name,mode,created_at,updated_at) VALUES(?,?,'linked',?,?)", identifier, name, now(), now()); err != nil {
+		if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
+			return err
+		}
+		if _, err = transaction.ExecContext(ctx, "INSERT INTO libraries(id,name,mode,created_at,updated_at) VALUES(?,?,?,?,?)", identifier, name, mode, now(), now()); err != nil {
 			return err
 		}
 		if _, err = transaction.ExecContext(ctx, "INSERT INTO library_role_assignments(user_id,library_id,role_id) VALUES(?,?,'library_manager')", managerID, identifier); err != nil {
@@ -160,16 +178,25 @@ func (service *Service) Create(ctx context.Context, principal domain.Principal, 
 		if _, err = transaction.ExecContext(ctx, "INSERT INTO idempotency_requests VALUES(?,'library.create',?,?,?,'complete',?)", current.User.ID, requestID, digest, identifier, now()); err != nil {
 			return err
 		}
+		if err = configurationSnapshot(ctx, transaction, identifier, current.User.ID); err != nil {
+			return err
+		}
 		return record(ctx, transaction, current, metadata, "library.created", identifier, "", map[string]any{"name": name, "manager_user_id": managerID})
 	})
 	return identifier, err
 }
 func (service *Service) Update(ctx context.Context, principal domain.Principal, libraryID, name, languages string, revision int64, metadata domain.RequestMetadata) error {
+	return service.UpdateConfiguration(ctx, principal, libraryID, name, languages, "", nil, revision, metadata)
+}
+func (service *Service) UpdateConfiguration(ctx context.Context, principal domain.Principal, libraryID, name, languages, mode string, settings *Settings, revision int64, metadata domain.RequestMetadata) error {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 160 || (languages != "spa" && languages != "eng" && languages != "spa+eng") {
 		return invalid("Nombre o idioma OCR inválido.")
 	}
 	return service.write(ctx, principal, libraryID, "libraries.configure", func(transaction *sql.Tx, current domain.Principal) error {
+		if err := service.updateSettings(ctx, transaction, libraryID, mode, settings); err != nil {
+			return err
+		}
 		var previousLanguages string
 		if err := transaction.QueryRowContext(ctx, "SELECT ocr_languages FROM libraries WHERE id=?", libraryID).Scan(&previousLanguages); err != nil {
 			return err
@@ -208,13 +235,16 @@ func (service *Service) Update(ctx context.Context, principal domain.Principal, 
 				return err
 			}
 		}
+		if err = configurationSnapshot(ctx, transaction, libraryID, current.User.ID); err != nil {
+			return err
+		}
 		return record(ctx, transaction, current, metadata, "library.updated", libraryID, "", map[string]any{"name": name, "ocr_languages": languages})
 	})
 }
 func (service *Service) SetMember(ctx context.Context, principal domain.Principal, libraryID, userID string, roles []string, metadata domain.RequestMetadata) error {
 	unique := map[string]bool{}
 	for _, role := range roles {
-		if (role != "library_reader" && role != "library_manager" && role != "library_auditor") || unique[role] {
+		if (role != "library_reader" && role != "library_manager" && role != "library_auditor" && role != "library_contributor" && role != "library_reviewer") || unique[role] {
 			return invalid("Perfil de biblioteca inválido o repetido.")
 		}
 		unique[role] = true

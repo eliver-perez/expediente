@@ -1,8 +1,8 @@
-# Arquitectura propuesta — V1
+# AIBID — Arquitectura V1
 
-Estado: H1 aprobada; H2 y bibliotecas vinculadas/vigilancia/búsqueda H3 implementadas.
+Estado: H1 aprobada; H2–H5 implementadas, incluida revisión y materialización recuperable.
 Requisitos en [alcance](docs/REQUIREMENTS.md), decisiones en [DECISIONS.md](DECISIONS.md)
-y entrega ejecutable en [H3](docs/H3.md). No hay dependencia operativa de XAMPP,
+y entrega ejecutable en [H5](docs/H5.md). No hay dependencia operativa de XAMPP,
 PHP ni MySQL, aunque esta carpeta esté bajo `htdocs`. No servir esta carpeta fuente
 como raíz pública de Apache; los instaladores entregarán binario y assets compilados.
 
@@ -142,3 +142,32 @@ La vigilancia por subdirectorio y sus límites de red se verificaron en la
 [documentación de fsnotify](https://github.com/fsnotify/fsnotify).
 El procedimiento de copia consistente usa la [API de backup SQLite](https://www.sqlite.org/backup.html).
 Estas referencias no fijan por sí solas versiones ni sustituyen pruebas por SO.
+
+## Implementación de organización H4
+
+`internal/libraries` mantiene una transacción de autorización para cada mutación.
+`settings.go`, `catalogs.go`, `cases.go` y `classification.go` implementan modalidad,
+configuraciones versionadas, catálogos, plantillas inmutables, requerimientos
+particulares y asociaciones. `uploads.go` recibe bytes fuera de raíces documentales
+con un journal `receiving`, valida PDF y publica documento/versión/job en una sola
+transacción. La cola existente extrae también temporales mediante handles privados.
+
+El filtro autor/revisor se aplica antes de paginar, contar o recuperar texto de
+cargas privadas. Una asociación linked cambia metadatos: conserva identidad,
+ubicaciones, contenido y extracción. Las raíces managed se registran como destinos;
+H5 utiliza esos destinos para publicar documentos mediante un diario recuperable.
+
+La interfaz AIBID incluye Cargas, Expedientes, Catálogos y ajustes por biblioteca,
+además del buscador con filtros documentales. Los assets SVG son locales y están
+embebidos junto con React; no hay fuentes ni servicios de marca externos.
+
+## Workflow y almacenamiento H5
+
+`workflow.go` valida política, responsabilidad y revisión; `materialization.go`
+planifica/publica/confirma/limpia con diario y fencing. La cola recupera operaciones
+interrumpidas sin duplicar ubicaciones ni aprobaciones. La ruta queda fija desde
+la solicitud y la aprobación solo se confirma tras verificar el destino.
+`managed_integrity.go` examina ubicaciones registradas con reglas distintas del
+escáner linked. El avance del expediente continúa derivándose de estados reales.
+La retención elimina solo temporales vencidos rechazados/cancelados y conserva
+su privacidad, texto e historial. [Protocolo y pruebas](docs/H5.md).

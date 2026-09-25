@@ -96,3 +96,24 @@ no dependen solo de color; etiquetas, navegación por teclado y foco tras errore
 Mensaje de sesión exacto en [SECURITY.md](../SECURITY.md). Licencia en gracia avisa
 al administrador; read-only explica el motivo sin ocultar descarga/respaldo permitidos.
 No se añade panel de ventas, campos institucionales ni filtros obligatorios ajenos.
+
+## Pantallas entregadas H4
+
+AIBID incorpora Cargas (arrastre multifile, progreso, reintento y lotes), Expedientes
+(plantilla, requisitos propios, avance y asociación de vinculados), Catálogos
+(categorías/tipos/versiones) y Configuración (modalidad, campos, patrones y preview).
+La ficha clasifica/reasigna/cancela según permisos. El buscador incorpora filtros
+de organización al seleccionar biblioteca, y el retiro advierte su impacto en
+expedientes. Navegación responsive verificada a 390 px. Marca/eslogan y SVG locales
+claros/oscuros se usan en login, navegación y cabecera. La revisión/materialización
+se incorporará en H5; no hay acciones simuladas. [Recorrido de prueba](H4.md).
+
+## Entrega H5
+
+Configuración incorpora revisión independiente por origen y días de retención.
+Revisiones muestra responsabilidades asignadas/compartidas de cada biblioteca.
+La ficha presenta envío, confirmación directa, decisión con motivo y etapas del
+guardado/reintento. Distingue integridad alterada, disponibilidad, aprobación y
+frescura del texto. Procesamiento distingue verificación administrada y guardado.
+Los avisos explican si un cambio administrado exige decisión o uno vinculado
+conserva aprobación. [Recorrido H5](H5.md).

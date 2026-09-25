@@ -14,6 +14,7 @@ import (
 )
 
 type Root struct {
+	Source        string `json:"storage_source"`
 	ID            string `json:"id"`
 	LibraryID     string `json:"library_id"`
 	Path          string `json:"server_path,omitempty"`
@@ -27,16 +28,24 @@ type Root struct {
 	LastScan      string `json:"last_scan_at"`
 }
 
+const rootColumns = "id,library_id,canonical_path,directory_identity,status,watch_mode,configuration_revision,reconcile_interval_seconds,case_sensitive,coalesce(last_error_code,''),coalesce(last_scan_at,''),storage_source"
+
+func scanRoot(row rowScanner) (Root, error) {
+	var root Root
+	err := row.Scan(&root.ID, &root.LibraryID, &root.Path, &root.Identity, &root.Status, &root.WatchMode, &root.Revision, &root.Interval, &root.CaseSensitive, &root.LastError, &root.LastScan, &root.Source)
+	return root, err
+}
+
 func rootsQuery(ctx context.Context, query storage.Querier, libraryID string) ([]Root, error) {
 	roots := []Root{}
-	rows, err := query.QueryContext(ctx, "SELECT id,library_id,canonical_path,directory_identity,status,watch_mode,configuration_revision,reconcile_interval_seconds,case_sensitive,coalesce(last_error_code,''),coalesce(last_scan_at,'') FROM storage_roots WHERE (?='' OR library_id=?) ORDER BY id", libraryID, libraryID)
+	rows, err := query.QueryContext(ctx, "SELECT id,library_id,canonical_path,directory_identity,status,watch_mode,configuration_revision,reconcile_interval_seconds,case_sensitive,coalesce(last_error_code,''),coalesce(last_scan_at,''),storage_source FROM storage_roots WHERE (?='' OR library_id=?) ORDER BY id", libraryID, libraryID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var root Root
-		if err = rows.Scan(&root.ID, &root.LibraryID, &root.Path, &root.Identity, &root.Status, &root.WatchMode, &root.Revision, &root.Interval, &root.CaseSensitive, &root.LastError, &root.LastScan); err != nil {
+		if err = rows.Scan(&root.ID, &root.LibraryID, &root.Path, &root.Identity, &root.Status, &root.WatchMode, &root.Revision, &root.Interval, &root.CaseSensitive, &root.LastError, &root.LastScan, &root.Source); err != nil {
 			return nil, err
 		}
 		roots = append(roots, root)
@@ -61,6 +70,7 @@ func (service *Service) Roots(ctx context.Context, principal domain.Principal, l
 }
 
 type Plan struct {
+	Source   string   `json:"storage_source"`
 	ID       string   `json:"id"`
 	Relation string   `json:"relation"`
 	Revision int64    `json:"expected_configuration_revision"`
@@ -73,7 +83,7 @@ func (service *Service) inspect(ctx context.Context, query storage.Querier, libr
 	if err != nil {
 		return directory, "", nil, err
 	}
-	protected := []string{service.Identity.Config.StateDirectory}
+	protected := []string{service.Identity.Config.StateDirectory, service.Identity.Config.PrivateUploadDirectory()}
 	if executable, err := os.Executable(); err == nil {
 		protected = append(protected, filepath.Dir(executable))
 	}
@@ -138,8 +148,18 @@ func (service *Service) inspect(ctx context.Context, query storage.Querier, libr
 	return directory, relation, related, nil
 }
 func (service *Service) PlanRoot(ctx context.Context, principal domain.Principal, libraryID, path string, metadata domain.RequestMetadata) (Plan, error) {
-	plan := Plan{ID: domain.NewID()}
+	return service.PlanStorageRoot(ctx, principal, libraryID, path, "linked", metadata)
+}
+func (service *Service) PlanStorageRoot(ctx context.Context, principal domain.Principal, libraryID, path, source string, metadata domain.RequestMetadata) (Plan, error) {
+	if source != "linked" && source != "managed" {
+		return Plan{}, invalid("Origen de almacenamiento inválido.")
+	}
+
+	plan := Plan{ID: domain.NewID(), Source: source}
 	err := service.write(ctx, principal, libraryID, "storage.manage_roots", func(transaction *sql.Tx, current domain.Principal) error {
+		if err := service.requireRootSource(ctx, transaction, libraryID, source, nil); err != nil {
+			return err
+		}
 		directory, relation, related, err := service.inspect(ctx, transaction, libraryID, path)
 		if err != nil {
 			return err
@@ -147,10 +167,13 @@ func (service *Service) PlanRoot(ctx context.Context, principal domain.Principal
 		if err = transaction.QueryRowContext(ctx, "SELECT current_configuration_revision FROM libraries WHERE id=?", libraryID).Scan(&plan.Revision); err != nil {
 			return err
 		}
+		if err = service.requireRootSource(ctx, transaction, libraryID, source, related); err != nil {
+			return err
+		}
 		plan.Relation = relation
 		plan.Related = related
 		plan.Path = directory.Path
-		_, err = transaction.ExecContext(ctx, "INSERT INTO root_plans(id,library_id,actor_user_id,server_path,directory_identity,relation,related_root_ids_json,expected_revision,expires_at) VALUES(?,?,?,?,?,?,?,?,?)", plan.ID, libraryID, current.User.ID, directory.Path, directory.Identity, relation, encode(related), plan.Revision, domain.Timestamp(time.Now().Add(15*time.Minute)))
+		_, err = transaction.ExecContext(ctx, "INSERT INTO root_plans(id,library_id,actor_user_id,server_path,directory_identity,relation,related_root_ids_json,expected_revision,expires_at,storage_source) VALUES(?,?,?,?,?,?,?,?,?,?)", plan.ID, libraryID, current.User.ID, directory.Path, directory.Identity, relation, encode(related), plan.Revision, domain.Timestamp(time.Now().Add(15*time.Minute)), source)
 		return err
 	})
 	return plan, err
@@ -158,10 +181,10 @@ func (service *Service) PlanRoot(ctx context.Context, principal domain.Principal
 func (service *Service) ConfirmRoot(ctx context.Context, principal domain.Principal, libraryID, planID string, revision int64, consolidate bool, metadata domain.RequestMetadata) (string, error) {
 	rootID := domain.NewID()
 	err := service.write(ctx, principal, libraryID, "storage.manage_roots", func(transaction *sql.Tx, current domain.Principal) error {
-		var path, identity, relation, relatedJSON, expires string
+		var path, identity, relation, relatedJSON, expires, source string
 		var expected int64
 		var committed sql.NullString
-		err := transaction.QueryRowContext(ctx, "SELECT server_path,directory_identity,relation,related_root_ids_json,expected_revision,expires_at,committed_root_id FROM root_plans WHERE id=? AND library_id=? AND actor_user_id=?", planID, libraryID, current.User.ID).Scan(&path, &identity, &relation, &relatedJSON, &expected, &expires, &committed)
+		err := transaction.QueryRowContext(ctx, "SELECT server_path,directory_identity,relation,related_root_ids_json,expected_revision,expires_at,committed_root_id,storage_source FROM root_plans WHERE id=? AND library_id=? AND actor_user_id=?", planID, libraryID, current.User.ID).Scan(&path, &identity, &relation, &relatedJSON, &expected, &expires, &committed, &source)
 		if err == sql.ErrNoRows {
 			return notFound()
 		}
@@ -184,6 +207,14 @@ func (service *Service) ConfirmRoot(ctx context.Context, principal domain.Princi
 		if err != nil {
 			return err
 		}
+		if err = service.requireRootSource(ctx, transaction, libraryID, source, related); err != nil {
+			return err
+		}
+		if source == "managed" {
+			if err = probeManagedRoot(directory.Path); err != nil {
+				return err
+			}
+		}
 		if directory.Identity != identity || newRelation != relation || encode(related) != relatedJSON {
 			return stale
 		}
@@ -196,7 +227,7 @@ func (service *Service) ConfirmRoot(ctx context.Context, principal domain.Princi
 		if relation == "ancestor" && !consolidate {
 			return domain.Failure("ROOT_CONSOLIDATION_REQUIRED", "Confirma la consolidación de las raíces hijas.", 409)
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO storage_roots(id,library_id,storage_source,canonical_path,comparison_key,volume_identity,case_sensitive,status,watch_mode,reconcile_interval_seconds,created_at,directory_identity) VALUES(?,?,'linked',?,?,?,?, 'active','polling',900,?,?)", rootID, libraryID, path, comparison(path, directory.CaseSensitive), volumeKey(identity), directory.CaseSensitive, now(), identity); err != nil {
+		if _, err = transaction.ExecContext(ctx, "INSERT INTO storage_roots(id,library_id,storage_source,canonical_path,comparison_key,volume_identity,case_sensitive,status,watch_mode,reconcile_interval_seconds,created_at,directory_identity) VALUES(?,?,?,?,?,?,?, 'active','polling',900,?,?)", rootID, libraryID, source, path, comparison(path, directory.CaseSensitive), volumeKey(identity), directory.CaseSensitive, now(), identity); err != nil {
 			return err
 		}
 		if relation == "ancestor" {
@@ -204,7 +235,7 @@ func (service *Service) ConfirmRoot(ctx context.Context, principal domain.Princi
 				return err
 			}
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO storage_root_configuration_versions VALUES(?,1,?,?,?, ?,?)", rootID, path, comparison(path, directory.CaseSensitive), encode(map[string]any{"source": "linked"}), now(), current.User.ID); err != nil {
+		if _, err = transaction.ExecContext(ctx, "INSERT INTO storage_root_configuration_versions VALUES(?,1,?,?,?, ?,?)", rootID, path, comparison(path, directory.CaseSensitive), encode(map[string]any{"source": source}), now(), current.User.ID); err != nil {
 			return err
 		}
 		if _, err = transaction.ExecContext(ctx, "UPDATE libraries SET current_configuration_revision=current_configuration_revision+1,revision=revision+1 WHERE id=?", libraryID); err != nil {
@@ -213,10 +244,16 @@ func (service *Service) ConfirmRoot(ctx context.Context, principal domain.Princi
 		if _, err = transaction.ExecContext(ctx, "UPDATE root_plans SET committed_root_id=? WHERE id=?", rootID, planID); err != nil {
 			return err
 		}
-		if err = enqueueScan(ctx, transaction, libraryID, rootID); err != nil {
-			return err
+		if source == "linked" {
+			if err = enqueueScan(ctx, transaction, libraryID, rootID); err != nil {
+				return err
+			}
+		} else {
+			if _, err = transaction.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='paused' WHERE id=?", rootID); err != nil {
+				return err
+			}
 		}
-		return record(ctx, transaction, current, metadata, "storage.root_added", libraryID, "", map[string]any{"root_id": rootID, "consolidated_root_ids": related})
+		return record(ctx, transaction, current, metadata, "storage.root_added", libraryID, "", map[string]any{"root_id": rootID, "storage_source": source, "consolidated_root_ids": related})
 	})
 	return rootID, err
 }
@@ -318,4 +355,44 @@ func decodeStrings(contents string) ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+func (service *Service) requireRootSource(ctx context.Context, query storage.Querier, libraryID, source string, related []string) error {
+	_, mode, err := settingsFor(ctx, query, libraryID)
+	if err != nil {
+		return err
+	}
+	if source == "managed" && mode == "linked" || source == "linked" && mode == "managed" {
+		return invalid("Esta modalidad no admite ese origen; amplía la biblioteca a híbrida.")
+	}
+	for _, identifier := range related {
+		var existing string
+		if err = query.QueryRowContext(ctx, "SELECT storage_source FROM storage_roots WHERE id=?", identifier).Scan(&existing); err != nil {
+			return err
+		}
+		if existing != source || source == "managed" {
+			return domain.Failure("ROOT_STORAGE_OVERLAP", "Los destinos administrados deben estar separados de cualquier raíz existente.", 409)
+		}
+	}
+	return nil
+}
+func probeManagedRoot(path string) error {
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return invalid("No se puede abrir el destino administrado.")
+	}
+	defer root.Close()
+	name := ".documental-probe-" + domain.NewID()
+	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return invalid("El destino necesita permisos de escritura.")
+	}
+	defer root.Remove(name)
+	_, writeErr := file.Write([]byte("probe"))
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil || syncErr != nil || closeErr != nil {
+		return invalid("No se pudo verificar escritura en el destino.")
+	}
+	return nil
 }

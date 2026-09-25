@@ -14,6 +14,7 @@ type Event struct {
 	ID          string
 	LibraryID   string
 	DocumentID  string
+	CaseID      string
 	Type        string
 	ActorUserID string
 	SystemActor bool
@@ -45,9 +46,9 @@ func Append(ctx context.Context, transaction *sql.Tx, now time.Time, event Event
 		event.ID = domain.NewID()
 	}
 	_, err = transaction.ExecContext(ctx, `INSERT INTO audit_events
-		(id, occurred_at, actor_kind, actor_user_id, session_id, observed_ip, request_id, event_type, details_json,library_id,document_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?,?)`, event.ID, domain.Timestamp(now), actorKind,
-		actorID, nullable(event.SessionID), nullable(event.Metadata.ObservedIP), event.Metadata.RequestID, event.Type, string(details), nullable(event.LibraryID), nullable(event.DocumentID))
+		(id, occurred_at, actor_kind, actor_user_id, session_id, observed_ip, request_id, event_type, details_json,library_id,document_id,case_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?)`, event.ID, domain.Timestamp(now), actorKind,
+		actorID, nullable(event.SessionID), nullable(event.Metadata.ObservedIP), event.Metadata.RequestID, event.Type, string(details), nullable(event.LibraryID), nullable(event.DocumentID), nullable(event.CaseID))
 	return err
 }
 

@@ -105,9 +105,14 @@ func drain(t *testing.T, service *Service) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.Kind == "scan" {
+		switch job.Kind {
+		case "scan":
 			err = service.Scan(context.Background(), job.Version, 256<<20, nil)
-		} else {
+		case "materialize":
+			err = service.Materialize(context.Background(), job)
+		case "verify_managed":
+			err = service.VerifyManagedRoot(context.Background(), job.Version)
+		default:
 			err = service.Extract(context.Background(), job, service.Identity.Config.Indexing)
 		}
 		if err != nil {

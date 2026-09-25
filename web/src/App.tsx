@@ -3,6 +3,7 @@ import { api, APIError, message, setCSRF, type SessionResponse, type User } from
 import { Notice } from './components';
 import { Libraries } from './Libraries';
 import { Search } from './Search';
+import { Brand } from './Brand';
 import { Account } from './Account';
 import { Users } from './Users';
 import { Access, Events } from './Activity';
@@ -57,7 +58,7 @@ export function App() {
   }
   if (initializing) return <main className="loading" role="status">Preparando tu espacio de trabajo…</main>;
   if (!user) return <main className="login-layout">
-    <section className="login-intro"><div className="brand"><span className="brand-mark" aria-hidden="true">G</span><span>Gestor<br />documental</span></div><div><p className="eyebrow">ESPACIO DE TRABAJO LOCAL</p><h1>Un lugar para<br />trabajar en orden.</h1><p>Accede con tu cuenta personal para continuar.</p></div><p className="intro-footer">Documentos · Personas · Trazabilidad</p></section>
+    <section className="login-intro"><Brand dark variant="vertical" className="login-brand" /><div><p className="eyebrow">ESPACIO DE TRABAJO LOCAL</p><h1>Tu biblioteca digital,<br />ordenada y al alcance.</h1><p>Accede con tu cuenta personal para continuar.</p></div><p className="intro-footer">Documentos · Personas · Trazabilidad</p></section>
     <section className="login-form"><div className="login-box"><p className="eyebrow">BIENVENIDO</p><h2>Iniciar sesión</h2><p className="muted">Introduce los datos de tu cuenta.</p><Notice text={notice} kind={notice.includes('otro equipo') ? 'error' : 'success'} /><Notice text={error} />
       <form onSubmit={login} className="form-grid"><label>Usuario<input name="username" autoComplete="username" autoFocus required maxLength={80} /></label><label>Contraseña<input name="password" type="password" autoComplete="current-password" required maxLength={128} /></label><button disabled={busy}>{busy ? 'Ingresando…' : 'Entrar'}</button></form>
       <p className="login-help">Si olvidaste tu contraseña, contacta al administrador de la instalación.</p>
@@ -75,7 +76,7 @@ export function App() {
   else if (path === '/admin/access' && can('sessions.read_all') && can('authentication_attempts.read')) content = <Access />;
   else if (path === '/admin/events' && can('audit.read_global')) content = <Events />;
   else if (path.startsWith('/admin/')) content = <Notice text="No tienes permiso para consultar esta página." />;
-  return <div className="app-layout"><aside className="sidebar"><div className="brand"><span className="brand-mark" aria-hidden="true">G</span><span>Gestor<br />documental</span></div><p className="nav-label">ESPACIO DE TRABAJO</p><nav aria-label="Principal">{links.filter(link => link.available).map(link => <a key={link.path} href={link.path} aria-current={path === link.path ? 'page' : undefined} onClick={event => { event.preventDefault(); setError(''); navigate(link.path); }}>{link.label}</a>)}</nav><div className="sidebar-footer"><span className="status-dot" /> Instalación local</div></aside>
-    <div className="workspace"><header className="topbar"><span>Gestor documental</span><div><span className="user-name">{user.display_name}</span><button className="secondary" disabled={busy} onClick={() => void logout()}>Cerrar sesión</button></div></header><main className="main-content"><Notice text={error} />{content}</main><footer className="workspace-footer">Gestor documental · Bibliotecas y acceso controlado</footer></div>
+  return <div className="app-layout"><aside className="sidebar"><Brand dark variant="vertical" className="sidebar-brand" /><p className="nav-label">ESPACIO DE TRABAJO</p><nav aria-label="Principal">{links.filter(link => link.available).map(link => <a key={link.path} href={link.path} aria-current={path === link.path ? 'page' : undefined} onClick={event => { event.preventDefault(); setError(''); navigate(link.path); }}>{link.label}</a>)}</nav><div className="sidebar-footer"><span className="status-dot" /> Instalación local</div></aside>
+    <div className="workspace"><header className="topbar"><Brand className="topbar-brand" /><div><span className="user-name">{user.display_name}</span><button className="secondary" disabled={busy} onClick={() => void logout()}>Cerrar sesión</button></div></header><main className="main-content"><Notice text={error} />{content}</main><footer className="workspace-footer">AIBID · Tu biblioteca digital, ordenada y al alcance.</footer></div>
   </div>;
 }

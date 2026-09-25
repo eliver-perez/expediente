@@ -1,8 +1,8 @@
 {
   "version": "2.0.0",
   "tasks": [
-    { "label": "H3: compilar", "type": "shell", "command": "make build-dev", "group": { "kind": "build", "isDefault": true }, "problemMatcher": ["$go"] },
-    { "label": "H3: pruebas", "type": "shell", "command": "make check", "group": { "kind": "test", "isDefault": true }, "problemMatcher": ["$go"] },
-    { "label": "H3: navegador", "type": "shell", "command": "make test-e2e", "problemMatcher": [] }
+    { "label": "AIBID H4: compilar", "type": "shell", "command": "make build-dev", "group": { "kind": "build", "isDefault": true }, "problemMatcher": ["$go"] },
+    { "label": "AIBID H4: pruebas", "type": "shell", "command": "make check", "group": { "kind": "test", "isDefault": true }, "problemMatcher": ["$go"] },
+    { "label": "AIBID H4: navegador", "type": "shell", "command": "make test-e2e", "problemMatcher": [] }
   ]
 }

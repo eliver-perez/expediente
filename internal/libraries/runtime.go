@@ -26,14 +26,15 @@ type Job struct {
 	Fence     int64  `json:"-"`
 }
 type Runtime struct {
-	Service     *Service
-	watcher     *fsnotify.Watcher
-	mutex       sync.Mutex
-	directories map[string]string
-	dirty       map[string]time.Time
-	degraded    map[string]string
-	cancel      context.CancelFunc
-	workers     sync.WaitGroup
+	Service            *Service
+	watcher            *fsnotify.Watcher
+	mutex              sync.Mutex
+	directories        map[string]string
+	dirty              map[string]time.Time
+	degraded           map[string]string
+	cancel             context.CancelFunc
+	workers            sync.WaitGroup
+	nextRetentionCheck time.Time
 }
 
 func (service *Service) Start(ctx context.Context) (*Runtime, error) {
@@ -41,15 +42,10 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 	if err := licensing.Check(licensing.WriteDocuments); err != nil {
 		return runtime, nil
 	}
-	// The exclusive state lock proves that no worker from the previous process survives.
-	err := service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if _, err := transaction.ExecContext(ctx, "UPDATE job_attempts SET finished_at=?,error_code='PROCESS_RESTARTED' WHERE finished_at IS NULL", now()); err != nil {
-			return err
-		}
-		_, err := transaction.ExecContext(ctx, "UPDATE jobs SET status=CASE WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'retry_wait' END,available_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code='PROCESS_RESTARTED',fencing_token=fencing_token+1 WHERE status='running'", now())
-		return err
-	})
-	if err != nil {
+	if err := service.recoverUploads(ctx); err != nil {
+		return nil, err
+	}
+	if err := service.recoverJobs(ctx); err != nil {
 		return nil, err
 	}
 	workerContext, cancel := context.WithCancel(ctx)
@@ -66,6 +62,19 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 		go runtime.worker(workerContext)
 	}
 	return runtime, nil
+}
+func (service *Service) recoverJobs(ctx context.Context) error {
+	// The exclusive state lock proves that no worker from the previous process survives.
+	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
+		if _, err := transaction.ExecContext(ctx, "UPDATE job_attempts SET finished_at=?,error_code='PROCESS_RESTARTED' WHERE finished_at IS NULL", now()); err != nil {
+			return err
+		}
+		if _, err := transaction.ExecContext(ctx, "UPDATE materializations SET state=CASE WHEN state IN ('committed','cleaned') THEN state ELSE 'failed' END,error_code='PROCESS_RESTARTED',updated_at=? WHERE id IN (SELECT target_version FROM jobs WHERE job_type='materialize' AND status='running')", now()); err != nil {
+			return err
+		}
+		_, err := transaction.ExecContext(ctx, "UPDATE jobs SET status=CASE WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'retry_wait' END,available_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code='PROCESS_RESTARTED',fencing_token=fencing_token+1 WHERE status='running'", now())
+		return err
+	})
 }
 func (runtime *Runtime) Close() {
 	if runtime.cancel != nil {
@@ -136,22 +145,31 @@ func (runtime *Runtime) schedule(ctx context.Context) {
 	}
 }
 func (runtime *Runtime) scheduleOnce(ctx context.Context) {
+	if time.Now().After(runtime.nextRetentionCheck) {
+		_ = runtime.Service.cleanExpiredUploads(ctx)
+		runtime.nextRetentionCheck = time.Now().Add(time.Minute)
+	}
 	roots, err := rootsQuery(ctx, runtime.Service.Database.Reader, "")
 	if err != nil {
 		return
 	}
 	active := map[string]bool{}
 	for _, root := range roots {
-		if !activeRoot(root) {
+		if !verifiableRoot(root) {
 			continue
 		}
 		active[root.ID] = true
-		watchError := runtime.register(root.ID, root.Path)
+		watchError := errors.New("managed uses periodic verification")
+		if root.Source != "managed" {
+			watchError = runtime.register(root.ID, root.Path)
+		}
 		runtime.mutex.Lock()
 		dirtyAt, dirty := runtime.dirty[root.ID]
 		degraded := runtime.degraded[root.ID]
 		runtime.mutex.Unlock()
-		if degraded != "" {
+		if root.Source == "managed" {
+			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling' WHERE id=? AND watch_mode<>'polling'", root.ID)
+		} else if degraded != "" {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling',last_error_code=? WHERE id=? AND (watch_mode<>'polling' OR coalesce(last_error_code,'')<>?)", degraded, root.ID, degraded)
 		} else if watchError == nil {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='native' WHERE id=? AND watch_mode<>'native'", root.ID)
@@ -164,14 +182,14 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		queued := false
 		err := runtime.Service.Database.Write(ctx, func(transaction *sql.Tx) error {
 			var count int
-			if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_type='scan' AND target_version=? AND status IN ('queued','running','retry_wait')", root.ID).Scan(&count); err != nil {
+			if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_type=? AND target_version=? AND status IN ('queued','running','retry_wait')", rootJobKind(root), root.ID).Scan(&count); err != nil {
 				return err
 			}
 			if count > 0 {
 				return nil
 			}
 			queued = true
-			return enqueueScan(ctx, transaction, root.LibraryID, root.ID)
+			return enqueueVerification(ctx, transaction, root)
 		})
 		if err == nil && queued && dirty {
 			runtime.mutex.Lock()
@@ -195,7 +213,7 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 func (service *Service) claim(ctx context.Context) (Job, error) {
 	var job Job
 	err := service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		err := transaction.QueryRowContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token FROM jobs j WHERE status IN ('queued','retry_wait') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type='scan' AND j.job_type='scan' AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 1", now()).Scan(&job.ID, &job.LibraryID, &job.FileID, &job.Kind, &job.Version, &job.Attempts, &job.Fence)
+		err := transaction.QueryRowContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token FROM jobs j WHERE status IN ('queued','retry_wait') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 1", now()).Scan(&job.ID, &job.LibraryID, &job.FileID, &job.Kind, &job.Version, &job.Attempts, &job.Fence)
 		if err != nil {
 			return err
 		}
@@ -235,6 +253,10 @@ func (runtime *Runtime) worker(ctx context.Context) {
 				}
 				return watchError
 			})
+		} else if job.Kind == "materialize" {
+			err = runtime.Service.Materialize(operationContext, job)
+		} else if job.Kind == "verify_managed" {
+			err = runtime.Service.VerifyManagedRoot(operationContext, job.Version)
 		} else if job.Kind == "extract" {
 			err = runtime.Service.Extract(operationContext, job, runtime.Service.Identity.Config.Indexing)
 		} else {
@@ -255,7 +277,7 @@ func (service *Service) finish(ctx context.Context, job Job, cause error) error 
 		if cause != nil {
 			code = failureCode(cause)
 			status = "failed"
-			transient := code == "FILE_UNSTABLE" || code == "ROOT_UNAVAILABLE" || code == "SOURCE_UNAVAILABLE" || code == "PROCESS_TIMEOUT" || code == "DOCUMENT_UNAVAILABLE" || code == "DIRECTORY_CHANGED"
+			transient := code == "FILE_UNSTABLE" || code == "ROOT_UNAVAILABLE" || code == "SOURCE_UNAVAILABLE" || code == "PROCESS_TIMEOUT" || code == "DOCUMENT_UNAVAILABLE" || code == "DIRECTORY_CHANGED" || code == "STORAGE_UNAVAILABLE" || code == "STORAGE_SPACE" || code == "STORAGE_PUBLICATION_FAILED"
 			if transient && job.Attempts < 5 {
 				status = "retry_wait"
 				available = domain.Timestamp(time.Now().Add(time.Duration(1<<job.Attempts) * time.Second))
@@ -267,8 +289,21 @@ func (service *Service) finish(ctx context.Context, job Job, cause error) error 
 		if _, err := transaction.ExecContext(ctx, "UPDATE job_attempts SET finished_at=?,error_code=? WHERE job_id=? AND fencing_token=?", now(), code, job.ID, job.Fence); err != nil {
 			return err
 		}
-		if _, err := transaction.ExecContext(ctx, "UPDATE jobs SET status=?,last_error_code=?,available_at=?,lease_owner=NULL,lease_expires_at=NULL WHERE id=? AND fencing_token=? AND status='running'", status, code, available, job.ID, job.Fence); err != nil {
+		result, err := transaction.ExecContext(ctx, "UPDATE jobs SET status=?,last_error_code=?,available_at=?,lease_owner=NULL,lease_expires_at=NULL WHERE id=? AND fencing_token=? AND status='running'", status, code, available, job.ID, job.Fence)
+		if err != nil {
 			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return nil
+		}
+		if job.Kind == "materialize" && cause != nil {
+			if _, err := transaction.ExecContext(ctx, "UPDATE materializations SET state=CASE WHEN state IN ('committed','cleaned') THEN state ELSE 'failed' END,error_code=?,updated_at=? WHERE id=?", code, now(), job.Version); err != nil {
+				return err
+			}
 		}
 		if status == "failed" || status == "retry_wait" {
 			return record(ctx, transaction, domain.Principal{}, domain.RequestMetadata{RequestID: domain.NewID()}, "indexing.attempt_failed", job.LibraryID, "", map[string]any{"job_id": job.ID, "error_code": code, "attempt": job.Attempts})

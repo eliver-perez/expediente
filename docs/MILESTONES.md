@@ -60,7 +60,71 @@ build de desarrollo macOS arm64 listo. La ejecución nativa fue en macOS arm64.
 NAS desconectado y pérdida de eventos se simularon; la matriz nativa completa,
 ensayos de carga e instaladores siguen en H7. Licencia comercial/JWS sigue en H6.
 Alcance, archivos, checksum, comandos y límites en [la entrega H3](H3.md).
-El siguiente módulo es H4, después de revisar esta entrega.
+Al cerrar H3, el siguiente módulo era H4, autorizado después por el propietario.
+
+## Evidencia de esta entrega H4
+
+Implementación y verificación local completadas el 2026-09-24. Marca elegida por
+el propietario: **AIBID — Aplicación de Indexación de Bibliotecas Digitales**;
+eslogan **Tu biblioteca digital, ordenada y al alcance.** Los cuatro SVG copiados
+se compararon byte por byte con los originales y son idénticos.
+
+`make check` aprobó React/TypeScript, formato, vet, Go con detector de carreras
+en builds normal/development (**40 funciones de prueba distintas**) y los 14
+checks H1. La suite Chrome aprobó **cinco escenarios H2–H4**, incluidos carga
+múltiple/clasificación, filtros, expediente y visualización móvil a 390 px.
+La revisión visual cubrió login AIBID, ficha privada, expediente y buscador móvil.
+
+Pruebas H4: conservación al convertir linked→hybrid y añadir raíces durante
+cargas; asociación/reasignación sin nueva extracción; aislamiento de temporales
+para autor/revisor y revocación inmediata; multipart/CSRF/Range; PDF inválido,
+reintento idempotente, recuperación `receiving`, colisiones entre fuentes;
+snapshots e inicialización única; rechazo de clasificación entre bibliotecas,
+multiplicidad y avance derivado (incluyendo estados de aprobación simulados en
+fixtures para su cálculo). Un cambio de asociación invalida el plan de retiro.
+Migración poblada H3 conserva IDs/FTS/OCR y rechaza reversión destructiva.
+
+Binarios actualizados sin CGO: macOS arm64 normal/development, macOS amd64,
+Linux amd64 y Windows amd64. Ejecución nativa únicamente en macOS arm64. CLI
+probada con configuración temporal: init, migrate, rollback-empty, nueva migración,
+integridad, FKs y rechazo de arranque sin administrador. No se crearon credenciales
+ni configuración real. El contrato de licencia y migraciones H2/H3 no cambiaron.
+
+[Entrega, comandos y límites H4](H4.md). Después de confirmar la corrección del
+escaneo híbrido, el propietario autorizó H5. Licencia comercial permanece en H6
+y validación nativa completa/instaladores en H7.
+
+## Evidencia de esta entrega H5
+
+Implementación y verificación local completadas el 2026-09-24. `make check`
+aprobó React/TypeScript, formato, vet, builds normal/development con detector de
+carreras (**51 funciones de prueba Go distintas**) y los **14 checks H1**. La suite
+Chrome aprobó **seis escenarios H2–H5**, incluidos confirmación directa, cambio
+externo administrado, rechazo/reenvío, aprobación desde otra cuenta y publicación
+de una carga temporal revisada. Revisión visual de guardado y ficha móvil a 390 px.
+
+Pruebas H5: cinco interrupciones de materialización con cierre/reapertura de SQLite,
+recuperación del diario y rechazo del trabajador obsoleto; colisión sin reemplazo,
+ninguna aprobación sin destino verificado, revocación de autorización antes del
+commit y conservación del temporal si cambia el definitivo antes de limpiar.
+También asignación/cola compartida, versión obsoleta, reenvío, idempotencia,
+separación de responsabilidades y excepción explícita auditada, retención vencida
+sin pérdida de OCR/privacidad, permisos HTTP/CSRF/Range y migración H4 poblada.
+
+Verificación de integridad: managed alterado deja de contar válido y exige decisión;
+linked conserva aprobación. La publicación propia no genera aviso externo falso.
+Cambiar patrones después de planificar/publicar no mueve el histórico. Los
+checksums de 0001–0003 y `LICENSE_CONTRACT.md` siguen idénticos.
+
+Cinco binarios actualizados sin CGO: macOS arm64 normal/development, macOS amd64,
+Linux amd64 y Windows amd64. Ejecución nativa solo en macOS arm64; la compilación
+cruzada no acredita ejecución. Se prueba CLI y reversión vacía con estado aislado.
+Las interrupciones usan el volumen local: no se certifican aún corte de energía,
+discos físicos diferentes, SMB/NFS ni matriz operativa H7. No se toca la instalación
+en uso ni se reparan los archivos de prueba anteriores del propietario.
+
+[Entrega y recuperación H5](H5.md). El siguiente módulo es **H6: cliente de
+licencias V1.0 online/offline**, tras revisar esta entrega.
 
 ## Pruebas funcionales vinculadas al alcance
 

@@ -156,5 +156,5 @@ func (server *Server) status(writer http.ResponseWriter, request *http.Request, 
 		server.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, 200, map[string]any{"stage": "H3", "extraction_tools": server.configuration.Indexing.Diagnostics(), "sqlite_version": version, "development_license": licensing.DevelopmentEnabled(), "license_state": "unactivated"})
+	writeJSON(writer, 200, map[string]any{"stage": "H4", "product_name": "AIBID", "extraction_tools": server.configuration.Indexing.Diagnostics(), "sqlite_version": version, "development_license": licensing.DevelopmentEnabled(), "license_state": "unactivated"})
 }

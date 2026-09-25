@@ -1,4 +1,4 @@
-# Modelo de datos propuesto
+# AIBID — Modelo de datos
 
 El [SQL de referencia](db/schema.proposed.sql) describe V1 completa para revisar
 invariantes; **no es una migración inicial que cree todos los módulos**. H2 implementa
@@ -10,8 +10,23 @@ el alta única y los límites persistentes. En H2 no se crearon tablas documenta
 H3 agrega `0002_linked_libraries.up.sql`: bibliotecas/permisos, raíces/planes/vistas,
 identidades y ubicaciones, versiones/extracciones/páginas, documentos vinculados,
 FTS, cola/checkpoints, notificaciones y detalle sensible de búsquedas. La tabla
-`documents` H3 contiene únicamente campos de este hito; las FK de expedientes y
-clasificación llegan en H4. [Detalles de migración y reversión](docs/H3.md).
+`documents` conserva su identidad al aplicar H4. [Entrega H3](docs/H3.md).
+
+H4 agrega `0003_managed_organization.up.sql`: catálogos, plantillas/versiones,
+expedientes/requerimientos, configuraciones versionadas y lotes/items de cargas.
+Las columnas de clasificación se añaden sin reconstruir documentos, páginas ni FTS.
+FK simples y triggers de clasificación comprueban biblioteca/categoría/tipo; el
+servicio serializa la multiplicidad por expediente dentro de la transacción.
+La inicialización copia una versión de plantilla una sola vez. `receiving` registra
+una transferencia antes de publicar su documento; el localizador privado permanece
+en `upload_items`. Reversión únicamente vacía. [Entrega H4](docs/H4.md).
+
+H5 agrega `0004_document_workflow.up.sql`: `review_requests`, `materializations`
+y `library_document_sequences`; columnas de versión/actor/fecha aprobada en
+`documents` y `retain_until` en cargas. Una revisión pendiente por documento y
+una materialización inicial por documento evitan duplicación. La operación fija
+ruta, hash, tamaño, revisión documental y de configuración, raíz y decisión.
+Se conservan todas las tablas/filas H4. [Entrega H5](docs/H5.md).
 
 ## Relaciones principales
 

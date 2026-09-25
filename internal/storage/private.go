@@ -29,3 +29,10 @@ func PreparePrivateDirectory(directory string) error {
 	}
 	return ProtectPrivatePath(directory, true)
 }
+
+func PrepareLocalPrivateDirectory(directory string) error {
+	if err := PreparePrivateDirectory(directory); err != nil {
+		return err
+	}
+	return requireLocalFilesystem(directory)
+}

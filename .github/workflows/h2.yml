@@ -1,4 +1,4 @@
-name: H2 and H3 checks
+name: AIBID H2–H4 checks
 on:
   push:
   pull_request:

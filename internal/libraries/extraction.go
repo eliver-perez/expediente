@@ -31,23 +31,29 @@ func (service *Service) Extract(ctx context.Context, job Job, options extraction
 	if err := licensing.Check(licensing.WriteDocuments); err != nil {
 		return err
 	}
-	var rootID, relative, expectedHash, identity, languages string
+	var rootID, relative, expectedHash, identity, languages, availability, libraryID string
 	var size int64
-	err := service.Database.Reader.QueryRowContext(ctx, "SELECT l.root_id,l.relative_path,v.sha256,v.size_bytes,f.os_identity_key,b.ocr_languages FROM physical_files f JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN content_versions v ON v.id=f.current_content_version_id JOIN libraries b ON b.id=f.library_id JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND v.id=? AND d.deleted_at IS NULL", job.FileID, job.Version).Scan(&rootID, &relative, &expectedHash, &size, &identity, &languages)
+	err := service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce(l.root_id,''),coalesce(l.relative_path,''),v.sha256,v.size_bytes,f.os_identity_key,b.ocr_languages,f.availability,f.library_id FROM physical_files f LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN content_versions v ON v.id=f.current_content_version_id JOIN libraries b ON b.id=f.library_id JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND v.id=? AND d.deleted_at IS NULL", job.FileID, job.Version).Scan(&rootID, &relative, &expectedHash, &size, &identity, &languages, &availability, &libraryID)
 	if err == sql.ErrNoRows {
 		return scanFailure("VERSION_SUPERSEDED")
 	}
 	if err != nil {
 		return err
 	}
-	root, err := service.root(ctx, rootID)
-	if err != nil {
-		return err
+	root := Root{LibraryID: libraryID}
+	var file *os.File
+	if availability == "staged" {
+		file, err = service.openUpload(ctx, job.FileID)
+	} else {
+		root, err = service.root(ctx, rootID)
+		if err != nil {
+			return err
+		}
+		if !verifiableRoot(root) {
+			return scanFailure("ROOT_DISABLED")
+		}
+		file, err = openLinked(root, relative)
 	}
-	if !activeRoot(root) {
-		return scanFailure("ROOT_DISABLED")
-	}
-	file, err := openLinked(root, relative)
 	if err != nil {
 		return scanFailure("DOCUMENT_UNAVAILABLE")
 	}
@@ -108,8 +114,13 @@ func (service *Service) Extract(ctx context.Context, job Job, options extraction
 }
 func (service *Service) publish(ctx context.Context, job Job, root Root, pages []extraction.Page, languages string) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if err := checkRootRevision(ctx, transaction, root); err != nil {
+		if err := licensing.Check(licensing.WriteDocuments); err != nil {
 			return err
+		}
+		if root.ID != "" {
+			if err := checkRootRevision(ctx, transaction, root); err != nil {
+				return err
+			}
 		}
 		var currentLanguages string
 		if err := transaction.QueryRowContext(ctx, "SELECT ocr_languages FROM libraries WHERE id=?", root.LibraryID).Scan(&currentLanguages); err != nil {
@@ -119,7 +130,7 @@ func (service *Service) publish(ctx context.Context, job Job, root Root, pages [
 			return scanFailure("VERSION_SUPERSEDED")
 		}
 		var permitted int
-		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs j JOIN physical_files f ON f.id=j.physical_file_id JOIN documents d ON d.physical_file_id=f.id WHERE j.id=? AND j.status='running' AND j.fencing_token=? AND f.current_content_version_id=? AND d.deleted_at IS NULL", job.ID, job.Fence, job.Version).Scan(&permitted); err != nil {
+		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs j JOIN physical_files f ON f.id=j.physical_file_id JOIN documents d ON d.physical_file_id=f.id WHERE j.id=? AND j.status='running' AND j.fencing_token=? AND f.current_content_version_id=? AND d.deleted_at IS NULL AND d.approval_status<>'cancelled'", job.ID, job.Fence, job.Version).Scan(&permitted); err != nil {
 			return err
 		}
 		if permitted != 1 {
