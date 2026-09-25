@@ -58,6 +58,7 @@ func metadata(request *http.Request) domain.RequestMetadata {
 func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	server.libraryRoutes(mux)
+	server.licenseRoutes(mux)
 	mux.HandleFunc("GET /health/live", func(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, 200, map[string]string{"status": "ok"})
 	})
@@ -108,7 +109,7 @@ func (server *Server) protected(permission string, touch bool, handler authorize
 			server.fail(writer, request, domain.Failure("CSRF_INVALID", "La solicitud no pudo validarse. Recarga la página.", 403))
 			return
 		}
-		if err := licensing.Check(licensing.SecurityAdministration); err != nil {
+		if err := server.identity.License.Check(request.Context(), licensing.SecurityAdministration); err != nil {
 			server.fail(writer, request, err)
 			return
 		}
@@ -253,7 +254,7 @@ func (server *Server) frontend(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	switch request.URL.Path {
-	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events":
+	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license":
 		contents, err := fs.ReadFile(assets, "index.html")
 		if err != nil {
 			http.Error(writer, "Aplicación no disponible.", 503)

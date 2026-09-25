@@ -1,0 +1,12 @@
+CREATE TEMP TABLE h6_rollback_guard(value INTEGER CHECK(value=0));
+INSERT INTO h6_rollback_guard SELECT count(*) FROM license_installation;
+INSERT INTO h6_rollback_guard SELECT count(*) FROM license_artifacts;
+INSERT INTO h6_rollback_guard SELECT count(*) FROM license_operations;
+INSERT INTO h6_rollback_guard SELECT count(*) FROM license_revision_floors;
+DROP TABLE h6_rollback_guard;
+DROP TABLE license_operations;
+DROP TABLE license_artifacts;
+DROP TABLE license_revision_floors;
+DROP TABLE license_state;
+DROP TABLE license_installation;
+DELETE FROM schema_migrations WHERE name='0005_license_client.up.sql';

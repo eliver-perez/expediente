@@ -188,7 +188,7 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	err = service.Identity.AuthorizedWrite(ctx, principal, "", func(transaction *sql.Tx, current domain.Principal) error {
-		if err := licensing.Check(licensing.ReadDocuments); err != nil {
+		if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
 			return err
 		}
 		permission := "search.execute"

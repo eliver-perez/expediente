@@ -28,6 +28,15 @@ una materialización inicial por documento evitan duplicación. La operación fi
 ruta, hash, tamaño, revisión documental y de configuración, raíz y decisión.
 Se conservan todas las tablas/filas H4. [Entrega H5](docs/H5.md).
 
+H6 agrega `0005_license_client.up.sql`: `license_installation` (identidad pública),
+`license_state` (JWS actual y tiempos), `license_revision_floors` (máximo por
+activación, hash y retiro), `license_artifacts` (solicitudes/respuestas trazables)
+y `license_operations` (peticiones idempotentes preparadas/completadas/fallidas).
+La clave privada permanece en un archivo protegido, no en SQLite. Los artefactos
+no contienen la clave comercial. La reversión se niega después de crear identidad
+o evidencia; los cambios previos se revierten en la misma transacción si otra
+migración impide revertir. [Checksums y recuperación H6](docs/H6.md).
+
 ## Relaciones principales
 
 ```mermaid
@@ -65,7 +74,7 @@ erDiagram
 | Procesamiento | `jobs`, `job_attempts`, `root_scans`, `scan_file_observations` | Lease, reintentos, progreso y barrera antes de declarar ausencias |
 | Trazabilidad | `audit_events`, `search_audit_details`, `document_history`, notificaciones/acuses | Eventos persistentes, búsqueda exacta y avisos una vez por cambio/usuario |
 | Operaciones | `idempotency_requests`, `backup_runs` | Reintentos HTTP y respaldo consistente |
-| Licencia local | `installation_identity`, `license_activations`, `license_exchanges` | Referencia de clave privada, JWS y revisión máxima; ningún servidor de licencias |
+| Licencia local | `license_installation`, `license_state`, `license_revision_floors`, `license_artifacts`, `license_operations` | Implementación H6; identidad pública, JWS, revisión máxima y trazabilidad; ningún servidor comercial |
 
 UUID opacos para entidades; `INTEGER` interno solo en páginas FTS. No usar nombre,
 contrato, hash o ruta como PK. Campos normalizados `*_key` se calculan en Go con

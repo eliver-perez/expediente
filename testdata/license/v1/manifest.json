@@ -1,0 +1,67 @@
+{
+  "cases": [
+    {
+      "file": "perpetual.lic",
+      "expected": "active"
+    },
+    {
+      "file": "subscription.lic",
+      "expected": "valid"
+    },
+    {
+      "file": "revoked.lic",
+      "expected": "valid"
+    },
+    {
+      "file": "other-installation.lic",
+      "expected": "LICENSE_BINDING_MISMATCH"
+    },
+    {
+      "file": "other-fingerprint.lic",
+      "expected": "LICENSE_BINDING_MISMATCH"
+    },
+    {
+      "file": "wrong-product.lic",
+      "expected": "LICENSE_INVALID"
+    },
+    {
+      "file": "lower-revision.lic",
+      "expected": "LICENSE_REVISION_CONFLICT after higher-revision"
+    },
+    {
+      "file": "higher-revision.lic",
+      "expected": "valid"
+    },
+    {
+      "file": "modules-linked-only.lic",
+      "expected": "valid"
+    },
+    {
+      "file": "invalid-signature.lic",
+      "expected": "LICENSE_INVALID_SIGNATURE"
+    }
+  ],
+  "fixture_version": 1,
+  "production_expected": "reject every development JWS, even renamed kid",
+  "schema_version": "1.0",
+  "sha256": {
+    "activate.licreq": "60555d4836b988dde7fb78c58cb30d1f15b81e68a30f9d65a7ac954a83369a09",
+    "boundaries.json": "d95109b74fe1d7ad896085b679758c5ac3933e55ae8b5463339c290f56d368ac",
+    "deactivate.licreq": "7bba1730f050a610e22c2276f191caf18c76791566c9645fb3c83700e42eaa03",
+    "higher-revision.lic": "09fdd096235e4ac18a7c86899c08cba31123a3c7dc74cd4f9720edbf72adb11e",
+    "invalid-signature.lic": "c905f3ff7c38719837bb51acea2549e68cedbb42e301ce0a321c8637601b9c2a",
+    "lower-revision.lic": "ef3522a3ae18662a50d506afeb6effdd64677f3d46855627adc23681d219545d",
+    "modules-linked-only.lic": "679a37772adc200b77fea6361166e9968715e28b4bb6136aa4cf3afa8fff5522",
+    "other-fingerprint.lic": "97f3f096836e88df730af7e39acd14dd59448d0b97b824944385b59ec43cf049",
+    "other-installation.lic": "aedb9f0d53ca6eaaebd30a0c1f53d7432a54f92ab7920bf48225d20ac3032661",
+    "perpetual.lic": "ef3522a3ae18662a50d506afeb6effdd64677f3d46855627adc23681d219545d",
+    "perpetual.payload.json": "8f3a3e8b9388e61b05c5488125e9015483063eee7c1290363b9ac54f30b9290c",
+    "proof.json": "d8dd67625e5faa8b37df4c15071201e4138a9c809f423ca9465d0c755e721b78",
+    "renew.licreq": "53a9da10fee930eded4e380e834e8568c6a6679df417cd912d469bb902a2a9fe",
+    "revoked.lic": "bc60bd574e3b9a81d74c835f6bdcc0312a3b17a7b457b093216760774fec42dc",
+    "subscription.lic": "ac53932f0140ae17d23bb5e65ae6719794213bbf6c343b1f74547993a69639d0",
+    "trust-key.json": "d9aa01a6a01351f0b97eb1408edf30088417f0357c801eb6b2489b594a5017fd",
+    "wrong-product.lic": "a08ce2363a02209e3452514e8594809329346f32590d760790335e99dda66f51"
+  },
+  "test_keys_only": true
+}

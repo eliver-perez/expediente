@@ -1,6 +1,6 @@
 # AIBID — Desarrollo, distribución y operación
 
-**H5 ejecutable:** bibliotecas vinculadas/administradas/híbridas, cargas privadas,
+**H6 ejecutable:** cliente de licencias online/offline y bibliotecas vinculadas/administradas/híbridas, cargas privadas,
 expedientes, revisión, guardado definitivo, integridad, OCR/búsqueda e identidad. Los instaladores
 y el registro como servicio del SO corresponden a H7. No se configura Apache/XAMPP.
 
@@ -17,9 +17,9 @@ make build-dev
 ./build/gestor-documental-dev serve
 ```
 
-Para actualizar H2/H3/H4, detener su proceso y ejecutar `make build-dev` y `serve`.
+Para actualizar H2–H5, detener su proceso y ejecutar `make build-dev` y `serve`.
 No repetir `init`/`bootstrap`; los datos se conservan. El sufijo `-dev` identifica
-el permiso de desarrollo: licencia comercial pendiente H6. No distribuir ese build.
+el bypass de desarrollo sin JWS; H6 aplica la licencia después de activarla. No distribuir ese build.
 [Configuración de extracción y herramientas](docs/H3.md).
 
 Visitar **http://127.0.0.1:8090**. Ctrl+C detiene el servicio. `bootstrap` exige una
@@ -232,3 +232,18 @@ y decidir si se exige revisión. Por defecto ambas políticas están desactivada
 la retención conserva temporales. Las cargas previas sanas pueden confirmarse o
 enviarse a revisión. No se debe mover el destino ni borrar sus parciales durante
 un guardado. [Diagnósticos y reintentos](docs/H5.md).
+
+## H6: licencias y simulador
+
+La pantalla **Licencia** permite activar y renovar con HTTPS o archivos. La
+[guía H6](docs/H6.md) incluye una instalación aislada en el puerto 8100, simulador
+HTTPS en 9443, escenarios públicos y recuperación de identidad. Ninguna prueba
+requiere modificar la instalación habitual en 8090. No ejecutar ambos servicios
+con el mismo directorio de estado.
+
+Producción requiere `license.server_url` y claves públicas autorizadas por `kid`
+para activar online; para archivos basta la confianza pública configurada. No
+acepta CA/bypass/clave de desarrollo. Conservar `state/license/installation.json`
+junto a SQLite al respaldar; perderlo requiere recuperación local y nueva
+autorización del proveedor. La migración 0005 es automática y deja intactos los
+originales, cargas, expedientes, usuarios y migraciones anteriores.

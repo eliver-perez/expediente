@@ -138,7 +138,7 @@ func (service *Service) SaveCase(ctx context.Context, principal domain.Principal
 		caseID = domain.NewID()
 	}
 	err := service.write(ctx, principal, libraryID, "cases.manage", func(transaction *sql.Tx, current domain.Principal) error {
-		settings, err := requireOrganization(ctx, transaction, libraryID)
+		settings, err := service.requireOrganization(ctx, transaction, libraryID)
 		if err != nil {
 			return err
 		}
@@ -187,7 +187,7 @@ func (service *Service) InitializeCase(ctx context.Context, principal domain.Pri
 		return err
 	}
 	return service.write(ctx, principal, item.LibraryID, "requirements.edit", func(transaction *sql.Tx, current domain.Principal) error {
-		if _, err := requireOrganization(ctx, transaction, item.LibraryID); err != nil {
+		if _, err := service.requireOrganization(ctx, transaction, item.LibraryID); err != nil {
 			return err
 		}
 		var initialized bool
@@ -295,7 +295,7 @@ func (service *Service) UpdateRequirement(ctx context.Context, principal domain.
 		return err
 	}
 	return service.write(ctx, principal, item.LibraryID, "requirements.edit", func(transaction *sql.Tx, current domain.Principal) error {
-		if _, err := requireOrganization(ctx, transaction, item.LibraryID); err != nil {
+		if _, err := service.requireOrganization(ctx, transaction, item.LibraryID); err != nil {
 			return err
 		}
 		var multiple bool

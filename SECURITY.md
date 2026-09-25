@@ -8,7 +8,7 @@ H3 aplica permisos por biblioteca, no sigue enlaces internos, abre originales ba
 handles `os.Root`, valida identidad de volumen/archivo, restringe consultas exactas
 a auditores de todos sus ámbitos y limita procesos PDF/OCR. [Implementación y
 límites comprobables](docs/H3.md). El permiso simulado solo entra con el build tag
-`development`; el build normal sigue denegando operaciones documentales hasta H6.
+`development`; el build normal exige desde H6 una licencia verificada.
 
 ## Alta, contraseñas y sesiones
 
@@ -180,3 +180,24 @@ rechaza trabajadores anteriores a un reinicio. La limpieza ocurre después del
 commit y vuelve a verificar el definitivo. Retención de rechazados/cancelados
 conserva la privacidad aun cuando ya no quedan bytes temporales.
 [Pruebas y límites de filesystem](docs/H5.md).
+
+## Controles entregados por H6
+
+Solo claves públicas de producción con propósito `license` verifican JWS en el
+binario normal. Se rechaza la clave pública conocida de prueba aun cambiando su
+`kid`. El simulador y su semilla de prueba se excluyen mediante build tags. TLS
+verifica certificados, prohíbe redirecciones y acota tiempos/tamaños; las respuestas
+remotas y errores nunca reflejan claves comerciales en logs o interfaz.
+
+Clave privada local fuera de DB, acceso privado del SO, referencia pública anclada
+a SQLite y recuperación con diario local/auditoría. No se regenera silenciosamente
+una identidad perdida. El hash de huella reemplaza al identificador de hardware
+original en archivos y red. Renovaciones/importaciones verifican binding completo
+y piso persistido de revisión; estado, evidencia y auditoría se guardan juntos.
+
+Gates por operación y workers, permisos/CSRF de administración y autorización
+repetida al confirmar una operación de red. La solicitud offline de desactivación
+no declara una liberación remota. Consultas/descargas conservan sus permisos en
+vencida/revocada; recuperación y política de backup siguen disponibles. La hora
+máxima persistida limita retrocesos, sin prometer protección frente al administrador
+del SO. [Pruebas, recuperación y límites de interoperabilidad](docs/H6.md).

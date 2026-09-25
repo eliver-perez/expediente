@@ -89,3 +89,12 @@ requiere `documents.review` y filtra asignación/cola compartida. Ningún rol es
 recibe `documents.approve_own`; concederlo explícitamente no elimina la auditoría
 ni la comprobación de aprobación. El revisor que autorizó puede reintentar su
 materialización; el gestor necesita `indexing.retry` y acceso al documento.
+
+## Licencias H6
+
+`license.manage` permite estado detallado, activación/renovación/desactivación,
+archivos y diagnóstico. Todas las mutaciones requieren CSRF y revalidación de
+sesión/permiso dentro de la confirmación transaccional. Los demás usuarios solo
+reciben estado general y advertencias. Perder una licencia no otorga permisos
+adicionales de lectura, revisión ni administración. La recuperación de la clave
+privada es un comando local con el servicio detenido, sin endpoint web.

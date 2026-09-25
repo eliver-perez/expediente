@@ -10,6 +10,7 @@ export interface Job { id: string; job_type: string; status: string; attempt_cou
 export const availabilityLabel: Record<string, string> = { available: 'Disponible', missing: 'No disponible', unknown: 'Raíz sin acceso', staged: 'Temporal privado' };
 export const jobLabel: Record<string, string> = { queued: 'En cola', running: 'Procesando', retry_wait: 'Esperando reintento', succeeded: 'Completada', failed: 'Requiere atención', paused: 'Pausada', cancelled: 'Cancelada' };
 export const diagnosticLabel: Record<string, string> = {
+  LICENSE_FEATURE: 'Tarea pausada: se requiere un módulo de licencia.', LICENSE_READ_ONLY: 'Tarea pausada: la licencia está en solo lectura.', LICENSE_RECOVERY_REQUIRED: 'Tarea pausada: activa o recupera la licencia.',
   STORAGE_COLLISION: 'Ya existe otro archivo en el destino. No se sobrescribió.',
   STORAGE_UNAVAILABLE: 'No se puede escribir o comprobar el destino.', STORAGE_SPACE: 'El destino no tiene espacio suficiente.',
   STORAGE_INTEGRITY_FAILED: 'La copia no coincide con la huella esperada. Se conserva el temporal.',

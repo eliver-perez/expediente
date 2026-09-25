@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"gestor-documental/internal/domain"
-	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 )
 
@@ -36,7 +35,7 @@ type UploadBatch struct {
 func validClientKey(key string) bool {
 	return len(key) >= 16 && len(key) <= 100 && !strings.ContainsAny(key, "\x00\r\n")
 }
-func requireManaged(ctx context.Context, query storage.Querier, libraryID string) error {
+func (service *Service) requireManaged(ctx context.Context, query storage.Querier, libraryID string) error {
 	_, mode, err := settingsFor(ctx, query, libraryID)
 	if err != nil {
 		return err
@@ -44,7 +43,7 @@ func requireManaged(ctx context.Context, query storage.Querier, libraryID string
 	if mode == "linked" {
 		return invalid("Convierte la biblioteca a híbrida para admitir cargas.")
 	}
-	return licensing.CheckFeatures(modeCapabilities(mode)...)
+	return service.Identity.License.CheckFeatures(ctx, modeCapabilities(mode)...)
 }
 func (service *Service) CreateBatch(ctx context.Context, principal domain.Principal, libraryID, clientID string, metadata domain.RequestMetadata) (string, error) {
 	if !validClientKey(clientID) {
@@ -52,7 +51,7 @@ func (service *Service) CreateBatch(ctx context.Context, principal domain.Princi
 	}
 	identifier := domain.NewID()
 	err := service.write(ctx, principal, libraryID, "documents.upload", func(transaction *sql.Tx, current domain.Principal) error {
-		if err := requireManaged(ctx, transaction, libraryID); err != nil {
+		if err := service.requireManaged(ctx, transaction, libraryID); err != nil {
 			return err
 		}
 		var existing string
@@ -214,7 +213,7 @@ func (service *Service) Upload(ctx context.Context, principal domain.Principal, 
 	locator := identifier + ".pdf"
 	replay := false
 	err = service.write(ctx, principal, batch.LibraryID, "documents.upload", func(transaction *sql.Tx, current domain.Principal) error {
-		if err := requireManaged(ctx, transaction, batch.LibraryID); err != nil {
+		if err := service.requireManaged(ctx, transaction, batch.LibraryID); err != nil {
 			return err
 		}
 		var existingName, existingStatus string
@@ -340,7 +339,7 @@ func (service *Service) Upload(ctx context.Context, principal domain.Principal, 
 	documentID, fileID, versionID, jobID := domain.NewID(), domain.NewID(), domain.NewID(), domain.NewID()
 	digest := fmt.Sprintf("%x", hash.Sum(nil))
 	err = service.write(ctx, principal, batch.LibraryID, "documents.upload", func(transaction *sql.Tx, current domain.Principal) error {
-		if err := requireManaged(ctx, transaction, batch.LibraryID); err != nil {
+		if err := service.requireManaged(ctx, transaction, batch.LibraryID); err != nil {
 			return err
 		}
 		if _, err := transaction.ExecContext(ctx, "INSERT INTO physical_files(id,library_id,storage_source,os_identity_key,availability,integrity_status,current_content_version_id,created_at) VALUES(?,?,'managed',?,'staged','verified',?,?)", fileID, batch.LibraryID, identity, versionID, now()); err != nil {

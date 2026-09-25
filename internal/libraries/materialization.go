@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"gestor-documental/internal/domain"
-	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 )
 
@@ -304,15 +303,15 @@ func materializationFile(container *os.Root, name string) (*os.File, error) {
 }
 func (service *Service) materializationState(ctx context.Context, job Job, state, identity string) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if err := checkMaterializationLease(ctx, transaction, job); err != nil {
+		if err := service.checkMaterializationLease(ctx, transaction, job); err != nil {
 			return err
 		}
 		_, err := transaction.ExecContext(ctx, "UPDATE materializations SET state=?,published_identity=CASE WHEN ?='' THEN published_identity ELSE ? END,error_code='',updated_at=? WHERE id=?", state, identity, identity, now(), job.Version)
 		return err
 	})
 }
-func checkMaterializationLease(ctx context.Context, query storage.Querier, job Job) error {
-	if err := licensing.CheckFeatures("managed_libraries"); err != nil {
+func (service *Service) checkMaterializationLease(ctx context.Context, query storage.Querier, job Job) error {
+	if err := service.jobLicense(ctx, query, job); err != nil {
 		return err
 	}
 	var count int
@@ -325,6 +324,9 @@ func checkMaterializationLease(ctx context.Context, query storage.Querier, job J
 	return nil
 }
 func (service *Service) Materialize(ctx context.Context, job Job) error {
+	if err := service.checkMaterializationLease(ctx, service.Database.Reader, job); err != nil {
+		return err
+	}
 	operation, err := scanMaterialization(service.Database.Reader.QueryRowContext(ctx, "SELECT "+materializationColumns+" FROM materializations WHERE id=?", job.Version))
 	if err != nil {
 		return err
@@ -348,7 +350,7 @@ func (service *Service) Materialize(ctx context.Context, job Job) error {
 	if operation.State == "committed" {
 		return service.cleanupMaterialization(ctx, job, operation, container, filename, partialName)
 	}
-	if err = checkMaterializationLease(ctx, service.Database.Reader, job); err != nil {
+	if err = service.checkMaterializationLease(ctx, service.Database.Reader, job); err != nil {
 		return err
 	}
 	partial, partialErr := materializationFile(container, partialName)
@@ -529,24 +531,24 @@ func (service *Service) materializationCheckpoint(point string) error {
 }
 func (service *Service) commitMaterialization(ctx context.Context, job Job, operation Materialization, root Root, identity string) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if err := checkMaterializationLease(ctx, transaction, job); err != nil {
+		if err := service.checkMaterializationLease(ctx, transaction, job); err != nil {
 			return err
 		}
-		if err := checkRootRevision(ctx, transaction, root); err != nil {
+		if err := service.checkRootRevision(ctx, transaction, root); err != nil {
 			return err
 		}
 		_, mode, err := settingsFor(ctx, transaction, operation.LibraryID)
 		if err != nil {
 			return err
 		}
-		if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
+		if err = service.Identity.License.CheckFeatures(ctx, modeCapabilities(mode)...); err != nil {
 			return err
 		}
 		principal := domain.Principal{User: domain.User{ID: operation.ApprovedBy}}
 		permission := "documents.finalize"
 		if operation.DecisionKind == "review" {
 			permission = "documents.approve"
-			if err := licensing.CheckFeatures("review_workflow"); err != nil {
+			if err := service.Identity.License.CheckFeatures(ctx, "review_workflow"); err != nil {
 				return err
 			}
 		}
@@ -581,7 +583,7 @@ func (service *Service) commitMaterialization(ctx context.Context, job Job, oper
 			return conflict()
 		}
 		if caseID != "" {
-			if err := licensing.CheckFeatures("expedientes"); err != nil {
+			if err := service.Identity.License.CheckFeatures(ctx, "expedientes"); err != nil {
 				return err
 			}
 		}
@@ -611,7 +613,7 @@ func (service *Service) commitMaterialization(ctx context.Context, job Job, oper
 	})
 }
 func (service *Service) cleanupMaterialization(ctx context.Context, job Job, operation Materialization, container *os.Root, filename, partialName string) error {
-	if err := checkMaterializationLease(ctx, service.Database.Reader, job); err != nil {
+	if err := service.checkMaterializationLease(ctx, service.Database.Reader, job); err != nil {
 		return err
 	}
 	if err := service.materializationCheckpoint("before_cleanup"); err != nil {

@@ -45,14 +45,14 @@ func (service *Service) Read(ctx context.Context, principal domain.Principal, li
 	if err != nil {
 		return err
 	}
-	if err = licensing.Check(licensing.ReadDocuments); err != nil {
+	if err = service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
 		return err
 	}
 	return service.require(ctx, service.Database.Reader, current, libraryID, permission)
 }
 func (service *Service) write(ctx context.Context, principal domain.Principal, libraryID, permission string, operation func(*sql.Tx, domain.Principal) error) error {
 	return service.Identity.AuthorizedWrite(ctx, principal, "", func(transaction *sql.Tx, current domain.Principal) error {
-		if err := licensing.Check(licensing.WriteDocuments); err != nil {
+		if err := service.Identity.License.Check(ctx, licensing.WriteDocuments); err != nil {
 			return err
 		}
 		if libraryID != "" {
@@ -60,7 +60,7 @@ func (service *Service) write(ctx context.Context, principal domain.Principal, l
 			if err != nil {
 				return err
 			}
-			if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
+			if err = service.Identity.License.CheckFeatures(ctx, modeCapabilities(mode)...); err != nil {
 				return err
 			}
 			if err := service.require(ctx, transaction, current, libraryID, permission); err != nil {
@@ -85,6 +85,9 @@ type Library struct {
 }
 
 func (service *Service) Libraries(ctx context.Context, principal domain.Principal) ([]Library, error) {
+	if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
+		return nil, err
+	}
 	result := []Library{}
 	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,name,mode,revision,ocr_languages FROM libraries WHERE disabled_at IS NULL AND (? OR EXISTS(SELECT 1 FROM library_role_assignments WHERE library_id=libraries.id AND user_id=?)) ORDER BY name,id", principal.Can("permissions.manage_global"), principal.User.ID)
 	if err != nil {
@@ -166,10 +169,19 @@ func (service *Service) Create(ctx context.Context, principal domain.Principal, 
 		if enabled == 0 {
 			return invalid("Selecciona un usuario habilitado.")
 		}
-		if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
+		if err = service.Identity.License.CheckFeatures(ctx, modeCapabilities(mode)...); err != nil {
 			return err
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO libraries(id,name,mode,created_at,updated_at) VALUES(?,?,?,?,?)", identifier, name, mode, now(), now()); err != nil {
+		licensed, err := service.Identity.License.Status(ctx)
+		if err != nil {
+			return err
+		}
+		initial := defaultSettings()
+		if !licensed.Features["expedientes"] {
+			initial.CasesEnabled = false
+			initial.StructurePattern = "{categoria}"
+		}
+		if _, err = transaction.ExecContext(ctx, "INSERT INTO libraries(id,name,mode,settings_json,created_at,updated_at) VALUES(?,?,?,?,?,?)", identifier, name, mode, encode(initial), now(), now()); err != nil {
 			return err
 		}
 		if _, err = transaction.ExecContext(ctx, "INSERT INTO library_role_assignments(user_id,library_id,role_id) VALUES(?,?,'library_manager')", managerID, identifier); err != nil {

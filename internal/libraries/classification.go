@@ -54,7 +54,7 @@ func (service *Service) Classify(ctx context.Context, principal domain.Principal
 		return err
 	}
 	return service.write(ctx, principal, document.LibraryID, permission, func(transaction *sql.Tx, current domain.Principal) error {
-		if err := requireManaged(ctx, transaction, document.LibraryID); err != nil {
+		if err := service.requireManaged(ctx, transaction, document.LibraryID); err != nil {
 			return err
 		}
 		document, err := scanDocument(transaction.QueryRowContext(ctx, "SELECT "+documentColumns+documentJoins+" WHERE d.id=? AND d.deleted_at IS NULL AND "+visibleDocumentSQL, documentID, current.User.ID, current.User.ID))
@@ -80,7 +80,7 @@ func (service *Service) Classify(ctx context.Context, principal domain.Principal
 			return invalid("Utiliza Asociar o Reasignar para cambiar el expediente de este archivo.")
 		}
 		if input.CaseID != "" {
-			if _, err := requireOrganization(ctx, transaction, document.LibraryID); err != nil {
+			if _, err := service.requireOrganization(ctx, transaction, document.LibraryID); err != nil {
 				return err
 			}
 			var count int

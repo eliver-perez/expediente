@@ -13,7 +13,6 @@ import (
 	"gestor-documental/internal/audit"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/extraction"
-	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 )
 
@@ -28,7 +27,7 @@ func appendDocumentObservation(ctx context.Context, transaction *sql.Tx, eventID
 	return err
 }
 func (service *Service) Extract(ctx context.Context, job Job, options extraction.Options) error {
-	if err := licensing.Check(licensing.WriteDocuments); err != nil {
+	if err := service.jobLicense(ctx, service.Database.Reader, job); err != nil {
 		return err
 	}
 	var rootID, relative, expectedHash, identity, languages, availability, libraryID string
@@ -114,11 +113,11 @@ func (service *Service) Extract(ctx context.Context, job Job, options extraction
 }
 func (service *Service) publish(ctx context.Context, job Job, root Root, pages []extraction.Page, languages string) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if err := licensing.Check(licensing.WriteDocuments); err != nil {
+		if err := service.jobLicense(ctx, transaction, Job{Kind: "extract", LibraryID: root.LibraryID}); err != nil {
 			return err
 		}
 		if root.ID != "" {
-			if err := checkRootRevision(ctx, transaction, root); err != nil {
+			if err := service.checkRootRevision(ctx, transaction, root); err != nil {
 				return err
 			}
 		}

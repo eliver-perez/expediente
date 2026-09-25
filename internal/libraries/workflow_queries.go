@@ -57,7 +57,7 @@ func (service *Service) Workflow(ctx context.Context, principal domain.Principal
 	}
 	if err == nil {
 		result.Materialization = &operation
-		if err = service.Database.Reader.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_type='materialize' AND target_version=? AND status IN ('queued','running','retry_wait'))", operation.ID).Scan(&result.Processing); err != nil {
+		if err = service.Database.Reader.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_type='materialize' AND target_version=? AND status IN ('queued','running','retry_wait','paused'))", operation.ID).Scan(&result.Processing); err != nil {
 			return result, err
 		}
 		result.CanRetry = !result.Processing && operation.State != "cleaned" && (can("indexing.retry") || operation.ApprovedBy == principal.User.ID && can("documents.approve"))
@@ -87,18 +87,18 @@ func (service *Service) RetryMaterialization(ctx context.Context, principal doma
 	}
 	jobID := domain.NewID()
 	err = service.Identity.AuthorizedWrite(ctx, principal, "", func(transaction *sql.Tx, current domain.Principal) error {
-		if err := licensing.Check(licensing.WriteDocuments); err != nil {
+		if err := service.Identity.License.Check(ctx, licensing.WriteDocuments); err != nil {
 			return err
 		}
 		_, mode, err := settingsFor(ctx, transaction, operation.LibraryID)
 		if err != nil {
 			return err
 		}
-		if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
+		if err = service.Identity.License.CheckFeatures(ctx, modeCapabilities(mode)...); err != nil {
 			return err
 		}
 		if operation.DecisionKind == "review" {
-			if err = licensing.CheckFeatures("review_workflow"); err != nil {
+			if err = service.Identity.License.CheckFeatures(ctx, "review_workflow"); err != nil {
 				return err
 			}
 		}
@@ -121,7 +121,7 @@ func (service *Service) RetryMaterialization(ctx context.Context, principal doma
 			return invalid("El guardado definitivo ya terminó.")
 		}
 		var active string
-		err = transaction.QueryRowContext(ctx, "SELECT id FROM jobs WHERE job_type='materialize' AND target_version=? AND status IN ('queued','running','retry_wait') ORDER BY created_at DESC LIMIT 1", identifier).Scan(&active)
+		err = transaction.QueryRowContext(ctx, "SELECT id FROM jobs WHERE job_type='materialize' AND target_version=? AND status IN ('queued','running','retry_wait','paused') ORDER BY created_at DESC LIMIT 1", identifier).Scan(&active)
 		if err == nil {
 			jobID = active
 			return nil

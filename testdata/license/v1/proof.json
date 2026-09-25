@@ -1,0 +1,9 @@
+{
+  "action": "activate",
+  "challenge_id": "55555555-5555-4555-8555-555555555555",
+  "installation_id": "33333333-3333-4333-8333-333333333333",
+  "installation_public_key": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+  "message_utf8": "LIC-V1\nactivate\n55555555-5555-4555-8555-555555555555\ndevelopment-nonce-0123456789\ngestor_documental\n33333333-3333-4333-8333-333333333333\n-",
+  "nonce": "development-nonce-0123456789",
+  "proof": "6Nz0DClxXMksm3ZJbwzeFEau-BAKfyturYdw_GISGF7O_BKW84DUS3HqkAQY9AZ00cVH2viUvGT_QMCNX53hAA"
+}

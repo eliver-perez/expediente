@@ -1,8 +1,7 @@
 # Estados independientes
 
 Una sola columna «estado» no representa disponibilidad, integridad, revisión y OCR.
-Disponibilidad, revisión y cola están implementadas hasta H5. El diagrama de
-licencia sigue como contrato para H6.
+Disponibilidad, revisión, cola y cliente de licencia están implementados hasta H6.
 
 ## Disponibilidad física e integridad
 
@@ -110,3 +109,16 @@ de red no produce `invalid`. Perpetua no transita por tiempo a `grace/expired`;
 `maintenance_until` no vence el uso. Revocación offline solo se conoce al recibir
 evidencia autenticada. `expired/revoked`: consulta, visualización, descarga y backup;
 `invalid/unactivated`: recuperación administrativa, sin escrituras documentales.
+
+## Estado efectivo H6
+
+`active` y `grace` permiten operaciones con módulos y permisos; `expired`/`revoked`
+permiten consulta/descarga y bloquean cambios. `invalid`/`unactivated` conservan la
+administración de recuperación. El estado `development` solo existe con bypass
+explícito en ese build y sin JWS aceptado. Desactivación online confirmada deriva
+`revoked` con diagnóstico `ACTIVATION_DEACTIVATED`; la solicitud offline únicamente
+marca pendiente. Se conservan JWS, revisiones y archivos de evidencia.
+
+La cola pausada por licencia se revisa periódicamente, sin consumir intentos antes
+de adquirir el trabajo. Una pérdida durante ejecución crea un sucesor trazable
+con el presupuesto restante. Recuperar módulos reanuda sin reiniciar el servidor.

@@ -3,11 +3,11 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"gestor-documental/internal/licensing"
 	"os"
 	"strings"
 
 	"gestor-documental/internal/domain"
-	"gestor-documental/internal/licensing"
 )
 
 func verifiableRoot(root Root) bool { return root.Status == "active" || root.Status == "inaccessible" }
@@ -29,7 +29,7 @@ func enqueueVerification(ctx context.Context, transaction *sql.Tx, root Root) er
 // Verify only recorded managed locations; unrelated files in a destination are
 // never imported, and private uploads do not participate in root reconciliation.
 func (service *Service) VerifyManagedRoot(ctx context.Context, rootID string) error {
-	if err := licensing.CheckFeatures("managed_libraries"); err != nil {
+	if err := service.Identity.License.Check(ctx, licensing.VerifyIntegrity); err != nil {
 		return err
 	}
 	root, err := service.root(ctx, rootID)
@@ -38,13 +38,6 @@ func (service *Service) VerifyManagedRoot(ctx context.Context, rootID string) er
 	}
 	if root.Source != "managed" || !verifiableRoot(root) {
 		return scanFailure("ROOT_DISABLED")
-	}
-	_, mode, err := settingsFor(ctx, service.Database.Reader, root.LibraryID)
-	if err != nil {
-		return err
-	}
-	if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
-		return err
 	}
 	inspected, err := inspectDirectory(root.Path)
 	if err != nil || inspected.Identity != root.Identity {
@@ -100,7 +93,7 @@ func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID
 			return scanFailure("SOURCE_UNAVAILABLE")
 		}
 		return service.Database.Write(ctx, func(transaction *sql.Tx) error {
-			if err := checkRootRevision(ctx, transaction, root); err != nil {
+			if err := service.checkRootRevision(ctx, transaction, root); err != nil {
 				return err
 			}
 			var documentID, versionID, availability string
@@ -130,7 +123,7 @@ func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID
 		return err
 	}
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if err := checkRootRevision(ctx, transaction, root); err != nil {
+		if err := service.checkRootRevision(ctx, transaction, root); err != nil {
 			return err
 		}
 		var documentID, versionID, oldHash, oldIdentity, availability, approval string
@@ -176,7 +169,7 @@ func managedObservation(ctx context.Context, transaction *sql.Tx, libraryID, doc
 	return err
 }
 func (service *Service) cleanExpiredUploads(ctx context.Context) error {
-	if err := licensing.CheckFeatures("managed_libraries"); err != nil {
+	if err := service.Identity.License.CheckFeatures(ctx, "managed_libraries"); err != nil {
 		return err
 	}
 	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT u.id,u.document_id,u.private_temporary_locator,d.library_id,coalesce(d.case_id,'') FROM upload_items u JOIN documents d ON d.id=u.document_id JOIN physical_files f ON f.id=d.physical_file_id WHERE u.retain_until IS NOT NULL AND u.retain_until<=? AND u.status IN ('staged','retained') AND d.approval_status IN ('rejected','cancelled') AND f.primary_location_id IS NULL LIMIT 100", now())
@@ -209,7 +202,7 @@ func (service *Service) cleanExpiredUploads(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
+			if err = service.Identity.License.CheckFeatures(ctx, modeCapabilities(mode)...); err != nil {
 				return err
 			}
 			var eligible int

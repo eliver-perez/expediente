@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"gestor-documental/internal/domain"
-	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 )
 
@@ -54,7 +53,7 @@ func modeCapabilities(mode string) []string {
 	}
 	return nil
 }
-func requireOrganization(ctx context.Context, query storage.Querier, libraryID string) (Settings, error) {
+func (service *Service) requireOrganization(ctx context.Context, query storage.Querier, libraryID string) (Settings, error) {
 	settings, mode, err := settingsFor(ctx, query, libraryID)
 	if err != nil {
 		return settings, err
@@ -62,7 +61,7 @@ func requireOrganization(ctx context.Context, query storage.Querier, libraryID s
 	if mode == "linked" || !settings.CasesEnabled {
 		return settings, invalid("Habilita expedientes en una biblioteca administrada o híbrida.")
 	}
-	return settings, licensing.CheckFeatures(append(modeCapabilities(mode), "expedientes")...)
+	return settings, service.Identity.License.CheckFeatures(ctx, append(modeCapabilities(mode), "expedientes")...)
 }
 func validSettings(settings Settings) error {
 	if settings.RetentionDays < 0 || settings.RetentionDays > 3650 {
@@ -107,14 +106,19 @@ func (service *Service) updateSettings(ctx context.Context, transaction *sql.Tx,
 	if len(modeCapabilities(mode)) == 0 || (oldMode != mode && mode != "hybrid") {
 		return invalid("Solo se permite ampliar una biblioteca vinculada o administrada a híbrida.")
 	}
-	if err = licensing.CheckFeatures(modeCapabilities(mode)...); err != nil {
+	if err = service.Identity.License.CheckFeatures(ctx, modeCapabilities(mode)...); err != nil {
 		return err
 	}
 	if settings == nil {
 		settings = &previous
 	}
+	if settings.CasesEnabled && !previous.CasesEnabled {
+		if err = service.Identity.License.CheckFeatures(ctx, "expedientes"); err != nil {
+			return err
+		}
+	}
 	if settings.ReviewManaged || settings.ReviewLinked {
-		if err = licensing.CheckFeatures("review_workflow"); err != nil {
+		if err = service.Identity.License.CheckFeatures(ctx, "review_workflow"); err != nil {
 			return err
 		}
 	}

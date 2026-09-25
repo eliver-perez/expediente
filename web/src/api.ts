@@ -2,7 +2,7 @@ export interface User {
   id: string; username: string; display_name: string; disabled: boolean;
   revision: number; created_at: string; role_ids: string[]; permissions: string[];
 }
-export interface SessionResponse { user: User; csrf_token: string; session_expires_at: string }
+export interface SessionResponse { license?: LicenseSummary; user: User; csrf_token: string; session_expires_at: string }
 export interface Page<T> { items: T[]; next_cursor: string | null }
 export interface SessionEntry {
   id: string; user_id: string; started_at: string; last_activity_at: string;
@@ -71,4 +71,20 @@ export function uploadPDF<T>(batchID: string, clientID: string, file: File, prog
     };
     const body = new FormData(); body.append('client_file_id', clientID); body.append('file', file); request.send(body);
   });
+}
+
+export interface LicenseSummary { state: string; write_allowed: boolean; read_allowed: boolean; clock_warning: boolean }
+export async function importLicense<T>(file: File): Promise<T> {
+  if (file.size > 65536) throw new APIError('REQUEST_TOO_LARGE', 'El archivo no debe exceder 64 KiB.', 413);
+  const body = new FormData(); body.append('file', file);
+  let response: Response;
+  try { response = await fetch('/api/v1/license/import', { method: 'POST', body, headers: { 'X-CSRF-Token': csrfToken }, credentials: 'same-origin', cache: 'no-store' }); }
+  catch { throw new APIError('NETWORK_ERROR', 'No se pudo conectar con el servidor.', 0); }
+  const payload = await response.json();
+  if (!response.ok) {
+    const failure = new APIError(payload.error?.code || 'IMPORT_FAILED', payload.error?.message || 'No fue posible importar la licencia.', response.status);
+    if (response.status === 401) { setCSRF(''); window.dispatchEvent(new CustomEvent('session-ended', { detail: failure })); }
+    throw failure;
+  }
+  return payload as T;
 }

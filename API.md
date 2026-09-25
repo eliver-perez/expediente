@@ -1,8 +1,8 @@
 # AIBID — API HTTP interna
 
-Base: `/api/v1`, mismo origen que React. **H2–H5 implementados:** identidad, cuenta,
-usuarios, permisos, sesiones, auditoría, bibliotecas, búsqueda, cargas y expedientes.
-H6–H7 siguen como contratos de diseño. No confundir esta API con los cuatro endpoints HTTPS externos
+Base: `/api/v1`, mismo origen que React. **H2–H6 implementados:** identidad, cuenta,
+usuarios, permisos, sesiones, auditoría, bibliotecas, búsqueda, cargas, expedientes
+y licencias. H7 sigue como contrato de diseño. No confundir esta API con los cuatro endpoints HTTPS externos
 `/v1/activations...` del [contrato de licencias](LICENSE_CONTRACT.md), que no cambian.
 
 ## Convenciones
@@ -137,7 +137,7 @@ aparecen en el detalle global ordinario de auditoría.
 `POST /documents/:id/remove-index` recibe `{reason,expected_case_id?}` e `If-Match`;
 si está asociado exige el ID actual del expediente como confirmación explícita. `retire` devuelve 204 al completar la
 transacción de metadatos, no una promesa de trabajo pendiente. Las lecturas y
-escrituras documentales requieren el build de desarrollo hasta H6.
+escrituras documentales requieren una licencia con los módulos correspondientes, o el bypass explícito del build de desarrollo sin JWS.
 
 Conflictos de raíz: 409 `ROOT_ALREADY_REGISTERED`, `ROOT_IS_DESCENDANT`,
 `ROOT_CONSOLIDATION_REQUIRED`, `ROOT_AUTHORIZATION_CONFLICT`, `ROOT_STORAGE_OVERLAP`,
@@ -280,11 +280,26 @@ El cliente traduce estos comandos locales al contrato externo exacto.
 | Método/ruta relativa | Entrada | Respuesta |
 | --- | --- | --- |
 | `GET /license` | — | Estado derivado, módulos, fechas, revisión, diagnóstico saneado |
-| `POST /license/activate` | `{license_key}` | Resultado online; no persistir clave comercial en logs |
-| `POST /license/refresh` | — | Resultado online/idempotente, mantiene válida ante fallo de red |
-| `POST /license/deactivate` | Confirmación explícita | Resultado remoto; solo confirmación libera plaza |
-| `POST /license/offline-requests` | `{action:activate\|renew\|deactivate}` | Descarga `.licreq` firmado, registro trazable |
-| `POST /license/import` | Multipart `.lic` | Validación JWS/importación transaccional de revisión máxima |
+| `POST /license/activate` | `{request_id,license_key}` | Resultado online; no persistir clave comercial en logs |
+| `POST /license/refresh` | `{request_id}` | Resultado online/idempotente, mantiene válida ante fallo de red |
+| `POST /license/deactivate` | `{request_id,confirm:true}` | Resultado remoto; solo confirmación libera plaza |
+| `POST /license/offline-requests` | `{request_id,action:activate\|renew\|deactivate}` | `201` con metadatos del archivo; descargar por ID |
+| `POST /license/import` | Multipart, un campo `file`, máximo 64 KiB | Validación JWS/importación transaccional de revisión máxima |
+
+`GET /license/artifacts` devuelve `{items:[...]}` con los últimos 100 archivos;
+`GET /license/artifacts/{id}` descarga el artefacto autenticado como attachment.
+Los archivos `.licreq`/`.lic` no incluyen claves privadas ni claves comerciales.
+`GET /auth/session` incorpora `license:{state,read_allowed,write_allowed,clock_warning}`
+para el aviso general; los detalles de soporte requieren `license.manage`.
+
+`GET /license` también incluye `pending_operations` con acción/ID/fecha, sin
+pruebas ni cuerpos privados, para retomar solicitudes después de recargar.
+Cada acción online mantiene `request_id` UUID en sus reintentos. Un error estable
+no reintentable requiere una solicitud nueva; `TEMPORARY_UNAVAILABLE` y
+`RATE_LIMITED` permiten repetirla. Tras reinicio, volver a introducir la misma
+clave comercial al activar. El backend vuelve a comprobar permiso/sesión al
+confirmar una operación de red o importar. No usar un acuse JSON de desactivación
+como `.lic`. [Configuración, simulador y diagnósticos H6](docs/H6.md).
 
 Ni PDF, texto OCR, rutas ni DB se incluyen en el HTTP externo. No añadir endpoint
 remoto de `hybrid`, usuarios, ventas, biblioteca o backup.

@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { api, APIError, message, setCSRF, type SessionResponse, type User } from './api';
+import { api, APIError, message, setCSRF, type SessionResponse, type User, type LicenseSummary } from './api';
 import { Notice } from './components';
 import { Libraries } from './Libraries';
 import { Search } from './Search';
 import { Brand } from './Brand';
 import { Account } from './Account';
+import { License, licenseStates } from './License';
 import { Users } from './Users';
 import { Access, Events } from './Activity';
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [license, setLicense] = useState<LicenseSummary | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [path, setPath] = useState(window.location.pathname);
   const [notice, setNotice] = useState('');
@@ -19,7 +21,7 @@ export function App() {
   const endSession = useCallback((text: string) => { setCSRF(''); setUser(null); setNotice(text); setError(''); navigate('/login'); }, [navigate]);
   const refreshSession = useCallback(async () => {
     const session = await api<SessionResponse>('/auth/session');
-    setCSRF(session.csrf_token); setUser(session.user);
+    setCSRF(session.csrf_token); setUser(session.user); setLicense(session.license ?? null);
   }, []);
   useEffect(() => {
     function sessionEnded(event: Event) {
@@ -48,7 +50,7 @@ export function App() {
     const form = event.currentTarget; const data = new FormData(form);
     try {
       const session = await api<SessionResponse>('/auth/login', { method: 'POST', body: { username: data.get('username'), password: data.get('password') } });
-      form.reset(); setCSRF(session.csrf_token); setUser(session.user); setNotice(''); navigate('/account');
+      form.reset(); setCSRF(session.csrf_token); setUser(session.user); setNotice(''); navigate('/account'); await refreshSession();
     } catch (error) { setError(message(error)); } finally { setBusy(false); }
   }
   async function logout() {
@@ -68,15 +70,17 @@ export function App() {
   const links = [{ path: '/libraries', label: 'Bibliotecas', available: true }, { path: '/search', label: 'Buscar documentos', available: true }, { path: '/account', label: 'Mi cuenta', available: true },
     { path: '/admin/users', label: 'Usuarios', available: can('users.manage') },
     { path: '/admin/access', label: 'Accesos', available: can('sessions.read_all') && can('authentication_attempts.read') },
-    { path: '/admin/events', label: 'Eventos', available: can('audit.read_global') }];
+    { path: '/admin/events', label: 'Eventos', available: can('audit.read_global') },
+    { path: '/admin/license', label: 'Licencia', available: can('license.manage') }];
   let content = <Account user={user} onPasswordChanged={() => endSession('Contraseña actualizada. Inicia sesión con tu nueva contraseña.')} />;
   if (path === '/libraries') content = <Libraries user={user} />;
   else if (path === '/search') content = <Search />;
   else if (path === '/admin/users' && can('users.manage')) content = <Users currentUser={user} refreshSession={refreshSession} />;
   else if (path === '/admin/access' && can('sessions.read_all') && can('authentication_attempts.read')) content = <Access />;
   else if (path === '/admin/events' && can('audit.read_global')) content = <Events />;
+  else if (path === '/admin/license' && can('license.manage')) content = <License onChange={refreshSession} />;
   else if (path.startsWith('/admin/')) content = <Notice text="No tienes permiso para consultar esta página." />;
   return <div className="app-layout"><aside className="sidebar"><Brand dark variant="vertical" className="sidebar-brand" /><p className="nav-label">ESPACIO DE TRABAJO</p><nav aria-label="Principal">{links.filter(link => link.available).map(link => <a key={link.path} href={link.path} aria-current={path === link.path ? 'page' : undefined} onClick={event => { event.preventDefault(); setError(''); navigate(link.path); }}>{link.label}</a>)}</nav><div className="sidebar-footer"><span className="status-dot" /> Instalación local</div></aside>
-    <div className="workspace"><header className="topbar"><Brand className="topbar-brand" /><div><span className="user-name">{user.display_name}</span><button className="secondary" disabled={busy} onClick={() => void logout()}>Cerrar sesión</button></div></header><main className="main-content"><Notice text={error} />{content}</main><footer className="workspace-footer">AIBID · Tu biblioteca digital, ordenada y al alcance.</footer></div>
+    <div className="workspace"><header className="topbar"><Brand className="topbar-brand" /><div><span className="user-name">{user.display_name}</span><button className="secondary" disabled={busy} onClick={() => void logout()}>Cerrar sesión</button></div></header><main className="main-content"><Notice text={error} />{license && (license.state !== "active" && license.state !== "development" || license.clock_warning) && <div className="license-banner" role="status">Licencia: {licenseStates[license.state] || license.state}. {license.clock_warning ? "Revisa la fecha del equipo. " : ""}{!license.write_allowed ? "Las modificaciones documentales están suspendidas. " : ""}{can("license.manage") && <a href="/admin/license" onClick={event => { event.preventDefault(); navigate("/admin/license"); }}>Administrar licencia</a>}</div>}{content}</main><footer className="workspace-footer">AIBID · Tu biblioteca digital, ordenada y al alcance.</footer></div>
   </div>;
 }

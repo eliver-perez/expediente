@@ -1,16 +1,20 @@
-//go:build e2e
+//go:build e2e && development
 
 // This executable is only for browser tests. It cannot enter a normal product build.
 package main
 
 import (
 	"context"
+	"encoding/pem"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -19,6 +23,8 @@ import (
 	"gestor-documental/internal/httpapi"
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/libraries"
+	"gestor-documental/internal/licensefixture"
+	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 )
 
@@ -39,7 +45,32 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	mock, err := licensefixture.NewMock("")
+	if err != nil {
+		return err
+	}
+	var lostActivationResponse atomic.Bool
+	licenseServer := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/v1/activations" && !lostActivationResponse.Swap(true) {
+			record := httptest.NewRecorder()
+			mock.ServeHTTP(record, request)
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(503)
+			_, _ = io.WriteString(writer, `{"error":{"code":"TEMPORARY_UNAVAILABLE","message":"E2E response loss after commit"}}`)
+			return
+		}
+		mock.ServeHTTP(writer, request)
+	}))
+	defer licenseServer.Close()
+	certificate := filepath.Join(directory, "mock.crt")
+	if err = os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: licenseServer.Certificate().Raw}), 0600); err != nil {
+		return err
+	}
 	configuration := config.Defaults(directory)
+	configuration.License.ServerURL = licenseServer.URL
+	configuration.License.DevelopmentCAFile = certificate
+	configuration.License.TrustedKeys = []licensing.TrustKey{licensefixture.TrustKey()}
+	configuration.License.RefreshHours = 0
 	configuration.ListenAddress = "127.0.0.1:8099"
 	configuration.PublicURL = "http://127.0.0.1:8099"
 	database, err := storage.Open(context.Background(), directory)

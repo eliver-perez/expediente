@@ -117,6 +117,16 @@ func (database *Database) RollbackEmpty(ctx context.Context) error {
 		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
 			return err
 		}
+		if count == 5 {
+			contents, err := db.Migrations.ReadFile("migrations/0005_license_client.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return fmt.Errorf("rollback refused: H6 contains data")
+			}
+			count--
+		}
 		if count == 4 {
 			contents, err := db.Migrations.ReadFile("migrations/0004_document_workflow.down.sql")
 			if err != nil {

@@ -4,12 +4,13 @@
 Tu biblioteca digital, ordenada y al alcance.
 
 Producto comercial genérico de instalación local, con Go + React + SQLite WAL/FTS5
-y acceso por LAN. **H5 implementado:** revisión, aprobación/rechazo,
-guardado definitivo recuperable y verificación de integridad administrada. Incluye
+y acceso por LAN. **H6 implementado:** cliente de licencias V1.0 online/offline, con simulador HTTPS,
+control de módulos y solo lectura al vencer. Incluye revisión, guardado definitivo
+recuperable, verificación de integridad,
 bibliotecas híbridas, cargas privadas, expedientes, catálogos y clasificación. Conserva
 identidad, auditoría, bibliotecas vinculadas, vigilancia y OCR de H2/H3.
-Contraseñas de **6–128 caracteres**. Detalles: [entrega H5](docs/H5.md).
-Licencias comerciales corresponden a H6 e instaladores/servicios del SO a H7.
+Contraseñas de **6–128 caracteres**. Detalles y prueba del simulador: [entrega H6](docs/H6.md).
+La conexión con el servidor comercial queda pendiente; instaladores/servicios del SO son H7.
 
 Los cuatro logotipos SVG suministrados están en `web/public/assets/brand/`.
 Se conservan el identificador técnico `gestor_documental`, el nombre de los
@@ -27,10 +28,11 @@ make build-dev
 ./build/gestor-documental-dev serve
 ```
 
-Si ya utilizas H2/H3/H4, conserva su configuración y administrador: ejecuta únicamente
+Si ya utilizas H2–H5, conserva su configuración y administrador: ejecuta únicamente
 `make build-dev` y `serve`, con el servicio anterior detenido. La migración es automática.
-El binario `-dev` habilita funciones documentales para estas pruebas; no es una release
-comercial. `make build` sigue excluyendo el permiso simulado de licencia.
+El binario `-dev` permite las pruebas anteriores mientras no se importe una licencia.
+Al activarla aplica sus condiciones. `make build` excluye claves y herramientas de
+desarrollo; requiere licencia firmada por una clave de producción configurada.
 
 OCR requiere las herramientas PDF/Tesseract indicadas en [H3](docs/H3.md).
 Abrir **http://127.0.0.1:8090**. `bootstrap` pide usuario, nombre y contraseña sin
@@ -50,7 +52,7 @@ make test-e2e
 El primer comando compila React, valida formato, ejecuta vet, pruebas Go con detector
 de carreras y las comprobaciones SQL H1. El segundo requiere Chrome instalado;
 usa servidor temporal en `127.0.0.1:8099`, cuentas ficticias y DB desechable.
-Detalle del módulo y limitaciones: [entrega H5](docs/H5.md).
+Detalle del módulo y limitaciones: [entrega H6](docs/H6.md).
 
 ## Revisar primero
 
@@ -71,10 +73,10 @@ cmd/gestor-documental/  CLI y servidor Go
 internal/               Configuración, SQLite, identidad, auditoría, HTTP y pruebas
 web/                    React/TypeScript y pruebas de navegador
 db/schema.proposed.sql  Modelo de referencia de V1; NO es una migración
-db/migrations/          Migraciones H2/H3/H4/H5, checksum y reversión protegida
+db/migrations/          Migraciones H2–H6, checksum y reversión protegida
 docs/                   Especificaciones y criterios de aceptación
 packaging/              Instaladores por SO, a implementar en H7
-testdata/license/       Vectores de desarrollo del contrato, a crear en H6
+testdata/license/       Vectores V1 versionados para compartir con el servidor
 scripts/check_design.py Verificación aislada del diseño SQL y enlaces
 ```
 
@@ -94,5 +96,4 @@ al terminar; no inicializa el producto ni descarga paquetes. Comprueba integrida
 restricciones relevantes, sesión única, conservación y publicación de texto FTS,
 y enlaces locales de documentación. Se ejecuta también dentro de make check.
 
-El siguiente hito es **H6: cliente de licencias V1.0 online/offline**,
-después de revisar esta entrega de H5.
+El siguiente hito es **H7: operación, respaldos e instaladores por sistema operativo**.

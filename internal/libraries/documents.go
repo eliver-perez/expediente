@@ -86,7 +86,7 @@ func (service *Service) OpenDocument(ctx context.Context, principal domain.Princ
 		if err := service.require(ctx, transaction, current, document.LibraryID, permission); err != nil {
 			return err
 		}
-		if err := licensing.Check(licensing.ReadDocuments); err != nil {
+		if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
 			return err
 		}
 		var visible int
@@ -165,7 +165,7 @@ type Notice struct {
 }
 
 func (service *Service) Notifications(ctx context.Context, principal domain.Principal) ([]Notice, error) {
-	if err := licensing.Check(licensing.ReadDocuments); err != nil {
+	if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
 		return nil, err
 	}
 	notices := []Notice{}
@@ -184,7 +184,7 @@ func (service *Service) Notifications(ctx context.Context, principal domain.Prin
 	return notices, rows.Err()
 }
 func (service *Service) Acknowledge(ctx context.Context, principal domain.Principal, noticeID string) error {
-	if err := licensing.Check(licensing.ReadDocuments); err != nil {
+	if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
 		return err
 	}
 	return service.Identity.AuthorizedWrite(ctx, principal, "", func(transaction *sql.Tx, current domain.Principal) error {
@@ -302,7 +302,7 @@ func (service *Service) Retry(ctx context.Context, principal domain.Principal, j
 		if err := service.require(ctx, transaction, current, libraryID, "indexing.retry"); err != nil {
 			return err
 		}
-		if err := licensing.Check(licensing.WriteDocuments); err != nil {
+		if err := service.Identity.License.Check(ctx, licensing.WriteDocuments); err != nil {
 			return err
 		}
 		if status != "failed" && status != "cancelled" {

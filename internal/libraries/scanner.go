@@ -55,11 +55,14 @@ func activeRoot(root Root) bool {
 	return root.Source != "managed" && (root.Status == "active" || root.Status == "inaccessible")
 }
 func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes int64, registerDirectory func(string) error) error {
-	if err := licensing.Check(licensing.WriteDocuments); err != nil {
+	if err := service.Identity.License.Check(ctx, licensing.WriteDocuments); err != nil {
 		return err
 	}
 	root, err := service.root(ctx, rootID)
 	if err != nil {
+		return err
+	}
+	if err := service.jobLicense(ctx, service.Database.Reader, Job{LibraryID: root.LibraryID, Kind: "scan"}); err != nil {
 		return err
 	}
 	if !activeRoot(root) {
@@ -200,7 +203,7 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
 	}
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if err := checkRootRevision(ctx, transaction, root); err != nil {
+		if err := service.checkRootRevision(ctx, transaction, root); err != nil {
 			return err
 		}
 		// Retire only locations proven absent; retain the historical row and its OCR.
@@ -244,8 +247,12 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		return err
 	})
 }
-func checkRootRevision(ctx context.Context, transaction *sql.Tx, root Root) error {
-	if err := licensing.Check(licensing.WriteDocuments); err != nil {
+func (service *Service) checkRootRevision(ctx context.Context, transaction *sql.Tx, root Root) error {
+	if root.Source == "managed" {
+		if err := service.Identity.License.Check(ctx, licensing.VerifyIntegrity); err != nil {
+			return err
+		}
+	} else if err := service.jobLicense(ctx, transaction, Job{LibraryID: root.LibraryID, Kind: "scan"}); err != nil {
 		return err
 	}
 	var count int
@@ -333,7 +340,7 @@ func (service *Service) scanError(ctx context.Context, root Root, cause error) e
 }
 func (service *Service) ingest(ctx context.Context, root Root, scanID string, observed observation) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if err := checkRootRevision(ctx, transaction, root); err != nil {
+		if err := service.checkRootRevision(ctx, transaction, root); err != nil {
 			return err
 		}
 		var fileID, ownerLibrary, versionID, oldHash, availability string

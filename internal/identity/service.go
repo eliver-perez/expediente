@@ -15,12 +15,14 @@ import (
 	"gestor-documental/internal/audit"
 	"gestor-documental/internal/config"
 	"gestor-documental/internal/domain"
+	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 )
 
 const SessionReplacedMessage = "Tu sesión fue cerrada porque se inició sesión con tu cuenta desde otro equipo o navegador"
 
 type Service struct {
+	License  *licensing.Client
 	Database *storage.Database
 	Hasher   *PasswordHasher
 	Config   config.Config
@@ -32,7 +34,11 @@ func New(database *storage.Database, configuration config.Config) (*Service, err
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Database: database, Hasher: hasher, Config: configuration, Now: time.Now}, nil
+	license, err := licensing.New(database, configuration.StateDirectory, configuration.License)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{License: license, Database: database, Hasher: hasher, Config: configuration, Now: time.Now}, nil
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._@-]{2,79}$`)

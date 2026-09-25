@@ -1,13 +1,34 @@
 package licensing
 
-import "testing"
+import (
+	"context"
+	"gestor-documental/internal/storage"
+	"path/filepath"
+	"testing"
+)
 
 func TestSecurityRecoveryAlwaysAvailableAndDocumentGateRespectsBuild(t *testing.T) {
-	if err := Check(SecurityAdministration); err != nil {
+	ctx := context.Background()
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, operation := range []Operation{ReadDocuments, WriteDocuments} {
-		if allowed := Check(operation) == nil; allowed != DevelopmentEnabled() {
+	database, err := storage.Open(ctx, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	client, err := New(database, directory, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []Operation{SecurityAdministration, BackupExport} {
+		if err = client.Check(ctx, op); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, op := range []Operation{ReadDocuments, WriteDocuments} {
+		if allowed := client.Check(ctx, op) == nil; allowed != DevelopmentEnabled() {
 			t.Fatal("development policy leaked across build boundary")
 		}
 	}

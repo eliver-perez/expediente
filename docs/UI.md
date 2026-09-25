@@ -117,3 +117,13 @@ guardado/reintento. Distingue integridad alterada, disponibilidad, aprobación y
 frescura del texto. Procesamiento distingue verificación administrada y guardado.
 Los avisos explican si un cambio administrado exige decisión o uno vinculado
 conserva aprobación. [Recorrido H5](H5.md).
+
+## Entrega H6
+
+**Licencia** en la navegación administrativa ofrece estado/modalidad, tolerancia,
+mantenimiento/corte de versiones, módulos, contacto y diagnóstico. Acciones online
+con clave comercial en campo protegido (se vacía al enviar), reintento con el mismo
+ID y confirmación de desactivación. Flujo por archivos con solicitud descargable,
+importación limitada a 64 KiB e historial. Los datos de soporte se despliegan bajo
+un detalle; no se muestran rutas privadas. Aviso global de solo lectura/recuperación
+y reloj mediante la sesión. [Guía del simulador](H6.md).

@@ -196,3 +196,14 @@ progress { display: block; width: 100%; height: 10px; accent-color: var(--accent
 .review-row small { display: block; margin-top: .3rem; }
 fieldset { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; min-width: 0; }
 @media (max-width: 600px) { .review-row { align-items: stretch; flex-direction: column; } }
+
+.license-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 20px; margin: 25px 0; }
+.license-facts dt { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.license-facts dd { margin: 0; }
+.license-features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); padding: 0; list-style: none; gap: 10px 24px; }
+.license-features li { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); padding: 12px 0; }
+.license-columns { grid-template-columns: 1fr 1fr; align-items: stretch; }
+.license-offline { flex-wrap: wrap; margin: 20px 0; }
+.license-identity dd { overflow-wrap: anywhere; margin: 5px 0 18px; font-family: monospace; font-size: 12px; }
+.license-banner { margin-bottom: 24px; padding: 15px 18px; border: 1px solid #dbcc9d; border-radius: 8px; background: #fff9e8; color: #68531a; }
+@media (max-width: 800px) { .license-columns { grid-template-columns: 1fr; } }

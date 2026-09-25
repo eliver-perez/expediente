@@ -114,7 +114,7 @@ compilar no acredita permisos ni operación en esos equipos.
 | --- | --- |
 | Retención | Configurar antes de activar purgas; ninguna purga automática en el estado inicial. Separar temporales, sesiones, búsquedas y auditoría general. |
 | Tiempo | UTC RFC 3339 externo; representación UTC canónica de precisión fija en DB. Reloj retrocedido genera diagnóstico, no extiende tolerancia. |
-| Huella por SO | H6: componentes estables y minimizados; comprobar autorización local y recuperación de hardware antes de fijar algoritmo V1. |
+| Huella por SO | H6 implementado: identificador estable del SO/plataforma, hash con espacio de nombres; recuperación local explícita. Ver docs/H6.md. |
 | OCR/PDF | H3: evaluar herramientas, licencias redistribuibles y corpus; español inicial, inglés opcional. Presupuestos de CPU/RAM/disco configurables. |
 | Grupos/tipos | El alcance los hace opcionales. V1 inicial propone roles por biblioteca; añadir alcance por área/tipo solo tras revisión, antes de implementarlo. |
 | Binarios históricos managed | Historial, hash y OCR sí; copias de todas las versiones no son un compromiso implícito. Definir retención antes de ofrecer restauración de versiones. |
@@ -170,3 +170,18 @@ de copiar/verificar/sincronizar el parcial. Un filesystem que no soporte esa
 operación falla conservando el temporal. Confirmación directa y aprobación por
 revisor comparten el protocolo; las diferencias linked/managed se mantienen en
 integridad y cumplimiento. [Entrega, recuperación y límites](docs/H5.md).
+
+## Aplicación en H6
+
+El propietario eligió **usar simulador por ahora**. Se implementa el cliente y un
+simulador HTTPS restringido a loopback/development, sin servidor de ventas ni
+claves comerciales. Huella V1 por SO, bytes y normalización, diario de reintentos,
+recuperación local y segregación de claves se detallan en [H6](docs/H6.md).
+
+La respuesta de desactivación del simulador usa `status:"deactivated"`; V1.0 no
+especifica el nombre exacto de ese campo. Esta suposición queda visible y debe
+contrastarse con el otro proyecto. Los vectores compartibles ya están versionados
+aquí; todavía no se afirma que el repositorio externo los haya adoptado o superado.
+El contrato original sigue inalterado. La política de instalación de versiones ya
+compara su fecha con el corte de licencia; verificar el manifiesto y actualizar
+binarios corresponde a H7. Los respaldos completos también siguen en H7.

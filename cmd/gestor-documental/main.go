@@ -19,6 +19,7 @@ import (
 	"gestor-documental/internal/httpapi"
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/libraries"
+	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 	"golang.org/x/term"
 )
@@ -37,7 +38,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("uso: gestor-documental init|bootstrap|recover-admin|migrate|rollback-empty|serve [--config RUTA]")
+		return fmt.Errorf("uso: gestor-documental init|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
 	}
 	command := os.Args[1]
 	defaultPath, err := config.DefaultPath()
@@ -45,6 +46,8 @@ func run() error {
 		return err
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
+	recoveryReason := flags.String("reason", "", "Motivo de recuperación de identidad de licencia")
+	confirmRecovery := flags.Bool("confirm-license-recovery", false, "Confirmar nueva identidad; requiere nueva activación del proveedor")
 	configurationPath := flags.String("config", defaultPath, "Archivo privado de configuración")
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
@@ -59,7 +62,7 @@ func run() error {
 		fmt.Println("Configuración privada creada. Ejecuta bootstrap para crear el primer administrador.")
 		return nil
 	}
-	if command != "serve" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" {
+	if command != "serve" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
 		return fmt.Errorf("comando no reconocido")
 	}
 	configuration, err := config.Load(*configurationPath)
@@ -82,6 +85,16 @@ func run() error {
 	}
 	if command == "migrate" {
 		fmt.Println("Migraciones verificadas y aplicadas.")
+		return nil
+	}
+	if command == "recover-license" {
+		if !*confirmRecovery {
+			return fmt.Errorf("recover-license requires --confirm-license-recovery and --reason; it does not release the commercial activation")
+		}
+		if err = licensing.RecoverIdentity(ctx, database, configuration.StateDirectory, *recoveryReason); err != nil {
+			return err
+		}
+		fmt.Println("Identidad recuperada y auditada. Solicita al proveedor la transferencia y una nueva activación.")
 		return nil
 	}
 	service, err := identity.New(database, configuration)
@@ -125,6 +138,9 @@ func run() error {
 		ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	termination, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	licenseDone := make(chan struct{})
+	go func() { defer close(licenseDone); service.License.Run(termination) }()
+	defer func() { stop(); <-licenseDone }()
 	serverError := make(chan error, 1)
 	go func() {
 		if configuration.TLSCertificate != "" {
@@ -133,7 +149,7 @@ func run() error {
 			serverError <- server.ListenAndServe()
 		}
 	}()
-	logger.Info("service starting", "address", configuration.ListenAddress, "stage", "H4")
+	logger.Info("service starting", "address", configuration.ListenAddress, "stage", "H6")
 	select {
 	case err := <-serverError:
 		if !errors.Is(err, http.ErrServerClosed) {

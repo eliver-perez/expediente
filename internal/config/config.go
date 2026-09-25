@@ -12,10 +12,12 @@ import (
 	"strings"
 
 	"gestor-documental/internal/extraction"
+	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 )
 
 type Config struct {
+	License              licensing.Options  `json:"license"`
 	Indexing             extraction.Options `json:"indexing"`
 	ListenAddress        string             `json:"listen_address"`
 	PublicURL            string             `json:"public_url"`
@@ -40,7 +42,7 @@ func DefaultPath() (string, error) {
 }
 
 func Defaults(stateDirectory string) Config {
-	return Config{Indexing: extraction.Defaults(), ListenAddress: "127.0.0.1:8090", PublicURL: "http://127.0.0.1:8090", StateDirectory: stateDirectory,
+	return Config{License: licensing.DefaultOptions(), Indexing: extraction.Defaults(), ListenAddress: "127.0.0.1:8090", PublicURL: "http://127.0.0.1:8090", StateDirectory: stateDirectory,
 		TrustedProxies: []string{}, SessionIdleMinutes: 30, SessionAbsoluteHours: 12,
 		LoginWindowMinutes: 15, LoginIdentifierLimit: 5, LoginIPLimit: 30}
 }
@@ -99,6 +101,9 @@ func Load(path string) (Config, error) {
 }
 
 func (configuration Config) Validate() error {
+	if err := configuration.License.Validate(); err != nil {
+		return err
+	}
 	if err := configuration.Indexing.Validate(); err != nil {
 		return err
 	}

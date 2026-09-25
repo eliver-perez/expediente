@@ -123,8 +123,37 @@ Las interrupciones usan el volumen local: no se certifican aún corte de energí
 discos físicos diferentes, SMB/NFS ni matriz operativa H7. No se toca la instalación
 en uso ni se reparan los archivos de prueba anteriores del propietario.
 
-[Entrega y recuperación H5](H5.md). El siguiente módulo es **H6: cliente de
-licencias V1.0 online/offline**, tras revisar esta entrega.
+[Entrega y recuperación H5](H5.md). Después de H5, el propietario autorizó H6.
+
+## Evidencia de esta entrega H6
+
+Cliente V1.0 implementado con simulador HTTPS local, por elección expresa del
+propietario. El contrato y las migraciones 0001–0004 conservan sus checksums.
+Se agrega 0005 sin alterar datos documentales. Frontend/TypeScript, formato,
+`go vet`, pruebas Go con detector de carreras en normal/development (**65 funciones
+distintas**) y 14 verificaciones de diseño aprobadas. Chrome aprobó los **siete
+recorridos H2–H6**; el de H6 también comprueba retomar una solicitud tras perder
+la respuesta de activación y recargar la página. Revisión visual escritorio/móvil.
+
+Pruebas: JSON/JWS/firma/entorno/binding/revisión, límites de tiempos y 15 días,
+reloj/reinicio, perpetua offline, recuperación local, permisos/CSRF/tamaño,
+TLS/redirecciones, respuestas remotas no válidas, idempotencia tras reiniciar,
+segunda instalación, renovación offline, revocación/desactivación confirmada,
+consulta/descarga con licencia vencida, observación de integridad y pausa/reanudación
+de extracción y materialización sin consumir el presupuesto de intentos.
+
+Cinco binarios del producto actualizados sin CGO y herramienta de simulación
+separada. CLI de migración/reversión, recuperación y emisión offline comprobada
+con estado temporal. Ausencia de la semilla y paquete del simulador verificada
+en los cuatro binarios normales. Ejecución nativa en macOS arm64; certificación
+operativa Windows/Linux/macOS amd64 e instaladores continúan en H7.
+
+Vectores deterministas publicados con hashes en este repositorio y simulador
+excluido de producción. **La validación contra el servidor real sigue pendiente**:
+el propietario eligió trabajar con simulador; faltan el otro repositorio y sus
+claves/endpoint. En particular, el campo `status` de la respuesta de desactivación
+es una suposición explícita que se debe contrastar. No se presenta ACC-22 como
+interoperabilidad real ya certificada. [Alcance, uso y recuperación H6](H6.md).
 
 ## Pruebas funcionales vinculadas al alcance
 

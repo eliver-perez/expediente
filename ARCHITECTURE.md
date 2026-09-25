@@ -1,8 +1,8 @@
 # AIBID — Arquitectura V1
 
-Estado: H1 aprobada; H2–H5 implementadas, incluida revisión y materialización recuperable.
+Estado: H1 aprobada; H2–H6 implementadas: revisión, materialización recuperable y cliente de licencias.
 Requisitos en [alcance](docs/REQUIREMENTS.md), decisiones en [DECISIONS.md](DECISIONS.md)
-y entrega ejecutable en [H5](docs/H5.md). No hay dependencia operativa de XAMPP,
+y entrega ejecutable en [H6](docs/H6.md). No hay dependencia operativa de XAMPP,
 PHP ni MySQL, aunque esta carpeta esté bajo `htdocs`. No servir esta carpeta fuente
 como raíz pública de Apache; los instaladores entregarán binario y assets compilados.
 
@@ -41,7 +41,7 @@ SQL y FTS quedan localizados; no fingir portabilidad automática de FTS5 a MySQL
 
 | Modalidad | Función | Capacidades requeridas |
 | --- | --- | --- |
-| Vinculada | Explorar/indexar raíces existentes, sin copiar originales | `linked_libraries`; `ocr` solo para ejecutar OCR |
+| Vinculada | Explorar/indexar raíces existentes, sin copiar originales | `linked_libraries`; `ocr` para extracción de texto y OCR |
 | Administrada | Cargas y materialización en destino configurado | `managed_libraries`; `expedientes` si se usan; `review_workflow` si se revisa |
 | Híbrida | Ambas y asociación de documento existente sin copia | `linked_libraries` + `managed_libraries`; otras según operación |
 
@@ -171,3 +171,19 @@ la solicitud y la aprobación solo se confirma tras verificar el destino.
 escáner linked. El avance del expediente continúa derivándose de estados reales.
 La retención elimina solo temporales vencidos rechazados/cancelados y conserva
 su privacidad, texto e historial. [Protocolo y pruebas](docs/H5.md).
+
+## Cliente de licencias implementado en H6
+
+Cada `identity.Service` posee un `licensing.Client` de su instalación. Los gates
+consultan estado y piso de revisión en una lectura consistente de SQLite; una caché
+solo evita repetir la criptografía del mismo JWS, nunca congela la vigencia. Las
+escrituras revalidan capacidades dentro de la transacción de negocio y antes de
+publicar archivos. La pérdida de licencia pausa trabajo, conservando cola y datos.
+La observación de integridad managed no depende de recuperar el módulo perdido.
+
+El diario online contiene la solicitud firmada sin clave comercial; una activación
+reintenta los mismos bytes después de reiniciar al reintroducirla. Importación,
+revisión máxima, archivo y auditoría se confirman atómicamente. La red no modifica
+por sí sola el estado firmado. El refresco opcional y la observación del reloj
+son procesos del cliente; el simulador solo existe bajo el tag `development`.
+[Protocolo, huella, recuperación y límites](docs/H6.md).

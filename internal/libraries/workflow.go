@@ -8,7 +8,6 @@ import (
 
 	"gestor-documental/internal/audit"
 	"gestor-documental/internal/domain"
-	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
 )
 
@@ -57,9 +56,9 @@ func workflowEvent(ctx context.Context, transaction *sql.Tx, principal domain.Pr
 	_, err := transaction.ExecContext(ctx, "INSERT INTO document_history(id,document_id,revision,event_id,snapshot_json) SELECT ?,id,revision,?,? FROM documents WHERE id=?", domain.NewID(), eventID, encode(details), document.ID)
 	return err
 }
-func validateWorkflowClassification(ctx context.Context, query storage.Querier, document Document, settings Settings) error {
+func (service *Service) validateWorkflowClassification(ctx context.Context, query storage.Querier, document Document, settings Settings) error {
 	if document.CaseID != "" {
-		if err := licensing.CheckFeatures("expedientes"); err != nil {
+		if err := service.Identity.License.CheckFeatures(ctx, "expedientes"); err != nil {
 			return err
 		}
 	}
@@ -110,10 +109,10 @@ func (service *Service) SubmitReview(ctx context.Context, principal domain.Princ
 		if !requiresReview(settings, document.Source) {
 			return domain.Failure("REVIEW_NOT_REQUIRED", "Esta biblioteca utiliza confirmación directa para este origen.", 409)
 		}
-		if err = licensing.CheckFeatures("review_workflow"); err != nil {
+		if err = service.Identity.License.CheckFeatures(ctx, "review_workflow"); err != nil {
 			return err
 		}
-		if err = validateWorkflowClassification(ctx, transaction, document, settings); err != nil {
+		if err = service.validateWorkflowClassification(ctx, transaction, document, settings); err != nil {
 			return err
 		}
 		if assignedTo != "" {
@@ -273,7 +272,7 @@ func (service *Service) DecideReview(ctx context.Context, principal domain.Princ
 		if !requiresReview(settings, document.Source) {
 			return domain.Failure("REVIEW_POLICY_CHANGED", "Cambió la política de revisión. Actualiza el documento.", 409)
 		}
-		if err = licensing.CheckFeatures("review_workflow"); err != nil {
+		if err = service.Identity.License.CheckFeatures(ctx, "review_workflow"); err != nil {
 			return err
 		}
 		if current.User.ID == document.CreatedBy || current.User.ID == review.RequestedBy {
@@ -293,7 +292,7 @@ func (service *Service) DecideReview(ctx context.Context, principal domain.Princ
 			}
 			return workflowEvent(ctx, transaction, current, document, metadata, "document.rejected", map[string]any{"review_id": reviewID, "reason": strings.TrimSpace(reason)})
 		}
-		if err = validateWorkflowClassification(ctx, transaction, document, settings); err != nil {
+		if err = service.validateWorkflowClassification(ctx, transaction, document, settings); err != nil {
 			return err
 		}
 		operationID, err = service.beginApproval(ctx, transaction, current, document, settings, "review", reviewID, metadata)
@@ -348,7 +347,7 @@ func (service *Service) FinalizeDocument(ctx context.Context, principal domain.P
 		if requiresReview(settings, document.Source) {
 			return domain.Failure("REVIEW_REQUIRED", "Envía el documento a revisión.", 409)
 		}
-		if err = validateWorkflowClassification(ctx, transaction, document, settings); err != nil {
+		if err = service.validateWorkflowClassification(ctx, transaction, document, settings); err != nil {
 			return err
 		}
 		operationID, err = service.beginApproval(ctx, transaction, current, document, settings, "direct", "", metadata)

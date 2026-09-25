@@ -58,7 +58,7 @@ func (service *Service) SaveCatalog(ctx context.Context, principal domain.Princi
 		identifier = domain.NewID()
 	}
 	err := service.write(ctx, principal, libraryID, "catalogs.manage", func(transaction *sql.Tx, current domain.Principal) error {
-		if err := requireManaged(ctx, transaction, libraryID); err != nil {
+		if err := service.requireManaged(ctx, transaction, libraryID); err != nil {
 			return err
 		}
 		var previousRevision int64
@@ -217,7 +217,7 @@ func (service *Service) SaveTemplate(ctx context.Context, principal domain.Princ
 	}
 	versionID := domain.NewID()
 	err := service.write(ctx, principal, libraryID, "templates.manage", func(transaction *sql.Tx, current domain.Principal) error {
-		if _, err := requireOrganization(ctx, transaction, libraryID); err != nil {
+		if _, err := service.requireOrganization(ctx, transaction, libraryID); err != nil {
 			return err
 		}
 		var latest int64

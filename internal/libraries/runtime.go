@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"gestor-documental/internal/domain"
-	"gestor-documental/internal/licensing"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -39,9 +38,6 @@ type Runtime struct {
 
 func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 	runtime := &Runtime{Service: service, directories: map[string]string{}, dirty: map[string]time.Time{}, degraded: map[string]string{}}
-	if err := licensing.Check(licensing.WriteDocuments); err != nil {
-		return runtime, nil
-	}
 	if err := service.recoverUploads(ctx); err != nil {
 		return nil, err
 	}
@@ -158,6 +154,9 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		if !verifiableRoot(root) {
 			continue
 		}
+		if err := runtime.Service.jobLicense(ctx, runtime.Service.Database.Reader, Job{Kind: rootJobKind(root), LibraryID: root.LibraryID}); err != nil {
+			continue
+		}
 		active[root.ID] = true
 		watchError := errors.New("managed uses periodic verification")
 		if root.Source != "managed" {
@@ -182,7 +181,7 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		queued := false
 		err := runtime.Service.Database.Write(ctx, func(transaction *sql.Tx) error {
 			var count int
-			if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_type=? AND target_version=? AND status IN ('queued','running','retry_wait')", rootJobKind(root), root.ID).Scan(&count); err != nil {
+			if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_type=? AND target_version=? AND status IN ('queued','running','retry_wait','paused')", rootJobKind(root), root.ID).Scan(&count); err != nil {
 				return err
 			}
 			if count > 0 {
@@ -213,10 +212,42 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 func (service *Service) claim(ctx context.Context) (Job, error) {
 	var job Job
 	err := service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		err := transaction.QueryRowContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token FROM jobs j WHERE status IN ('queued','retry_wait') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 1", now()).Scan(&job.ID, &job.LibraryID, &job.FileID, &job.Kind, &job.Version, &job.Attempts, &job.Fence)
+		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token FROM jobs j WHERE status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 64", now())
 		if err != nil {
 			return err
 		}
+		candidates := []Job{}
+		for rows.Next() {
+			var candidate Job
+			if err = rows.Scan(&candidate.ID, &candidate.LibraryID, &candidate.FileID, &candidate.Kind, &candidate.Version, &candidate.Attempts, &candidate.Fence); err != nil {
+				rows.Close()
+				return err
+			}
+			candidates = append(candidates, candidate)
+		}
+		if err = rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, candidate := range candidates {
+			if cause := service.jobLicense(ctx, transaction, candidate); cause != nil {
+				if !licenseBlocked(cause) {
+					job = candidate
+					break
+				}
+				if _, err = transaction.ExecContext(ctx, "UPDATE jobs SET status='paused',last_error_code=?,available_at=? WHERE id=?", failureCode(cause), domain.Timestamp(time.Now().Add(5*time.Second)), candidate.ID); err != nil {
+					return err
+				}
+				continue
+			}
+			job = candidate
+			break
+		}
+		if job.ID == "" {
+			return nil
+		}
+
 		job.Attempts++
 		job.Fence++
 		if _, err = transaction.ExecContext(ctx, "UPDATE jobs SET status='running',attempt_count=?,fencing_token=?,lease_owner='local',lease_expires_at=? WHERE id=?", job.Attempts, job.Fence, domain.Timestamp(time.Now().Add(time.Hour)), job.ID); err != nil {
@@ -225,6 +256,9 @@ func (service *Service) claim(ctx context.Context) (Job, error) {
 		_, err = transaction.ExecContext(ctx, "INSERT INTO job_attempts(id,job_id,attempt_number,fencing_token,started_at) VALUES(?,?,?,?,?)", domain.NewID(), job.ID, job.Attempts, job.Fence, now())
 		return err
 	})
+	if err == nil && job.ID == "" {
+		err = sql.ErrNoRows
+	}
 	return job, err
 }
 func (runtime *Runtime) worker(ctx context.Context) {
@@ -236,9 +270,6 @@ func (runtime *Runtime) worker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-		}
-		if licensing.Check(licensing.WriteDocuments) != nil {
-			continue
 		}
 		job, err := runtime.Service.claim(ctx)
 		if err != nil {
@@ -272,6 +303,26 @@ func (runtime *Runtime) worker(ctx context.Context) {
 }
 func (service *Service) finish(ctx context.Context, job Job, cause error) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
+		if licenseBlocked(cause) {
+			code := failureCode(cause)
+			if _, err := transaction.ExecContext(ctx, "UPDATE job_attempts SET finished_at=?,error_code=? WHERE job_id=? AND fencing_token=?", now(), code, job.ID, job.Fence); err != nil {
+				return err
+			}
+			result, err := transaction.ExecContext(ctx, "UPDATE jobs SET status='cancelled',last_error_code=?,lease_owner=NULL,lease_expires_at=NULL WHERE id=? AND status='running' AND fencing_token=?", code, job.ID, job.Fence)
+			if err != nil {
+				return err
+			}
+			count, _ := result.RowsAffected()
+			if count == 0 {
+				return nil
+			}
+			successor := domain.NewID()
+			if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,attempt_count,max_attempts,available_at,last_error_code,retry_of_job_id,created_at) SELECT ?,library_id,physical_file_id,job_type,target_version,?,payload_json,'paused',attempt_count-1,max_attempts,?,?,id,? FROM jobs WHERE id=?", successor, successor, now(), code, now(), job.ID); err != nil {
+				return err
+			}
+			return record(ctx, transaction, domain.Principal{}, domain.RequestMetadata{RequestID: domain.NewID()}, "indexing.license_paused", job.LibraryID, "", map[string]any{"job_id": job.ID, "resumes_as": successor, "error_code": code})
+		}
+
 		status, code := "succeeded", ""
 		available := now()
 		if cause != nil {
