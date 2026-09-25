@@ -187,3 +187,15 @@ revisión máxima, archivo y auditoría se confirman atómicamente. La red no mo
 por sí sola el estado firmado. El refresco opcional y la observación del reloj
 son procesos del cliente; el simulador solo existe bajo el tag `development`.
 [Protocolo, huella, recuperación y límites](docs/H6.md).
+
+## Instaladores H7 de prueba
+
+`internal/buildinfo` identifica versión/canal y la cuenta del servicio Windows. La CLI comparte
+un contexto de cancelación entre host/SCM, HTTP y workers; SCM anuncia Running al abrir el listener
+y reporta StopPending mientras termina. El contexto Unix recibe SIGTERM/Interrupt.
+
+`init` permite seleccionar estado, dirección loopback y herramientas/idiomas para una configuración
+nueva, conservando validación HTTPS, creación exclusiva y permisos privados. `doctor` usa el mismo
+entorno acotado de extracción; comprueba idiomas y opcionalmente dos PDF de diagnóstico.
+Los paquetes y sus rutas están descritos en [H7](docs/H7.md). Las modificaciones no alteran el esquema
+ni la instalación existente. Los servicios permanecen detenidos hasta completar bootstrap local.

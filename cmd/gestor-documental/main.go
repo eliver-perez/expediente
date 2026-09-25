@@ -7,13 +7,15 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
-	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
+	"gestor-documental/internal/buildinfo"
 	"gestor-documental/internal/config"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/httpapi"
@@ -25,7 +27,7 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := runHost(run); err != nil {
 		var failure *domain.Error
 		if errors.As(err, &failure) {
 			fmt.Fprintln(os.Stderr, "Error:", failure.Message)
@@ -36,50 +38,106 @@ func main() {
 	}
 }
 
-func run() error {
+func run(ctx context.Context, ready func()) error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("uso: gestor-documental init|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
+		return fmt.Errorf("uso: gestor-documental version|init|doctor|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
 	}
 	command := os.Args[1]
-	defaultPath, err := config.DefaultPath()
-	if err != nil {
-		return err
+	if command == "version" {
+		fmt.Printf("AIBID %s (%s; %s/%s)\n", buildinfo.Version, buildinfo.Channel, runtime.GOOS, runtime.GOARCH)
+		return nil
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	recoveryReason := flags.String("reason", "", "Motivo de recuperación de identidad de licencia")
 	confirmRecovery := flags.Bool("confirm-license-recovery", false, "Confirmar nueva identidad; requiere nueva activación del proveedor")
-	configurationPath := flags.String("config", defaultPath, "Archivo privado de configuración")
+	configurationPath := flags.String("config", "", "Archivo privado de configuración (por defecto, el del usuario)")
+	initialState := flags.String("state", "", "Directorio de datos (solo init)")
+	initialListen := flags.String("listen", "", "IP:puerto inicial (solo init; HTTP local)")
+	initialTools := flags.String("tools", "", "Directorio absoluto de herramientas PDF/OCR (solo init)")
+	initialTessdata := flags.String("tessdata", "", "Directorio absoluto de idiomas OCR (solo init)")
+	initialFontconfig := flags.String("fontconfig", "", "Archivo absoluto de fuentes (solo init)")
+	samples := flags.String("sample-directory", "", "Directorio de PDF de diagnóstico (solo doctor)")
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("argumentos no reconocidos")
 	}
+	// System accounts may have no HOME/APPDATA. An explicit installer path must
+	// work without consulting a user profile that the service does not possess.
+	if *configurationPath == "" {
+		defaultPath, err := config.DefaultPath()
+		if err != nil {
+			return err
+		}
+		*configurationPath = defaultPath
+	}
+	if *samples != "" && command != "doctor" {
+		return fmt.Errorf("sample-directory only applies to doctor")
+	}
 	if command == "init" {
-		if err := config.Initialize(*configurationPath); err != nil {
+		if *initialTools != "" && !filepath.IsAbs(*initialTools) {
+			return fmt.Errorf("tools must be absolute")
+		}
+		if err := config.InitializeWith(*configurationPath, func(initial *config.Config) {
+			if *initialState != "" {
+				initial.StateDirectory = *initialState
+			}
+			if *initialListen != "" {
+				initial.ListenAddress = *initialListen
+				initial.PublicURL = "http://" + *initialListen
+			}
+			if *initialTools != "" {
+				extension := ""
+				if runtime.GOOS == "windows" {
+					extension = ".exe"
+				}
+				initial.Indexing.PDFInfo = filepath.Join(*initialTools, "pdfinfo"+extension)
+				initial.Indexing.PDFText = filepath.Join(*initialTools, "pdftotext"+extension)
+				initial.Indexing.PDFRender = filepath.Join(*initialTools, "pdftoppm"+extension)
+				initial.Indexing.Tesseract = filepath.Join(*initialTools, "tesseract"+extension)
+			}
+			initial.Indexing.TessdataDirectory = *initialTessdata
+			initial.Indexing.FontconfigFile = *initialFontconfig
+		}); err != nil {
 			return err
 		}
 		fmt.Println("Configuración privada creada. Ejecuta bootstrap para crear el primer administrador.")
 		return nil
 	}
-	if command != "serve" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
+	if *initialState != "" || *initialListen != "" || *initialTools != "" || *initialTessdata != "" || *initialFontconfig != "" {
+		return fmt.Errorf("state/listen/tools/tessdata only apply to init")
+	}
+	if command != "serve" && command != "doctor" && command != "bootstrap-ready" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
 		return fmt.Errorf("comando no reconocido")
 	}
 	configuration, err := config.Load(*configurationPath)
 	if err != nil {
 		return err
 	}
+	if command == "doctor" {
+		return doctor(ctx, configuration, *samples)
+	}
 	unlock, err := storage.LockState(configuration.StateDirectory)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	ctx := context.Background()
 	database, err := storage.Open(ctx, configuration.StateDirectory)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
+	if command == "bootstrap-ready" {
+		var count int
+		if err := database.Reader.QueryRowContext(ctx, "SELECT count(*) FROM bootstrap_state").Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			return fmt.Errorf("falta crear el primer administrador")
+		}
+		return nil
+	}
 	if command == "rollback-empty" {
 		return database.RollbackEmpty(ctx)
 	}
@@ -136,20 +194,26 @@ func run() error {
 	application := httpapi.New(service, configuration, logger)
 	server := &http.Server{Addr: configuration.ListenAddress, Handler: application.Handler(), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
-	termination, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	termination, stop := context.WithCancel(ctx)
 	defer stop()
 	licenseDone := make(chan struct{})
 	go func() { defer close(licenseDone); service.License.Run(termination) }()
 	defer func() { stop(); <-licenseDone }()
 	serverError := make(chan error, 1)
+	listener, err := net.Listen("tcp", configuration.ListenAddress)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	go func() {
 		if configuration.TLSCertificate != "" {
-			serverError <- server.ListenAndServeTLS(configuration.TLSCertificate, configuration.TLSPrivateKey)
+			serverError <- server.ServeTLS(listener, configuration.TLSCertificate, configuration.TLSPrivateKey)
 		} else {
-			serverError <- server.ListenAndServe()
+			serverError <- server.Serve(listener)
 		}
 	}()
-	logger.Info("service starting", "address", configuration.ListenAddress, "stage", "H6")
+	logger.Info("service starting", "address", configuration.ListenAddress, "version", buildinfo.Version, "channel", buildinfo.Channel)
+	ready()
 	select {
 	case err := <-serverError:
 		if !errors.Is(err, http.ErrServerClosed) {

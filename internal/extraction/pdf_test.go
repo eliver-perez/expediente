@@ -15,6 +15,12 @@ func TestRealNativeAndSpanishOCR(t *testing.T) {
 			t.Skip("PDF/OCR tools not installed")
 		}
 	}
+	if _, err := Defaults().Diagnose(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := Defaults().DiagnoseSamples(context.Background(), "../../testdata/documents"); err != nil {
+		t.Fatal(err)
+	}
 	for _, fixture := range []struct{ Name, Method, Contains string }{{"native.pdf", "native", "PR-008"}, {"scanned.pdf", "ocr", "ESCANEADO"}} {
 		t.Run(fixture.Name, func(t *testing.T) {
 			contents, err := os.ReadFile(filepath.Join("../../testdata/documents", fixture.Name))

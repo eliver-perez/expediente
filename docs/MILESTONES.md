@@ -12,7 +12,7 @@ un módulo como completo si solo tiene interfaces, mocks o endpoints sin control
 | H4 | Managed/hybrid, temporales, multifile, expedientes, catálogos, plantillas/requerimientos, asociación sin copia | Migraciones de organización/cargas; pruebas de aislamiento temporal y snapshots de requerimientos | Vinculada→híbrida conserva IDs/OCR; expediente propio, asociación única; nueva raíz no bloquea cargas |
 | H5 | Revisión/aprobación/rechazo, finalización directa donde corresponde, materialización, integridad managed y avance | Migraciones de workflow/journal; pruebas inyectando fallos entre discos y reinicios | Aprobación solo tras materializar; linked modificado conserva aprobación; managed exige nueva decisión |
 | H6 | Cliente licencias online/offline V1.0, Ed25519/JWS, identidad/huella, revisión máxima y módulos en Go | Vectores compartidos con otro proyecto; mock local solo desarrollo, exclusión productiva | Estados/15 días/revocación/renovación/read-only exactos; ningún documento/ruta sale |
-| H7 | Endurecimiento, carga/recuperación, backups, CI/release e instaladores de los cuatro objetivos | Actualización N-1, desinstalación conservadora, bundle offline en VM sin red, firma/checksum | Instalación/upgrade/restore preservan DB/PDF/OCR/licencia y tienen evidencia reproducible |
+| H7 | Endurecimiento, carga/recuperación, backups, CI/release e instaladores Apple Silicon, Windows y Ubuntu (Intel excluido) | Actualización N-1, desinstalación conservadora, bundle offline en VM sin red, firma/checksum | Instalación/upgrade/restore preservan DB/PDF/OCR/licencia y tienen evidencia reproducible |
 
 En H2–H5, el adaptador de licencia de desarrollo debe estar identificado y excluido
 de builds productivas; middleware/capacidades se diseñan desde H2. No publicar un
@@ -205,3 +205,15 @@ arranque/prueba con versiones fijadas, resultados y limitaciones. Revisar UI y
 documentación del comportamiento entregado, no solo compilación. No correr todos
 los tests repetidamente si no hay cambios/fallos; ampliar cuando lo justifique el
 riesgo. Las pruebas H1 solo verifican el diseño SQL, no cubren ACC del backend.
+
+## Avance H7: primera entrega de instaladores (2026-09-25)
+
+Canal AIBID Pruebas 0.7.0-test.1: pkg arm64, exe Windows amd64 y deb Ubuntu 24.04 amd64.
+El propietario excluyó macOS Intel y confirmó equipos para los tres objetivos. Integración con
+el servidor comercial pospuesta hasta el final de ambos proyectos.
+
+Implementados hosts launchd/systemd/SCM, cuenta restringida, configuración exclusiva, diagnóstico
+PDF/OCR, bootstrap local y desinstalación conservadora; el instalador rechaza cambios de versión.
+Windows empaqueta runtime PDF/OCR spa/eng con inventario fijado; Ubuntu tiene scripts de preparación
+e instalación de repositorio offline. No se afirma aprobación de ACC-24/25/26 por compilar.
+Evidencia de ejecución y pendientes: [H7](H7.md), [plan de pruebas](../packaging/TEST-PLAN.md).

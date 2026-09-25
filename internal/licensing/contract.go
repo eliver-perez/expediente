@@ -12,11 +12,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gestor-documental/internal/buildinfo"
 	"gestor-documental/internal/domain"
 )
 
 const ProductID = "gestor_documental"
-const AppVersion = "0.6.0"
+const AppVersion = buildinfo.Version
 const MaximumArtifactBytes = 65536
 const developmentPublicKeyHex = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 

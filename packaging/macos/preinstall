@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+BASE='/Library/Application Support/AIBID-Test'
+# A future schema-changing release needs the H7 verified backup/restore updater.
+# This preview permits only same-version reinstalls, including after uninstall.
+if [ -f "$BASE/data/package-version" ] && [ "$(cat "$BASE/data/package-version")" != '@VERSION@' ]; then
+    echo 'Esta versión de prueba no admite actualizar datos de otra versión. Conserva los datos y consulta docs/H7.md.' >&2
+    exit 1
+fi
+if [ -L "$BASE" ] || [ -L "$BASE/data" ] || [ -L "$BASE/data/config.json" ]; then
+    echo 'La ruta de instalación no puede ser un enlace.' >&2
+    exit 1
+fi
+if /bin/launchctl print system/app.aibid.test >/dev/null 2>&1; then
+    /bin/launchctl bootout system/app.aibid.test
+fi
+if [ -f "$BASE/bin/gestor-documental" ] && [ -f "$BASE/data/config.json" ]; then
+    /usr/bin/sudo -u _aibidtest "$BASE/bin/gestor-documental" migrate --config "$BASE/data/config.json"
+fi

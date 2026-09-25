@@ -1,8 +1,9 @@
 # AIBID — Desarrollo, distribución y operación
 
 **H6 ejecutable:** cliente de licencias online/offline y bibliotecas vinculadas/administradas/híbridas, cargas privadas,
-expedientes, revisión, guardado definitivo, integridad, OCR/búsqueda e identidad. Los instaladores
-y el registro como servicio del SO corresponden a H7. No se configura Apache/XAMPP.
+expedientes, revisión, guardado definitivo, integridad, OCR/búsqueda e identidad.
+**H7 en curso:** [instaladores de prueba, servicios y guía por SO](docs/H7.md), en un canal
+independiente (18090). No se configura Apache/XAMPP. Integración comercial aplazada al final.
 
 ## Ejecutar en macOS / Visual Studio Code
 
@@ -115,14 +116,17 @@ rechaza montajes de red como ubicación. Documentos finales pueden usar discos/N
 verificados. Cambiar estado/temporal requiere mantenimiento y plan explícito;
 cambiar destino futuro de biblioteca no mueve sus archivos históricos.
 
-## Matriz de releases a implementar en H7
+## Matriz comercial prevista y canal de prueba H7
 
 | Plataforma | Artefacto | Servicio | Estado y configuración propuestos |
 | --- | --- | --- | --- |
 | Windows amd64 | `.exe` instalador + desinstalador | Servicio Windows sin consola persistente | Binarios en Program Files; config/DB/clave en ProgramData con ACL específica |
 | Ubuntu 24.04 LTS amd64 | `.deb` online y bundle offline | systemd, usuario restringido | `/etc/gestor-documental/`, `/var/lib/gestor-documental/`, journald |
-| macOS Intel amd64 | `.pkg` | launchd | `/Library/Application Support/GestorDocumental/` protegido; LaunchDaemon propio |
 | macOS Apple Silicon arm64 | `.pkg` | launchd | Mismos criterios de permisos y actualización |
+
+macOS Intel se excluyó el 2026-09-25. La tabla describe el objetivo comercial; los instaladores
+actuales usan nombres/rutas **AIBID-Test**, cuentas propias y puerto **18090** para evitar
+interferir con la instalación de desarrollo. Instrucciones y límites en [H7](docs/H7.md).
 
 Las ubicaciones internas por defecto no fijan dónde van todos los PDF. Seleccionar
 y conceder ACL a cada raíz; no dar al servicio acceso total al disco por conveniencia.

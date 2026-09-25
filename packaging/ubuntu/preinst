@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+if [ -f /var/lib/aibid-test/package-version ] && [ "$(cat /var/lib/aibid-test/package-version)" != '@VERSION@' ]; then
+    echo 'Esta versión de prueba requiere datos de su misma versión. La actualización entre versiones queda pendiente del respaldo/restauración H7.' >&2
+    exit 1
+fi
+for path in /var/lib/aibid-test /etc/aibid-test /etc/aibid-test/config.json; do
+    [ ! -L "$path" ] || exit 1
+done
+if [ -d /run/systemd/system ] && systemctl is-active --quiet aibid-test.service; then systemctl stop aibid-test.service; fi
+if [ -f /etc/aibid-test/config.json ] && [ -x /usr/lib/aibid-test/gestor-documental ]; then
+    runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental migrate --config /etc/aibid-test/config.json
+fi

@@ -201,3 +201,21 @@ no declara una liberación remota. Consultas/descargas conservan sus permisos en
 vencida/revocada; recuperación y política de backup siguen disponibles. La hora
 máxima persistida limita retrocesos, sin prometer protección frente al administrador
 del SO. [Pruebas, recuperación y límites de interoperabilidad](docs/H6.md).
+
+## Canal de instaladores H7
+
+AIBID Pruebas tiene licencia development, sin servidor comercial, puerto loopback 18090, estado y
+servicio independientes. No abrir firewall ni reutilizar sus binarios para una release comercial.
+Los paquetes de prueba carecen de firma de editor/notarización; se generan hashes para comprobar
+transferencia, no autenticidad del editor. La firma ad hoc del binario arm64 no equivale a notarización.
+
+La cuenta del servicio Windows se incluye explícitamente en las DACL privadas junto a SYSTEM,
+Administradores y la cuenta que realiza mantenimiento local. El nombre viene fijado en el binario
+instalado, no de una entrada HTTP. Las cuentas Unix no tienen login. Datos 0700/0600, estado local y
+rechazo de enlaces conservados. Los ejecutables y scripts se instalan en ubicaciones administradas.
+Las raíces adicionales requieren permisos específicos; los instaladores no amplían permisos de
+Documentos, discos o NAS. La desinstalación conserva datos y configuración.
+
+Reinstalar otra versión queda bloqueado hasta completar backup/restore y actualización firmada.
+La matriz nativa, prueba offline Ubuntu y obligaciones de distribución de dependencias siguen
+abiertas; [guía y límites](docs/H7.md).

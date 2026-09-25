@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+[ "$(id -u)" -eq 0 ] || { echo 'Ejecuta sudo aibid-test-admin' >&2; exit 1; }
+runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental doctor --config /etc/aibid-test/config.json --sample-directory /usr/share/doc/aibid-test/pdf
+if [ ! -f /var/lib/aibid-test/service-enabled ]; then
+    if ! runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental bootstrap-ready --config /etc/aibid-test/config.json; then
+        runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental bootstrap --config /etc/aibid-test/config.json
+    fi
+    runuser -u aibid-test -- touch /var/lib/aibid-test/service-enabled
+fi
+systemctl enable --now aibid-test.service
+echo 'AIBID Pruebas disponible en http://127.0.0.1:18090 (en este equipo).'

@@ -10,7 +10,9 @@ recuperable, verificación de integridad,
 bibliotecas híbridas, cargas privadas, expedientes, catálogos y clasificación. Conserva
 identidad, auditoría, bibliotecas vinculadas, vigilancia y OCR de H2/H3.
 Contraseñas de **6–128 caracteres**. Detalles y prueba del simulador: [entrega H6](docs/H6.md).
-La conexión con el servidor comercial queda pendiente; instaladores/servicios del SO son H7.
+**H7 en curso:** [instaladores de prueba y pasos por SO](docs/H7.md) para Mac Apple Silicon,
+Windows y Ubuntu 24.04, en el canal aislado AIBID Pruebas (puerto 18090).
+macOS Intel queda excluido. La conexión comercial se realizará al terminar ambos proyectos.
 
 Los cuatro logotipos SVG suministrados están en `web/public/assets/brand/`.
 Se conservan el identificador técnico `gestor_documental`, el nombre de los

@@ -48,6 +48,11 @@ func Defaults(stateDirectory string) Config {
 }
 
 func Initialize(path string) error {
+	return InitializeWith(path, nil)
+}
+
+// InitializeWith creates a new configuration exclusively; installers never replace one.
+func InitializeWith(path string, customize func(*Config)) error {
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -56,6 +61,9 @@ func Initialize(path string) error {
 		return err
 	}
 	configuration := Defaults(filepath.Join(filepath.Dir(absolutePath), "state"))
+	if customize != nil {
+		customize(&configuration)
+	}
 	if err := configuration.Validate(); err != nil {
 		return err
 	}

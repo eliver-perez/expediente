@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+umask 077
+BASE='/Library/Application Support/AIBID-Test'
+ACCOUNT='_aibidtest'
+if /usr/bin/dscl . -read /Users/$ACCOUNT >/dev/null 2>&1; then
+    [ "$(/usr/bin/dscl . -read /Users/$ACCOUNT NFSHomeDirectory)" = "NFSHomeDirectory: $BASE/data" ] || exit 1
+    [ "$(/usr/bin/dscl . -read /Users/$ACCOUNT UserShell)" = 'UserShell: /usr/bin/false' ] || exit 1
+else
+    # Allocate an unused local system UID and GID; never reuse another account.
+    /usr/bin/dscl . -read /Groups/$ACCOUNT >/dev/null 2>&1 && exit 1
+    ID=400
+    while /usr/bin/dscl . -search /Users UniqueID "$ID" | /usr/bin/grep -q . || /usr/bin/dscl . -search /Groups PrimaryGroupID "$ID" | /usr/bin/grep -q .; do
+        ID=$((ID + 1))
+        [ "$ID" -lt 500 ] || exit 1
+    done
+    /usr/bin/dscl . -create /Groups/$ACCOUNT
+    /usr/bin/dscl . -create /Groups/$ACCOUNT PrimaryGroupID "$ID"
+    /usr/bin/dscl . -create /Users/$ACCOUNT
+    /usr/bin/dscl . -create /Users/$ACCOUNT UniqueID "$ID"
+    /usr/bin/dscl . -create /Users/$ACCOUNT PrimaryGroupID "$ID"
+    /usr/bin/dscl . -create /Users/$ACCOUNT NFSHomeDirectory "$BASE/data"
+    /usr/bin/dscl . -create /Users/$ACCOUNT UserShell /usr/bin/false
+    /usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIBID Pruebas'
+    /usr/bin/dscl . -create /Users/$ACCOUNT IsHidden 1
+    /usr/bin/dscl . -create /Users/$ACCOUNT Password '*'
+fi
+/usr/bin/install -d -o "$ACCOUNT" -g "$ACCOUNT" -m 700 "$BASE/data" "$BASE/data/logs"
+if [ ! -e "$BASE/data/config.json" ]; then
+    /usr/bin/sudo -u "$ACCOUNT" "$BASE/bin/gestor-documental" init --config "$BASE/data/config.json" --listen 127.0.0.1:18090 --tools /opt/homebrew/bin
+fi
+/usr/bin/printf '%s\n' '@VERSION@' > "$BASE/data/package-version"
+/usr/sbin/chown "$ACCOUNT:$ACCOUNT" "$BASE/data/package-version"
+/bin/chmod 600 "$BASE/data/package-version"
+# Bootstrap is deliberately local and interactive; there is no default password.
+# Do not loop a failing daemon before an administrator exists.
+if [ -f "$BASE/data/service-enabled" ]; then
+    /bin/launchctl bootstrap system /Library/LaunchDaemons/app.aibid.test.plist
+fi

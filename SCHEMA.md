@@ -194,3 +194,9 @@ Es append-only frente a operaciones ordinarias, no frente al administrador del S
 Migraciones con checksum, versión y backup previo. DDL `up`/`down` por módulo solo
 cuando bajar sea seguro; una transformación con pérdida requiere restauración
 verificada, no un `down` que borre evidencia. Probar actualización desde N-1.
+
+## H7: primera entrega de instaladores
+
+No añade migraciones: el esquema sigue en 5. Los marcadores de versión/habilitación del
+servicio pertenecen al canal AIBID Pruebas y viven fuera de la DB. No representan licencia
+ni autorización dentro de la aplicación. Las cinco migraciones anteriores conservan sus checksums.

@@ -1,0 +1,64 @@
+name: AIBID H7 preview installers
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: macos
+          - os: ubuntu-24.04
+            target: ubuntu
+          - os: windows-latest
+            target: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.15.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm --prefix web ci
+      - run: npm --prefix web run build
+      - if: runner.os == 'macOS'
+        run: brew install poppler tesseract tesseract-lang
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-spa fonts-dejavu-core
+      - run: go test -tags development ./...
+      - if: runner.os != 'Windows'
+        run: python3 scripts/build_installers.py --target ${{ matrix.target }}
+      - if: runner.os == 'macOS'
+        run: python3 scripts/smoke_macos_installer.py dist/installers/AIBID-Pruebas-0.7.0-test.1-macOS-arm64.pkg
+      - if: runner.os == 'Linux'
+        run: dpkg-deb --info dist/installers/aibid-test_0.7.0~test.1_amd64.deb
+      - if: runner.os == 'Windows'
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          init-shell: none
+          generate-run-shell: false
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.12 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          micromamba create --no-rc --root-prefix "$env:RUNNER_TEMP\aibid-mamba" --prefix "$env:RUNNER_TEMP\aibid-ocr" --platform win-64 --file packaging/windows/ocr-explicit.txt --yes
+          if ($LASTEXITCODE -ne 0) { throw 'OCR restoration failed' }
+          python scripts/build_installers.py --target windows --windows-tools "$env:RUNNER_TEMP\aibid-ocr" --makensis "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+      # Internal preview artifacts only; no release publication or production signing.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AIBID-Pruebas-${{ matrix.target }}
+          path: dist/installers/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+umask 077
+case "$1" in
+configure)
+    if ! getent passwd aibid-test >/dev/null; then
+        adduser --system --group --home /var/lib/aibid-test --no-create-home --disabled-login aibid-test
+    fi
+    [ "$(getent passwd aibid-test | cut -d: -f6)" = /var/lib/aibid-test ] || exit 1
+    [ "$(getent passwd aibid-test | cut -d: -f7)" = /usr/sbin/nologin ] || exit 1
+    install -d -o aibid-test -g aibid-test -m 700 /var/lib/aibid-test /etc/aibid-test
+    if [ ! -e /etc/aibid-test/config.json ]; then
+        runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental init --config /etc/aibid-test/config.json --state /var/lib/aibid-test/state --listen 127.0.0.1:18090 --tools /usr/bin
+    fi
+    printf '%s\n' '@VERSION@' > /var/lib/aibid-test/package-version
+    chown aibid-test:aibid-test /var/lib/aibid-test/package-version
+    chmod 600 /var/lib/aibid-test/package-version
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        if [ -f /var/lib/aibid-test/service-enabled ]; then systemctl enable --now aibid-test.service; fi
+    fi
+    echo 'AIBID Pruebas: ejecuta sudo aibid-test-admin para crear el administrador e iniciar el servicio.'
+;;
+esac

@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+if [ -d /run/systemd/system ]; then
+    if systemctl is-active --quiet aibid-test.service; then systemctl stop aibid-test.service; fi
+    if [ "$1" = remove ]; then systemctl disable aibid-test.service; fi
+fi
+if [ -f /etc/aibid-test/config.json ]; then
+    runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental migrate --config /etc/aibid-test/config.json
+fi

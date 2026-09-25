@@ -313,3 +313,10 @@ autorizado conserva recuperación en modo read-only. Restauración se inicia loc
 con el servicio en mantenimiento y plan verificado; no exponer reemplazo inmediato
 de DB por HTTP. Contrato fino de exportación/configuración se cierra al implementar
 H7, sin introducir otro motor ni almacenamiento en nube obligatorio.
+
+## H7: instaladores de prueba
+
+Esta entrega no añade endpoints ni implementa todavía `/backups`. Añade comandos locales
+`version`, `doctor` y `bootstrap-ready`, además de parámetros de `init` para el instalador.
+Los paquetes iniciales permiten reinstalar su misma versión; backup/restore integral y
+actualización firmada siguen pendientes. [Instalación y diagnóstico](docs/H7.md).

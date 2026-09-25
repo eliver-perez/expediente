@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
+# Even purge preserves documents, database, private identity, configuration and account.
+echo 'Datos y configuración conservados en /var/lib/aibid-test y /etc/aibid-test.'

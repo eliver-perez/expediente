@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,8 @@ import (
 )
 
 type Options struct {
+	FontconfigFile     string `json:"fontconfig_file,omitempty"`
+	TessdataDirectory  string `json:"tessdata_directory,omitempty"`
 	PDFInfo            string `json:"pdfinfo"`
 	PDFText            string `json:"pdftotext"`
 	PDFRender          string `json:"pdftoppm"`
@@ -34,6 +37,12 @@ func Defaults() Options {
 	return Options{PDFInfo: "pdfinfo", PDFText: "pdftotext", PDFRender: "pdftoppm", Tesseract: "tesseract", Workers: 1, MaximumFileMB: 256, MaximumPages: 1000, PageTimeoutSeconds: 120}
 }
 func (options Options) Validate() error {
+	if options.FontconfigFile != "" && !filepath.IsAbs(options.FontconfigFile) {
+		return fmt.Errorf("fontconfig_file must be absolute")
+	}
+	if options.TessdataDirectory != "" && !filepath.IsAbs(options.TessdataDirectory) {
+		return fmt.Errorf("tessdata_directory must be absolute")
+	}
 	if options.Workers < 1 || options.Workers > 4 || options.MaximumFileMB < 1 || options.MaximumFileMB > 2048 || options.MaximumPages < 1 || options.MaximumPages > 10000 || options.PageTimeoutSeconds < 5 || options.PageTimeoutSeconds > 300 {
 		return fmt.Errorf("indexing budgets outside allowed range")
 	}
@@ -61,14 +70,24 @@ func (output *limitedOutput) Write(contents []byte) (int, error) {
 	}
 	return output.Buffer.Write(contents)
 }
-func run(ctx context.Context, timeout int, maximum int, program, directory string, arguments ...string) ([]byte, error) {
+func (options Options) run(ctx context.Context, timeout int, maximum int, program, directory string, arguments ...string) ([]byte, error) {
 	processContext, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 	command := exec.CommandContext(processContext, program, arguments...)
 	command.Dir = directory
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LANG=C", "LC_ALL=C", "OMP_THREAD_LIMIT=1", "TMPDIR=" + directory, "XDG_CACHE_HOME=" + directory}
-	if data := os.Getenv("TESSDATA_PREFIX"); data != "" {
+	data := options.TessdataDirectory
+	if data == "" {
+		data = os.Getenv("TESSDATA_PREFIX")
+	}
+	if data != "" {
 		command.Env = append(command.Env, "TESSDATA_PREFIX="+data)
+	}
+	if options.FontconfigFile != "" {
+		command.Env = append(command.Env, "FONTCONFIG_FILE="+options.FontconfigFile)
+	}
+	if runtime.GOOS == "windows" {
+		command.Env = append(command.Env, "SystemRoot="+os.Getenv("SystemRoot"), "TEMP="+directory, "TMP="+directory)
 	}
 	command.WaitDelay = 2 * time.Second
 	configureProcess(command)
@@ -89,7 +108,7 @@ func run(ctx context.Context, timeout int, maximum int, program, directory strin
 }
 func (options Options) ValidatePDF(ctx context.Context, documentPath string) (int, error) {
 	directory := filepath.Dir(documentPath)
-	info, err := run(ctx, options.PageTimeoutSeconds, 1<<20, options.PDFInfo, directory, documentPath)
+	info, err := options.run(ctx, options.PageTimeoutSeconds, 1<<20, options.PDFInfo, directory, documentPath)
 	if err != nil {
 		return 0, err
 	}
@@ -117,7 +136,7 @@ func (options Options) Extract(ctx context.Context, documentPath, languages stri
 	totalBytes := 0
 	for number := 1; number <= pageCount; number++ {
 		pageArgument := strconv.Itoa(number)
-		contents, err := run(ctx, options.PageTimeoutSeconds, 4<<20, options.PDFText, directory, "-f", pageArgument, "-l", pageArgument, "-enc", "UTF-8", "-layout", "-nopgbrk", documentPath, "-")
+		contents, err := options.run(ctx, options.PageTimeoutSeconds, 4<<20, options.PDFText, directory, "-f", pageArgument, "-l", pageArgument, "-enc", "UTF-8", "-layout", "-nopgbrk", documentPath, "-")
 		if err != nil {
 			return nil, err
 		}
@@ -130,7 +149,7 @@ func (options Options) Extract(ctx context.Context, documentPath, languages stri
 			}
 		}
 		if letters < 32 {
-			rendered, err := run(ctx, options.PageTimeoutSeconds, 32<<20, options.PDFRender, directory, "-f", pageArgument, "-l", pageArgument, "-singlefile", "-scale-to", "2500", "-png", documentPath)
+			rendered, err := options.run(ctx, options.PageTimeoutSeconds, 32<<20, options.PDFRender, directory, "-f", pageArgument, "-l", pageArgument, "-singlefile", "-scale-to", "2500", "-png", documentPath)
 			if err != nil {
 				return nil, err
 			}
@@ -138,7 +157,7 @@ func (options Options) Extract(ctx context.Context, documentPath, languages stri
 			if err = os.WriteFile(imagePath, rendered, 0600); err != nil {
 				return nil, err
 			}
-			recognized, err := run(ctx, options.PageTimeoutSeconds, 4<<20, options.Tesseract, directory, imagePath, "stdout", "-l", languages, "--psm", "3")
+			recognized, err := options.run(ctx, options.PageTimeoutSeconds, 4<<20, options.Tesseract, directory, imagePath, "stdout", "-l", languages, "--psm", "3")
 			removalError := os.Remove(imagePath)
 			if err != nil {
 				return nil, err

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"gestor-documental/internal/buildinfo"
 	"path/filepath"
 
 	"golang.org/x/sys/windows"
@@ -17,7 +18,15 @@ func ProtectPrivatePath(path string, directory bool) error {
 	if directory {
 		inheritance = "OICI"
 	}
-	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;" + inheritance + ";FA;;;SY)(A;" + inheritance + ";FA;;;BA)(A;" + inheritance + ";FA;;;" + user.User.Sid.String() + ")")
+	serviceAccess := ""
+	if buildinfo.ServiceName != "" {
+		serviceSID, _, _, lookupErr := windows.LookupSID("", `NT SERVICE\`+buildinfo.ServiceName)
+		if lookupErr != nil {
+			return fmt.Errorf("resolve installed service account: %w", lookupErr)
+		}
+		serviceAccess = "(A;" + inheritance + ";FA;;;" + serviceSID.String() + ")"
+	}
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;" + inheritance + ";FA;;;SY)(A;" + inheritance + ";FA;;;BA)(A;" + inheritance + ";FA;;;" + user.User.Sid.String() + ")" + serviceAccess)
 	if err != nil {
 		return err
 	}

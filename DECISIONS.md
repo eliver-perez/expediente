@@ -185,3 +185,22 @@ aquí; todavía no se afirma que el repositorio externo los haya adoptado o supe
 El contrato original sigue inalterado. La política de instalación de versiones ya
 compara su fecha con el corte de licencia; verificar el manifiesto y actualizar
 binarios corresponde a H7. Los respaldos completos también siguen en H7.
+
+## H7 — canal de pruebas y matriz acotada (2026-09-25)
+
+El propietario dispone de Mac M1 Max, Windows y Ubuntu 24.04; pidió excluir macOS Intel.
+La conexión real de licencias se pospone al final de ambos proyectos, sin volver a solicitar URL/claves.
+
+Para probar instaladores sin reemplazar la instalación activa se elige un canal **AIBID Pruebas**
+con cuenta/servicio/datos propios y puerto 18090. Reutilizar el servicio 8090 simplificaría rutas,
+pero mezclaría pruebas de permisos y desinstalación con los datos en uso. Se conserva el identificador
+técnico del producto y el esquema 5; no hay migraciones nuevas. El build es development y se identifica
+como installer-test; no puede presentarse como una distribución comercial.
+
+Windows usa cuenta virtual dedicada y soporte SCM en Go; el SID del servicio se conserva en ACL
+cuando la CLI se ejecuta como administrador. Unix usa cuentas restringidas y 0700/0600. Primer
+administrador por terminal local, sin contraseñas por argumento ni cuentas predeterminadas.
+
+La primera versión permite reinstalar la misma versión. Cambios de versión se rechazan antes de
+reemplazar código: el updater, la firma separada y el backup/restore integral todavía no están
+certificados. Desinstalar conserva estado, documentos y configuración. [Guía H7](docs/H7.md).
