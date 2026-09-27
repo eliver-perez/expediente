@@ -4,6 +4,8 @@ Unicode true
 !include "LogicLib.nsh"
 !include "WinVer.nsh"
 Name "AIBID Pruebas ${VERSION}"
+!define MUI_ICON "${STAGE}/aibid.ico"
+!define MUI_UNICON "${STAGE}/aibid.ico"
 OutFile "${OUTPUT}"
 InstallDir "$PROGRAMFILES64\AIBID-Test"
 RequestExecutionLevel admin
@@ -13,7 +15,7 @@ BrandingText "AIBID — Tu biblioteca digital, ordenada y al alcance."
 !define MUI_WELCOMEPAGE_TEXT "Instalación de pruebas independiente. Usa http://127.0.0.1:18090 y conserva los datos al desinstalar.$\r$\n$\r$\nDespués abre Configurar AIBID Pruebas para crear tu administrador (mínimo 6 caracteres). No necesita servidor de licencias.$\r$\n$\r$\nEsta compilación no es una versión comercial."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TEXT "Abre Configurar AIBID Pruebas desde Inicio para crear el administrador e iniciar el servicio. Herramientas PDF/OCR e idiomas español e inglés incluidos."
+!define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIBID Pruebas desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIBID Pruebas en el Escritorio o Abrir AIBID en Inicio: abre el navegador sin pedir permisos de administrador."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -37,7 +39,8 @@ Section "Instalar"
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "${STAGE}/manage.ps1"
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\manage.ps1" -Action Preflight -InstallRoot "$INSTDIR"'
+    File /oname=gestor-documental-repair.exe "${STAGE}/gestor-documental.exe"
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\manage.ps1" -Action Preflight -InstallRoot "$INSTDIR" -PreflightBinary "$PLUGINSDIR\gestor-documental-repair.exe"'
     Pop $0
     ${If} $0 != 0
         Abort "No se pudo preparar la instalación; consulta el detalle."
@@ -53,10 +56,13 @@ Section "Instalar"
     CreateDirectory "$SMPROGRAMS\AIBID Pruebas"
     CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Configurar AIBID Pruebas.lnk" "$INSTDIR\admin.cmd"
     CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
-    WriteINIStr "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.url" "InternetShortcut" "URL" "http://127.0.0.1:18090"
+    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.url"
+    CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.lnk" "$INSTDIR\AIBID.exe"
+    CreateShortCut "$DESKTOP\AIBID Pruebas.lnk" "$INSTDIR\AIBID.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayName" "AIBID Pruebas"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayVersion" "${VERSION}"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "UninstallString" '$\"$INSTDIR\Desinstalar.exe$\"'
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayIcon" "$INSTDIR\AIBID.exe,0"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "NoModify" 1
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "NoRepair" 1
 SectionEnd
@@ -72,10 +78,14 @@ Section "Uninstall"
     ${EndIf}
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest"
     RMDir /r "$SMPROGRAMS\AIBID Pruebas"
+    Delete "$DESKTOP\AIBID Pruebas.lnk"
     ; Only code-owned subdirectories; ProgramData and library roots are never removed.
     RMDir /r "$INSTDIR\tools"
     RMDir /r "$INSTDIR\docs"
     Delete "$INSTDIR\gestor-documental.exe"
+    Delete "$INSTDIR\AIBID.exe"
+    Delete "$INSTDIR\aibid.ico"
+    Delete "$INSTDIR\launcher.json"
     Delete "$INSTDIR\manage.ps1"
     Delete "$INSTDIR\admin.cmd"
     Delete "$INSTDIR\Desinstalar.exe"

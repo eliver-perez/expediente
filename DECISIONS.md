@@ -204,3 +204,25 @@ administrador por terminal local, sin contraseñas por argumento ni cuentas pred
 La primera versión permite reinstalar la misma versión. Cambios de versión se rechazan antes de
 reemplazar código: el updater, la firma separada y el backup/restore integral todavía no están
 certificados. Desinstalar conserva estado, documentos y configuración. [Guía H7](docs/H7.md).
+
+## H7 — reparación Windows r2
+
+La prueba del propietario confirmó instalación, UAC y extracción PDF/OCR; bootstrap falló con
+`invalid uri authority: C:`. Se corrige la URI SQLite al anteponer `/` a la unidad Windows. El error
+original queda reproducido por una prueba portátil del motor, junto con casos de escapes/reapertura.
+
+La revisión r2 conserva versión de datos, esquema y configuración. El instalador usa su nuevo
+comprobador de lock sin abrir SQLite: no invoca el `migrate` del ejecutable defectuoso anterior.
+A petición del propietario se añade AIBID.exe y accesos en Escritorio/Inicio para abrir el navegador
+sin consola/UAC. La administración inicial sigue requiriendo elevación y terminal local.
+[Corrección y pasos de reinstalación](docs/H7-WINDOWS-R2.md).
+
+## 2026-09-26 — Reconciliación independiente y progreso persistente
+
+Se conserva Go/React/SQLite WAL con escritor único. Un worker adicional de recorridos
+evita que el worker de contenido predeterminado quede bloqueado por scans largos.
+Caché por identidad/tamaño/mtime con rehash de 24 h, progreso y errores persistentes
+en migración 0006 aditiva. Recorridos parciales nunca confirman ausencias.
+Cancelación explícita distinta de pausa por configuración/licencia. Los grupos de
+duplicados incluyen únicamente copias de bibliotecas autorizadas y no son destructivos.
+[Detalles y límites](docs/REVISION-PROCESAMIENTO.md).

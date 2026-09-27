@@ -5,7 +5,7 @@ export function Notice({ text, kind = 'error' }: { text: string; kind?: 'error' 
   return text ? <div className={`notice ${kind}`} role={kind === 'error' ? 'alert' : 'status'}>{text}</div> : null;
 }
 
-export function usePage<T>(endpoint: string) {
+export function usePage<T>(endpoint: string, enabled = true) {
   const [items, setItems] = useState<T[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
@@ -13,6 +13,7 @@ export function usePage<T>(endpoint: string) {
   const [revision, setRevision] = useState(0);
   const previousEndpoint = useRef(endpoint);
   useEffect(() => {
+    if (!enabled) { setBusy(false); return; }
     const controller = new AbortController();
     setBusy(true); setError('');
     if (previousEndpoint.current !== endpoint) { setItems([]); setCursor(null); previousEndpoint.current = endpoint; }
@@ -21,7 +22,7 @@ export function usePage<T>(endpoint: string) {
     }).catch(error => { if (!controller.signal.aborted) setError(message(error)); })
       .finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => controller.abort();
-  }, [endpoint, revision]);
+  }, [endpoint, revision, enabled]);
   async function more() {
     if (!cursor || busy) return;
     setBusy(true); setError('');
@@ -38,4 +39,22 @@ export function PageEnd({ busy, cursor, more, empty }: { busy: boolean; cursor: 
     {busy ? <p role="status">Cargando…</p> : empty ? <p>No hay registros para mostrar.</p> : null}
     {cursor && <button className="secondary" disabled={busy} onClick={more}>Mostrar más</button>}
   </div>;
+}
+
+// Fetch again only after the previous request settles; abort on navigation.
+export function usePolling<T>(endpoint: string, interval = 2500) {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
+    setData(null);
+    async function load() {
+      try { const value = await api<T>(endpoint, { signal: controller.signal }); if (!controller.signal.aborted) { setData(value); setError(''); } }
+      catch (cause) { if (!controller.signal.aborted) setError(message(cause)); }
+      finally { if (!controller.signal.aborted) timer = setTimeout(() => void load(), interval); }
+    }
+    void load(); return () => { controller.abort(); clearTimeout(timer); };
+  }, [endpoint, interval, revision]);
+  return { data, error, reload: () => setRevision(value => value + 1) };
 }

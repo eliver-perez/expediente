@@ -21,6 +21,8 @@ type observation struct {
 	Strong                   bool
 	Size                     int64
 	Modified                 string
+	ModifiedNS               int64
+	Unchanged                bool
 }
 
 func scanFailure(code string) error {
@@ -30,6 +32,12 @@ func failureCode(err error) string {
 	var failure *domain.Error
 	if errors.As(err, &failure) {
 		return failure.Code
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return "PATH_ACCESS_DENIED"
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return "PATH_NOT_FOUND"
 	}
 	if errors.Is(err, context.Canceled) {
 		return "INTERRUPTED"
@@ -79,6 +87,11 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 	defer container.Close()
 	scanID := domain.NewID()
 	pending := []string{"."}
+	partial := false
+	if requested, ok := ctx.Value(scanPathsKey{}).([]string); ok && len(requested) > 0 {
+		pending = requested
+		partial = true
+	}
 	err = service.Database.Write(ctx, func(transaction *sql.Tx) error {
 		if _, err := transaction.ExecContext(ctx, "UPDATE root_scans SET status='superseded' WHERE root_id=? AND status='running' AND configuration_revision<>?", root.ID, root.Revision); err != nil {
 			return err
@@ -89,28 +102,78 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 			scanID = previousID
 			var decodeError error
 			pending, decodeError = decodeStrings(checkpoint)
-			return decodeError
+			if decodeError != nil {
+				return decodeError
+			}
+			var storedPartial int
+			lookup = transaction.QueryRowContext(ctx, "SELECT partial FROM scan_progress WHERE scan_id=?", scanID).Scan(&storedPartial)
+			if lookup != nil && lookup != sql.ErrNoRows {
+				return lookup
+			}
+			partial = storedPartial == 1
+			return nil
 		}
 		if lookup != sql.ErrNoRows {
 			return lookup
 		}
 		_, err := transaction.ExecContext(ctx, "INSERT INTO root_scans(id,root_id,configuration_revision,status,checkpoint_json,started_at) VALUES(?,?,?,'running',?,?)", scanID, root.ID, root.Revision, encode(pending), now())
+		if err != nil {
+			return err
+		}
+		// Retry scope must commit with its checkpoint: a crash must never turn
+		// a partial retry into an authoritative full scan.
+		_, err = transaction.ExecContext(ctx, "INSERT INTO scan_progress(scan_id,updated_at,partial) VALUES(?,?,?)", scanID, now(), partial)
 		return err
 	})
 	if err != nil {
 		return err
 	}
+	_, err = service.Database.Writer.ExecContext(ctx, "INSERT INTO scan_progress(scan_id,updated_at,partial) VALUES(?,?,?) ON CONFLICT DO NOTHING", scanID, now(), partial)
+	if err != nil {
+		return err
+	}
 	directoriesSeen := 0
 	skippedLinks := false
-	var scanIssue error
+
 	for len(pending) > 0 {
 		if err = ctx.Err(); err != nil {
 			return err
 		}
 		relativeDirectory := pending[0]
+		if _, err = service.Database.Writer.ExecContext(ctx, "UPDATE scan_progress SET current_path=?,updated_at=? WHERE scan_id=?", relativeDirectory, now(), scanID); err != nil {
+			return err
+		}
+		advance := func(next []string) error {
+			pending = append(pending[1:], next...)
+			_, err := service.Database.Writer.ExecContext(ctx, "UPDATE root_scans SET checkpoint_json=?,directories_seen=directories_seen+1 WHERE id=? AND status='running'", encode(pending), scanID)
+			return err
+		}
+		pathFailure := func(cause error) error {
+			if err := service.scanPathError(ctx, root, relativeDirectory, cause); err != nil {
+				return err
+			}
+			return advance(nil)
+		}
 		info, statError := container.Lstat(relativeDirectory)
 		if statError != nil {
-			return service.scanError(ctx, root, statError)
+			if relativeDirectory == "." {
+				return service.scanError(ctx, root, statError)
+			}
+			if err = pathFailure(statError); err != nil {
+				return err
+			}
+			continue
+		}
+		if info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular() {
+			err = service.scanOne(ctx, root, scanID, relativeDirectory, maximumBytes)
+			if err != nil {
+				if err = pathFailure(err); err != nil {
+					return err
+				}
+			} else if err = advance(nil); err != nil {
+				return err
+			}
+			continue
 		}
 		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 			return service.scanError(ctx, root, scanFailure("DIRECTORY_CHANGED"))
@@ -120,7 +183,13 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		} // Failure switches the runtime to polling.
 		folder, openError := container.Open(relativeDirectory)
 		if openError != nil {
-			return service.scanError(ctx, root, openError)
+			if relativeDirectory == "." {
+				return service.scanError(ctx, root, openError)
+			}
+			if err = pathFailure(openError); err != nil {
+				return err
+			}
+			continue
 		}
 		openedInfo, openError := folder.Stat()
 		if openError != nil || !os.SameFile(info, openedInfo) {
@@ -133,11 +202,15 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 			return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
 		}
 		nextDirectories := []string{}
+		readComplete := false
 		for {
 			entries, readError := folder.ReadDir(128)
 			if readError != nil && readError != io.EOF {
 				folder.Close()
-				return service.scanError(ctx, root, readError)
+				if err = service.scanPathError(ctx, root, relativeDirectory, readError); err != nil {
+					return err
+				}
+				break
 			}
 			for _, entry := range entries {
 				relative := filepath.ToSlash(filepath.Join(relativeDirectory, entry.Name()))
@@ -146,64 +219,81 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 					continue
 				}
 				if entry.IsDir() {
+					if excludedDirectory(entry.Name()) {
+						_, err = service.Database.Writer.ExecContext(ctx, "UPDATE scan_progress SET excluded_directories=excluded_directories+1 WHERE scan_id=?", scanID)
+						if err != nil {
+							folder.Close()
+							return err
+						}
+						continue
+					}
 					nextDirectories = append(nextDirectories, relative)
 					continue
 				}
 				if !strings.EqualFold(filepath.Ext(entry.Name()), ".pdf") {
 					continue
 				}
-				file, openError := openLinked(root, relative)
-				if openError != nil {
-					if scanIssue == nil {
-						scanIssue = openError
-					}
-					continue
-				}
-				observed, observeError := observe(ctx, file, relative, maximumBytes)
-				file.Close()
-				if observeError != nil {
+				if err = service.scanOne(ctx, root, scanID, relative, maximumBytes); err != nil {
 					if ctx.Err() != nil {
 						folder.Close()
 						return ctx.Err()
 					}
-					if scanIssue == nil {
-						scanIssue = observeError
+					if err = service.scanPathError(ctx, root, relative, err); err != nil {
+						folder.Close()
+						return err
 					}
-					continue
-				}
-				if volumeKey(observed.Identity) != volumeKey(root.Identity) {
-					folder.Close()
-					return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
-				}
-				if err = service.ingest(ctx, root, scanID, observed); err != nil {
-					folder.Close()
-					return service.scanError(ctx, root, err)
 				}
 			}
 			if readError == io.EOF {
+				readComplete = true
 				break
 			}
 		}
 		folder.Close()
+		// Clear a directory error only after ReadDir reached EOF.
+		if readComplete {
+			if _, err = service.Database.Writer.ExecContext(ctx, "DELETE FROM scan_errors WHERE root_id=? AND relative_path=?", root.ID, relativeDirectory); err != nil {
+				return err
+			}
+		}
 		directoriesSeen++
-		pending = append(pending[1:], nextDirectories...)
 		if len(pending)+directoriesSeen > 100000 {
 			return service.scanError(ctx, root, scanFailure("DIRECTORY_LIMIT"))
 		}
-		if _, err = service.Database.Writer.ExecContext(ctx, "UPDATE root_scans SET checkpoint_json=?,directories_seen=directories_seen+1 WHERE id=? AND status='running'", encode(pending), scanID); err != nil {
+		if err = advance(nextDirectories); err != nil {
 			return err
 		}
 	}
-	if scanIssue != nil {
-		return service.scanError(ctx, root, scanIssue)
-	}
+
 	// Never infer deletions unless the same mounted directory survived a complete scan.
 	verified, err := inspectDirectory(root.Path)
 	if err != nil || verified.Identity != root.Identity {
 		return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
 	}
-	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
+	incomplete := false
+	err = service.Database.Write(ctx, func(transaction *sql.Tx) error {
 		if err := service.checkRootRevision(ctx, transaction, root); err != nil {
+			return err
+		}
+		if !partial {
+			if _, err := transaction.ExecContext(ctx, "DELETE FROM scan_errors WHERE root_id=? AND occurred_at<(SELECT started_at FROM root_scans WHERE id=?)", root.ID, scanID); err != nil {
+				return err
+			}
+		}
+		var errorsCount int
+		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM scan_errors WHERE root_id=?", root.ID).Scan(&errorsCount); err != nil {
+			return err
+		}
+		if partial || errorsCount > 0 {
+			incomplete = errorsCount > 0
+			diagnostic := ""
+			if errorsCount > 0 {
+				diagnostic = "SCAN_PARTIAL"
+			}
+			if _, err := transaction.ExecContext(ctx, "UPDATE root_scans SET status='complete',completed_at=?,can_confirm_absence=0,last_error_code=? WHERE id=?", now(), diagnostic, scanID); err != nil {
+				return err
+			}
+			_, err := transaction.ExecContext(ctx, "UPDATE storage_roots SET status='active',last_scan_at=?,last_error_code=? WHERE id=?", now(), diagnostic, root.ID)
 			return err
 		}
 		// Retire only locations proven absent; retain the historical row and its OCR.
@@ -246,6 +336,10 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		_, err = transaction.ExecContext(ctx, "UPDATE storage_roots SET status='active',last_verified_at=?,last_scan_at=?,last_error_code=CASE WHEN last_error_code IN ('WATCH_LIMIT','WATCH_EVENTS_LOST') THEN last_error_code ELSE ? END WHERE id=?", now(), now(), diagnostic, root.ID)
 		return err
 	})
+	if err == nil && incomplete {
+		return scanFailure("SCAN_PARTIAL")
+	}
+	return err
 }
 func (service *Service) checkRootRevision(ctx context.Context, transaction *sql.Tx, root Root) error {
 	if root.Source == "managed" {
@@ -313,7 +407,7 @@ func observe(ctx context.Context, file *os.File, relative string, maximumBytes i
 	if err != nil || after.Size() != info.Size() || after.ModTime() != info.ModTime() || count != info.Size() {
 		return observed, scanFailure("FILE_UNSTABLE")
 	}
-	return observation{Identity: key, Strong: strong, Relative: relative, Hash: fmt.Sprintf("%x", hash.Sum(nil)), Size: count, Modified: domain.Timestamp(info.ModTime())}, nil
+	return observation{Identity: key, Strong: strong, Relative: relative, Hash: fmt.Sprintf("%x", hash.Sum(nil)), Size: count, Modified: domain.Timestamp(info.ModTime()), ModifiedNS: info.ModTime().UnixNano()}, nil
 }
 func (service *Service) scanError(ctx context.Context, root Root, cause error) error {
 	code := failureCode(cause)
@@ -413,11 +507,28 @@ func (service *Service) ingest(ctx context.Context, root Root, scanID string, ob
 		if _, err = transaction.ExecContext(ctx, "UPDATE documents SET original_filename=?,filename_search_key=? WHERE id=?", filepath.Base(observed.Relative), searchKey(filepath.Base(observed.Relative)), documentID); err != nil {
 			return err
 		}
+		if _, err = transaction.ExecContext(ctx, "DELETE FROM scan_errors WHERE root_id=? AND relative_path=?", root.ID, observed.Relative); err != nil {
+			return err
+		}
+		if !observed.Unchanged {
+			if _, err = transaction.ExecContext(ctx, `INSERT INTO file_scan_cache VALUES(?,?,?,?,?,?,?) ON CONFLICT(root_id,relative_path) DO UPDATE SET identity_key=excluded.identity_key,size_bytes=excluded.size_bytes,modified_ns=excluded.modified_ns,sha256=excluded.sha256,hashed_at=excluded.hashed_at`, root.ID, observed.Relative, observed.Identity, observed.Size, observed.ModifiedNS, observed.Hash, now()); err != nil {
+				return err
+			}
+		}
+		unchanged, hashed := 0, 0
+		if observed.Unchanged {
+			unchanged = 1
+		} else {
+			hashed = 1
+		}
+		if _, err = transaction.ExecContext(ctx, "UPDATE scan_progress SET current_path=?,unchanged_files=unchanged_files+?,hashed_files=hashed_files+?,updated_at=? WHERE scan_id=?", observed.Relative, unchanged*int(observationsAdded), hashed*int(observationsAdded), now(), scanID); err != nil {
+			return err
+		}
 		if oldHash == observed.Hash {
 			// A root/configuration pause can cancel extraction without changing bytes.
 			// Resume that work, but leave terminal extraction failures for explicit retry.
 			var resume int
-			if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM physical_files f JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND f.extraction_freshness<>'current' AND d.deleted_at IS NULL AND (SELECT status FROM jobs WHERE physical_file_id=f.id AND target_version=f.current_content_version_id AND job_type='extract' ORDER BY created_at DESC,id DESC LIMIT 1)='cancelled'", fileID).Scan(&resume); err != nil {
+			if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM physical_files f JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND f.extraction_freshness<>'current' AND d.deleted_at IS NULL AND (SELECT CASE WHEN status='cancelled' AND NOT EXISTS(SELECT 1 FROM job_controls WHERE job_id=jobs.id AND cancel_requested=1) THEN 1 ELSE 0 END FROM jobs WHERE physical_file_id=f.id AND target_version=f.current_content_version_id AND job_type='extract' ORDER BY created_at DESC,id DESC LIMIT 1)=1", fileID).Scan(&resume); err != nil {
 				return err
 			}
 			if resume > 0 {
@@ -462,4 +573,26 @@ func (service *Service) ingest(ctx context.Context, root Root, scanID string, ob
 		}
 		return nil
 	})
+}
+
+// scanPathsKey carries a bounded retry scope. Full scans remain the public default.
+type scanPathsKey struct{}
+
+func (service *Service) scanOne(ctx context.Context, root Root, scanID, relative string, maximumBytes int64) error {
+	if _, err := service.Database.Writer.ExecContext(ctx, "UPDATE scan_progress SET current_path=?,updated_at=? WHERE scan_id=?", relative, now(), scanID); err != nil {
+		return err
+	}
+	file, err := openLinked(root, relative)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	observed, err := service.observeCached(ctx, root, file, relative, maximumBytes)
+	if err != nil {
+		return err
+	}
+	if volumeKey(observed.Identity) != volumeKey(root.Identity) {
+		return scanFailure("ROOT_UNAVAILABLE")
+	}
+	return service.ingest(ctx, root, scanID, observed)
 }

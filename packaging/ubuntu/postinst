@@ -12,6 +12,7 @@ configure)
     if [ ! -e /etc/aibid-test/config.json ]; then
         runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental init --config /etc/aibid-test/config.json --state /var/lib/aibid-test/state --listen 127.0.0.1:18090 --tools /usr/bin
     fi
+    runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental configure-license --config /etc/aibid-test/config.json
     printf '%s\n' '@VERSION@' > /var/lib/aibid-test/package-version
     chown aibid-test:aibid-test /var/lib/aibid-test/package-version
     chmod 600 /var/lib/aibid-test/package-version

@@ -189,6 +189,24 @@ func TestUpgradePreservesPopulatedH2AndRefusesDestructiveRollback(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer database.Close()
+	snapshots, err := filepath.Glob(filepath.Join(directory, "upgrade-backups", "before-processing-*.db"))
+	if err != nil || len(snapshots) != 1 {
+		t.Fatalf("upgrade snapshot missing: %v %v", snapshots, err)
+	}
+	backupURL := sqliteFileURL(filepath.ToSlash(snapshots[0]))
+	backupURL.RawQuery = "mode=ro"
+	snapshot, err := sql.Open("sqlite", backupURL.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	var snapshotCount int
+	if err = snapshot.QueryRow("SELECT count(*) FROM users WHERE id='old-user'").Scan(&snapshotCount); err != nil || snapshotCount != 1 {
+		t.Fatal("snapshot lost existing user", err)
+	}
+	if err = snapshot.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&snapshotCount); err != nil || snapshotCount != 1 {
+		t.Fatal("snapshot is not pre-upgrade", err)
+	}
 	var password string
 	if err = database.Reader.QueryRow("SELECT password_hash FROM users WHERE id='old-user'").Scan(&password); err != nil || password != "unchanged-phc" {
 		t.Fatal("upgrade changed user", err)
@@ -197,7 +215,7 @@ func TestUpgradePreservesPopulatedH2AndRefusesDestructiveRollback(t *testing.T) 
 		t.Fatal("rollback destroyed populated H2")
 	}
 	var migrations, evidence int
-	if err = database.Reader.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 5 {
+	if err = database.Reader.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 7 {
 		t.Fatal("partial down migration", err)
 	}
 	if err = database.Reader.QueryRow("SELECT count(*) FROM audit_events WHERE id='old-audit'").Scan(&evidence); err != nil || evidence != 1 {

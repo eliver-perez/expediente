@@ -8,7 +8,7 @@ import (
 )
 
 func doctor(ctx context.Context, configuration config.Config, samples string) error {
-	fmt.Printf("AIBID %s (%s)\nConfiguración: OK\n", buildinfo.Version, buildinfo.Channel)
+	fmt.Printf("AIBID %s (%s)\nConfiguración: OK\n", buildinfo.DisplayVersion(), buildinfo.Channel)
 	results, err := configuration.Indexing.Diagnose(ctx)
 	for _, result := range results {
 		fmt.Println(result)

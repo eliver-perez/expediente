@@ -34,7 +34,7 @@ test('administrar usuarios, cambiar contraseña, ver auditoría y denegar privil
   await page.getByRole('button', { name: 'Guardar datos' }).click();
   await expect(page.getByRole('heading', { name: 'Editar a Nombre actualizado' })).toBeVisible();
   await page.getByRole('link', { name: 'Eventos', exact: true }).click();
-  await expect(page.getByRole('cell', { name: 'Usuario creado', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Creación', exact: true })).toBeVisible();
   const eventResponse = await page.request.get('/api/v1/audit-events?event_type=user.created');
   expect(eventResponse.ok()).toBeTruthy();
 

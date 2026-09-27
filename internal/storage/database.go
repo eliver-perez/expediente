@@ -36,7 +36,7 @@ func Open(ctx context.Context, stateDirectory string) (*Database, error) {
 			return nil, err
 		}
 	}
-	databaseURL := url.URL{Scheme: "file", Path: filepath.ToSlash(databasePath)}
+	databaseURL := sqliteFileURL(filepath.ToSlash(databasePath))
 	settings := url.Values{"_pragma": {"foreign_keys(1)", "busy_timeout(5000)", "synchronous(FULL)"}, "_txlock": {"immediate"}}
 	databaseURL.RawQuery = settings.Encode()
 	writer, err := sql.Open("sqlite", databaseURL.String())
@@ -68,6 +68,9 @@ func Open(ctx context.Context, stateDirectory string) (*Database, error) {
 	if _, err := writer.ExecContext(ctx, "CREATE VIRTUAL TABLE temp.fts_probe USING fts5(body); DROP TABLE temp.fts_probe;"); err != nil {
 		return fail(err)
 	}
+	if err := backupBeforeProcessingUpgrade(ctx, writer, stateDirectory); err != nil {
+		return fail(err)
+	}
 	if err := migrate(ctx, writer); err != nil {
 		return fail(err)
 	}
@@ -86,6 +89,17 @@ func Open(ctx context.Context, stateDirectory string) (*Database, error) {
 		return fail(err)
 	}
 	return &Database{Writer: writer, Reader: reader}, nil
+}
+
+// sqliteFileURL accepts an absolute path with native separators already converted
+// by filepath.ToSlash. A Windows drive belongs in the path, never the URI authority.
+// See https://www.sqlite.org/uri.html#the_uri_path.
+func sqliteFileURL(path string) url.URL {
+	if len(path) >= 3 && path[1] == ':' && path[2] == '/' &&
+		(path[0] >= 'A' && path[0] <= 'Z' || path[0] >= 'a' && path[0] <= 'z') {
+		path = "/" + path
+	}
+	return url.URL{Scheme: "file", Path: path}
 }
 
 func (database *Database) Close() error {
@@ -116,6 +130,26 @@ func (database *Database) RollbackEmpty(ctx context.Context) error {
 		var count int
 		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
 			return err
+		}
+		if count == 7 {
+			contents, err := db.Migrations.ReadFile("migrations/0007_processing_settings.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 6 {
+			contents, err := db.Migrations.ReadFile("migrations/0006_processing_visibility.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
 		}
 		if count == 5 {
 			contents, err := db.Migrations.ReadFile("migrations/0005_license_client.down.sql")

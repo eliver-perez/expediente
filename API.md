@@ -317,6 +317,7 @@ H7, sin introducir otro motor ni almacenamiento en nube obligatorio.
 ## H7: instaladores de prueba
 
 Esta entrega no añade endpoints ni implementa todavía `/backups`. Añade comandos locales
-`version`, `doctor` y `bootstrap-ready`, además de parámetros de `init` para el instalador.
+`version`, `doctor`, `bootstrap-ready` y `check-state`, además de parámetros de `init` para el instalador.
+`check-state` valida configuración/lock sin abrir ni migrar la DB (preflight de reparación Windows r2).
 Los paquetes iniciales permiten reinstalar su misma versión; backup/restore integral y
 actualización firmada siguen pendientes. [Instalación y diagnóstico](docs/H7.md).

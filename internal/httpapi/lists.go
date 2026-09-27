@@ -50,6 +50,10 @@ func readMaps(rows *sql.Rows) ([]map[string]any, error) {
 // The SQL expression/column names are fixed by handlers. Only values originate from HTTP.
 func (server *Server) readPage(request *http.Request, principal domain.Principal, selection, table, timeColumn, where string, arguments []any) (page, error) {
 	result := page{Items: []map[string]any{}}
+	direction, operator := "DESC", "<"
+	if request.URL.Query().Get("direction") == "asc" {
+		direction, operator = "ASC", ">"
+	}
 	limit := 50
 	if raw := request.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -71,11 +75,11 @@ func (server *Server) readPage(request *http.Request, principal domain.Principal
 		if err := json.Unmarshal(contents, &position); err != nil || position.Scope != scope {
 			return result, domain.Failure("INVALID_CURSOR", "Cursor no válido para estos filtros.", 400)
 		}
-		where += " AND (" + timeColumn + " < ? OR (" + timeColumn + " = ? AND id < ?))"
+		where += " AND (" + timeColumn + " " + operator + " ? OR (" + timeColumn + " = ? AND id " + operator + " ?))"
 		arguments = append(arguments, position.At, position.At, position.ID)
 	}
 	arguments = append(arguments, limit+1)
-	rows, err := server.identity.Database.Reader.QueryContext(request.Context(), "SELECT "+selection+", "+timeColumn+" AS sort_time FROM "+table+" WHERE "+where+" ORDER BY "+timeColumn+" DESC,id DESC LIMIT ?", arguments...)
+	rows, err := server.identity.Database.Reader.QueryContext(request.Context(), "SELECT "+selection+", "+timeColumn+" AS sort_time FROM "+table+" WHERE "+where+" ORDER BY "+timeColumn+" "+direction+",id "+direction+" LIMIT ?", arguments...)
 	if err != nil {
 		return result, err
 	}

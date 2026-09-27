@@ -15,22 +15,23 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"gestor-documental/internal/domain"
 )
 
 type Options struct {
-	FontconfigFile     string `json:"fontconfig_file,omitempty"`
-	TessdataDirectory  string `json:"tessdata_directory,omitempty"`
-	PDFInfo            string `json:"pdfinfo"`
-	PDFText            string `json:"pdftotext"`
-	PDFRender          string `json:"pdftoppm"`
-	Tesseract          string `json:"tesseract"`
-	Workers            int    `json:"workers"`
-	MaximumFileMB      int    `json:"maximum_file_mb"`
-	MaximumPages       int    `json:"maximum_pages"`
-	PageTimeoutSeconds int    `json:"page_timeout_seconds"`
+	Progress           func(operation string, completed, total int) `json:"-"`
+	Concurrency        Concurrency                                  `json:"concurrency"`
+	FontconfigFile     string                                       `json:"fontconfig_file,omitempty"`
+	TessdataDirectory  string                                       `json:"tessdata_directory,omitempty"`
+	PDFInfo            string                                       `json:"pdfinfo"`
+	PDFText            string                                       `json:"pdftotext"`
+	PDFRender          string                                       `json:"pdftoppm"`
+	Tesseract          string                                       `json:"tesseract"`
+	Workers            int                                          `json:"workers"`
+	MaximumFileMB      int                                          `json:"maximum_file_mb"`
+	MaximumPages       int                                          `json:"maximum_pages"`
+	PageTimeoutSeconds int                                          `json:"page_timeout_seconds"`
 }
 
 func Defaults() Options {
@@ -43,7 +44,12 @@ func (options Options) Validate() error {
 	if options.TessdataDirectory != "" && !filepath.IsAbs(options.TessdataDirectory) {
 		return fmt.Errorf("tessdata_directory must be absolute")
 	}
-	if options.Workers < 1 || options.Workers > 4 || options.MaximumFileMB < 1 || options.MaximumFileMB > 2048 || options.MaximumPages < 1 || options.MaximumPages > 10000 || options.PageTimeoutSeconds < 5 || options.PageTimeoutSeconds > 300 {
+	if options.Concurrency.Mode != "" {
+		if err := options.Concurrency.Validate(); err != nil {
+			return err
+		}
+	}
+	if options.Workers < 1 || options.Workers > 8 || options.MaximumFileMB < 1 || options.MaximumFileMB > 2048 || options.MaximumPages < 1 || options.MaximumPages > 10000 || options.PageTimeoutSeconds < 5 || options.PageTimeoutSeconds > 300 {
 		return fmt.Errorf("indexing budgets outside allowed range")
 	}
 	for _, program := range []string{options.PDFInfo, options.PDFText, options.PDFRender, options.Tesseract} {
@@ -123,39 +129,93 @@ func (options Options) ValidatePDF(ctx context.Context, documentPath string) (in
 	}
 	return pageCount, nil
 }
-func (options Options) Extract(ctx context.Context, documentPath, languages string) ([]Page, error) {
-	if languages != "spa" && languages != "eng" && languages != "spa+eng" {
-		return nil, fmt.Errorf("unsupported OCR languages")
-	}
-	pageCount, err := options.ValidatePDF(ctx, documentPath)
+
+// Prepare reads native text in batches, amortizing process startup and PDF parsing.
+// Form-feed boundaries preserve page numbers, including blank pages.
+func (options Options) Prepare(ctx context.Context, documentPath string) ([]Page, error) {
+	count, err := options.ValidatePDF(ctx, documentPath)
 	if err != nil {
 		return nil, err
 	}
-	directory := filepath.Dir(documentPath)
-	pages := make([]Page, 0, pageCount)
+	pages := make([]Page, 0, count)
 	totalBytes := 0
-	for number := 1; number <= pageCount; number++ {
-		pageArgument := strconv.Itoa(number)
-		contents, err := options.run(ctx, options.PageTimeoutSeconds, 4<<20, options.PDFText, directory, "-f", pageArgument, "-l", pageArgument, "-enc", "UTF-8", "-layout", "-nopgbrk", documentPath, "-")
+	for start := 1; start <= count; start += 32 {
+		end := min(count, start+31)
+		if options.Progress != nil {
+			options.Progress("native", start-1, count)
+		}
+		contents, err := options.run(ctx, options.PageTimeoutSeconds, 32<<20, options.PDFText, filepath.Dir(documentPath), "-f", strconv.Itoa(start), "-l", strconv.Itoa(end), "-enc", "UTF-8", "-layout", documentPath, "-")
 		if err != nil {
 			return nil, err
 		}
-		text := strings.ToValidUTF8(string(contents), "")
-		method := "native"
-		letters := 0
-		for _, character := range text {
-			if unicode.IsLetter(character) || unicode.IsNumber(character) {
-				letters++
-			}
+		texts := strings.Split(string(contents), "\f")
+		if len(texts) == end-start+2 && strings.TrimSpace(texts[len(texts)-1]) == "" {
+			texts = texts[:len(texts)-1]
 		}
-		if letters < 32 {
-			rendered, err := options.run(ctx, options.PageTimeoutSeconds, 32<<20, options.PDFRender, directory, "-f", pageArgument, "-l", pageArgument, "-singlefile", "-scale-to", "2500", "-png", documentPath)
+		if len(texts) != end-start+1 {
+			return nil, domain.Failure("EXTRACTION_FAILED", "No se pudieron separar las páginas del PDF.", 409)
+		}
+		for index, text := range texts {
+			text = strings.ToValidUTF8(text, "")
+			totalBytes += len(text)
+			if len(text) > 4<<20 || totalBytes > 32<<20 {
+				return nil, domain.Failure("TEXT_LIMIT", "El texto extraído supera el límite por documento.", 409)
+			}
+			letters := 0
+			for _, character := range text {
+				if unicode.IsLetter(character) || unicode.IsNumber(character) {
+					letters++
+				}
+			}
+			method := "native"
+			if letters < 32 {
+				method = "pending_ocr"
+			}
+			pages = append(pages, Page{Number: start + index, Method: method, Text: text})
+		}
+		if options.Progress != nil {
+			options.Progress("native", end, count)
+		}
+	}
+	return pages, nil
+}
+func NeedsOCR(pages []Page) bool {
+	for _, page := range pages {
+		if page.Method == "pending_ocr" {
+			return true
+		}
+	}
+	return false
+}
+func (options Options) Recognize(ctx context.Context, documentPath, languages string, pages []Page) ([]Page, error) {
+	if languages != "spa" && languages != "eng" && languages != "spa+eng" {
+		return nil, fmt.Errorf("unsupported OCR languages")
+	}
+	directory := filepath.Dir(documentPath)
+	totalBytes := 0
+	completed := 0
+	for _, page := range pages {
+		if page.Method != "pending_ocr" {
+			completed++
+		}
+	}
+	for index := range pages {
+		page := &pages[index]
+		if page.Method == "pending_ocr" {
+			argument := strconv.Itoa(page.Number)
+			if options.Progress != nil {
+				options.Progress("render", completed, len(pages))
+			}
+			rendered, err := options.run(ctx, options.PageTimeoutSeconds, 32<<20, options.PDFRender, directory, "-f", argument, "-l", argument, "-singlefile", "-scale-to", "2500", "-png", documentPath)
 			if err != nil {
 				return nil, err
 			}
 			imagePath := filepath.Join(directory, "ocr-page.png")
 			if err = os.WriteFile(imagePath, rendered, 0600); err != nil {
 				return nil, err
+			}
+			if options.Progress != nil {
+				options.Progress("ocr", completed, len(pages))
 			}
 			recognized, err := options.run(ctx, options.PageTimeoutSeconds, 4<<20, options.Tesseract, directory, imagePath, "stdout", "-l", languages, "--psm", "3")
 			removalError := os.Remove(imagePath)
@@ -165,22 +225,29 @@ func (options Options) Extract(ctx context.Context, documentPath, languages stri
 			if removalError != nil {
 				return nil, removalError
 			}
-			text = strings.ToValidUTF8(string(recognized), "")
-			method = "ocr"
-			if strings.TrimSpace(text) == "" {
-				method = "empty"
+			page.Text = strings.ToValidUTF8(string(recognized), "")
+			page.Method = "ocr"
+			if strings.TrimSpace(page.Text) == "" {
+				page.Method = "empty"
+			}
+			completed++
+			if options.Progress != nil {
+				options.Progress("ocr", completed, len(pages))
 			}
 		}
-		if !utf8.ValidString(text) {
-			return nil, fmt.Errorf("invalid extraction encoding")
-		}
-		totalBytes += len(text)
+		totalBytes += len(page.Text)
 		if totalBytes > 32<<20 {
 			return nil, domain.Failure("TEXT_LIMIT", "El texto extraído supera el límite por documento.", 409)
 		}
-		pages = append(pages, Page{Number: number, Method: method, Text: text})
 	}
 	return pages, nil
+}
+func (options Options) Extract(ctx context.Context, documentPath, languages string) ([]Page, error) {
+	pages, err := options.Prepare(ctx, documentPath)
+	if err != nil {
+		return nil, err
+	}
+	return options.Recognize(ctx, documentPath, languages, pages)
 }
 func (options Options) Diagnostics() map[string]bool {
 	result := map[string]bool{}

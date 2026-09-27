@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { api, formatDate, message } from './api';
-import { Notice, PageEnd, usePage } from './components';
-import { diagnosticLabel, jobLabel, type Library, type Root, type RootPlan, type Job } from './libraryTypes';
+import { Notice, usePage } from './components';
+import { diagnosticLabel, type Library, type Root, type RootPlan } from './libraryTypes';
 
 export function Roots({ library, refresh }: { library: Library; refresh: () => void }) {
   const roots = usePage<Root>(`/libraries/${library.id}/roots`);
@@ -26,11 +26,6 @@ export function Roots({ library, refresh }: { library: Library; refresh: () => v
       </div>}
     </section>
   </>;
-}
-
-export function LibraryJobs({ library }: { library: Library }) {
-  const jobs = usePage<Job>(`/libraries/${library.id}/jobs`); const [error, setError] = useState('');
-  return <section className="card"><div className="section-heading"><div><h2>Procesamiento</h2><p className="muted">Cada tarea admite hasta cinco intentos. Puedes consultar el historial completo.</p></div><button className="secondary" onClick={jobs.reload}>Actualizar tareas</button></div><Notice text={error || jobs.error} /><div className="table-wrap"><table><thead><tr><th>Tarea</th><th>Estado</th><th>Intentos</th><th>Diagnóstico</th><th>Acciones</th></tr></thead><tbody>{jobs.items.map(job => <tr key={job.id}><td>{({ scan: 'Reconciliar carpeta', extract: 'Extraer texto y OCR', verify_managed: 'Verificar integridad', materialize: 'Guardar documento definitivo' } as Record<string, string>)[job.job_type] || job.job_type}<small>{formatDate(job.created_at)}</small></td><td>{jobLabel[job.status]}</td><td>{job.attempt_count} / 5</td><td>{diagnosticLabel[job.last_error_code] || job.last_error_code || '—'}</td><td>{['failed', 'cancelled'].includes(job.status) && <button className="text-button" onClick={async () => { const reason = window.prompt('Motivo del reintento'); if (!reason) return; try { await api(`/jobs/${job.id}/retry`, { method: 'POST', body: { reason } }); jobs.reload(); } catch (error) { setError(message(error)); } }}>Reintentar</button>}</td></tr>)}</tbody></table></div><PageEnd {...jobs} empty={jobs.items.length === 0} /></section>;
 }
 
 export function LibraryMembers({ library }: { library: Library }) {

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"gestor-documental/internal/domain"
+	"strings"
 )
 
 type Folder struct {
@@ -22,12 +23,19 @@ func (service *Service) Folders(ctx context.Context, principal domain.Principal,
 		return nil, "", invalid("Prefijo relativo inválido.")
 	}
 	if viewID != "" {
+		requestedPrefix := prefix
 		err := service.Database.Reader.QueryRowContext(ctx, "SELECT root_id,relative_prefix FROM logical_folder_views WHERE id=? AND library_id=?", viewID, libraryID).Scan(&rootID, &prefix)
 		if err == sql.ErrNoRows {
 			return nil, "", notFound()
 		}
 		if err != nil {
 			return nil, "", err
+		}
+		if requestedPrefix != "" {
+			if prefix != "" && requestedPrefix != prefix && !strings.HasPrefix(requestedPrefix, prefix+"/") {
+				return nil, "", invalid("Carpeta fuera de la vista seleccionada.")
+			}
+			prefix = requestedPrefix
 		}
 	}
 	scope := domain.Digest(encode([]string{principal.User.ID, libraryID, rootID, viewID, prefix}))

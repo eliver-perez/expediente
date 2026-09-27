@@ -25,8 +25,14 @@ func (server *Server) libraryRoutes(mux *http.ServeMux) {
 		"GET /api/v1/libraries/{library}/explorer": server.explorer, "POST /api/v1/search": server.search,
 		"GET /api/v1/documents/{document}": server.document, "GET /api/v1/documents/{document}/content": server.documentContent, "GET /api/v1/documents/{document}/download": server.documentContent,
 		"GET /api/v1/documents/{document}/pages/{page}/text": server.documentText, "GET /api/v1/documents/{document}/history": server.documentHistory, "POST /api/v1/documents/{document}/remove-index": server.removeDocumentIndex,
-		"GET /api/v1/libraries/{library}/duplicates": server.duplicates, "GET /api/v1/libraries/{library}/jobs": server.libraryJobs, "POST /api/v1/jobs/{job}/retry": server.retryJob,
-		"GET /api/v1/notifications": server.notifications, "POST /api/v1/notifications/{notice}/acknowledge": server.acknowledgeNotice, "GET /api/v1/libraries/{library}/audit-events": server.libraryEvents,
+		"GET /api/v1/libraries/{library}/processing":        server.processing,
+		"POST /api/v1/jobs/{job}/cancel":                    server.cancelJob,
+		"POST /api/v1/roots/{root}/retry-errors":            server.retryScanErrors,
+		"GET /api/v1/libraries/{library}/duplicates":        server.duplicateGroups,
+		"GET /api/v1/libraries/{library}/duplicates/{hash}": server.duplicateDocuments, "GET /api/v1/libraries/{library}/jobs": server.libraryJobs, "POST /api/v1/jobs/{job}/retry": server.retryJob,
+		"GET /api/v1/notifications": server.notifications, "POST /api/v1/notifications/{notice}/acknowledge": server.acknowledgeNotice, "GET /api/v1/libraries/{library}/audit-events": server.auditList,
+		"GET /api/v1/libraries/{library}/audit-options":        server.auditOptions,
+		"GET /api/v1/libraries/{library}/audit-events/{event}": server.libraryAuditDetail,
 	}
 	for route, handler := range routes {
 		mux.HandleFunc(route, server.protected("", true, handler))
@@ -210,8 +216,8 @@ func (server *Server) explorer(writer http.ResponseWriter, request *http.Request
 		}
 		limit = parsed
 	}
-	input := libraries.SearchInput{Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
-	result, err := server.libraries.Search(request.Context(), principal, input, metadata(request), false)
+	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
+	result, err := server.libraries.Search(request.Context(), principal, input, metadata(request), input.Query != "")
 	server.libraryResult(writer, request, 200, result, err)
 }
 func (server *Server) document(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
@@ -352,4 +358,46 @@ func (server *Server) inspectPath(writer http.ResponseWriter, request *http.Requ
 	}
 	result, err := server.libraries.PlanStorageRoot(request.Context(), principal, input.Library, input.Path, input.Source, metadata(request))
 	server.libraryResult(writer, request, 200, result, err)
+}
+
+func (server *Server) processing(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	report, err := server.libraries.Processing(r.Context(), p, r.PathValue("library"))
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, report)
+}
+func (server *Server) cancelJob(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	err := server.libraries.CancelJob(r.Context(), p, r.PathValue("job"), metadata(r))
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+func (server *Server) retryScanErrors(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	err := server.libraries.RetryScanErrors(r.Context(), p, r.PathValue("root"), metadata(r))
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (server *Server) duplicateGroups(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	result, err := server.libraries.DuplicateGroups(r.Context(), p, r.PathValue("library"), r.URL.Query().Get("cursor"))
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (server *Server) duplicateDocuments(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	result, err := server.libraries.DuplicateDocuments(r.Context(), p, r.PathValue("library"), r.PathValue("hash"), r.URL.Query().Get("cursor"))
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, result)
 }

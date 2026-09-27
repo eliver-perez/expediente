@@ -9,6 +9,8 @@ La contraseña admite de 6 a 128 caracteres. No hay contraseña inicial.
 | Instalar el paquete del SO | Crea el servicio detenido hasta configurar administrador; datos privados y código separados |
 | Ejecutar Configurar / `sudo aibid-test-admin` | Diagnóstico PDF nativo y OCR español OK; crea administrador e inicia servicio |
 | Cerrar Terminal y abrir navegador | La aplicación sigue disponible |
+| Windows: abrir AIBID Pruebas desde Escritorio/Inicio como usuario estándar | Abre navegador con URL configurada, sin consola ni UAC; no lee estado privado |
+| Windows r2: instalar sobre el fallo `invalid uri authority: C:` | Permite reinstalar y configurar sin borrar configuración ni ejecutar el binario defectuoso |
 | Reiniciar el equipo | Servicio vuelve a estar disponible y conserva la sesión/datos según las políticas normales |
 | Crear biblioteca híbrida y sus raíces | Permisos limitados a las carpetas elegidas; sin modificar permisos de carpetas ajenas |
 | Cargar native.pdf y scanned.pdf | Vista previa/descarga y búsqueda `PR-008` / `ESCANEADO` funcionan |

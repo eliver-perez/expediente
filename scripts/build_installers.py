@@ -20,6 +20,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "0.7.0-test.1"
+WINDOWS_REVISION = "r4"
 DEB_VERSION = "0.7.0~test.1"
 EPOCH = 1790294400  # Fixed packaging timestamp, 2026-09-25 UTC.
 
@@ -40,19 +41,22 @@ def copy(source, target, mode=0o644, template=False):
 def binary(destination, system, architecture):
     destination.parent.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ, CGO_ENABLED="0", GOOS=system, GOARCH=architecture)
-    run(["go", "build", "-tags", "development", "-trimpath", "-ldflags",
+    run(["go", "build", "-trimpath", "-ldflags",
          "-s -w -X gestor-documental/internal/buildinfo.Channel=installer-test"
-         + (" -X gestor-documental/internal/buildinfo.ServiceName=AIBIDTest" if system == "windows" else ""),
+         + (" -X gestor-documental/internal/buildinfo.ServiceName=AIBIDTest -X gestor-documental/internal/buildinfo.Revision="+WINDOWS_REVISION if system == "windows" else ""),
          "-o", destination, "./cmd/gestor-documental"], env=environment)
 
 
 def documents(destination):
     copy(ROOT / "docs/H7.md", destination / "LEEME.md")
     readme = destination / "LEEME.md"
-    readme.write_text(readme.read_text().replace("../packaging/TEST-PLAN.md", "PRUEBAS.md"))
+    readme.write_text(readme.read_text().replace("../packaging/TEST-PLAN.md", "PRUEBAS.md").replace("H7-WINDOWS-R2.md", "WINDOWS-R2.md"))
     copy(ROOT / "LICENSE_CONTRACT.md", destination / "LICENSE_CONTRACT.md")
     copy(ROOT / "packaging/TEST-PLAN.md", destination / "PRUEBAS.md")
     copy(ROOT / "packaging/THIRD-PARTY.md", destination / "THIRD-PARTY.md")
+    copy(ROOT / "docs/H7-WINDOWS-R2.md", destination / "WINDOWS-R2.md")
+    copy(ROOT / "docs/REVISION-PROCESAMIENTO.md", destination / "REVISION-PROCESAMIENTO.md")
+    copy(ROOT / "docs/REVISION-R4.md", destination / "REVISION-R4.md")
     # A few small fixtures exercise actual PDF and image OCR after native installation.
     for path in (ROOT / "testdata/documents").glob("*.pdf"):
         copy(path, destination / "pdf" / path.name)
@@ -253,19 +257,67 @@ def check_pe_imports(directory):
     print("Windows runtime PE/amd64 import closure: OK (native test still required)")
 
 
+def check_windows_icon(executable, gui=False):
+    """Verify actual PE resources and all icon sizes before packaging."""
+    data = executable.read_bytes()
+    pe = struct.unpack_from("<I", data, 0x3c)[0]
+    machine, count = struct.unpack_from("<HH", data, pe + 4)
+    assert machine == 0x8664, "Expected Windows amd64 executable"
+    optional = pe + 24
+    section_start = optional + struct.unpack_from("<H", data, pe + 20)[0]
+    def offset(address):
+        for index in range(count):
+            size, virtual, raw_size, raw = struct.unpack_from("<IIII", data, section_start + index * 40 + 8)
+            if virtual <= address < virtual + max(size, raw_size):
+                return raw + address - virtual
+        raise RuntimeError("Invalid resource RVA")
+    resource_rva = struct.unpack_from("<I", data, optional + 112 + 16)[0]
+    assert resource_rva, "Missing icon resource section"
+    base = offset(resource_rva)
+    groups = []
+    def visit(relative, ancestry):
+        directory = base + relative
+        named, identifiers = struct.unpack_from("<HH", data, directory + 12)
+        for index in range(named + identifiers):
+            identifier, target = struct.unpack_from("<II", data, directory + 16 + index * 8)
+            path = ancestry + [identifier]
+            if target & 0x80000000:
+                visit(target & 0x7fffffff, path)
+            elif path[0] == 14:  # RT_GROUP_ICON
+                address, length = struct.unpack_from("<II", data, base + target)
+                groups.append(data[offset(address):offset(address) + length])
+    visit(0, [])
+    assert groups, "Missing RT_GROUP_ICON"
+    sizes = set()
+    for group in groups:
+        frames = struct.unpack_from("<H", group, 4)[0]
+        sizes.update(group[6 + index * 14] or 256 for index in range(frames))
+    assert sizes == {16, 24, 32, 40, 48, 64, 128, 256}, sizes
+    if gui:
+        assert struct.unpack_from("<H", data, optional + 68)[0] == 2, "Launcher must use Windows GUI subsystem"
+    print(f"Windows icon resources: {executable.name}: {sorted(sizes)} OK")
+
+
 def windows(output, work, prefix, makensis):
     if not prefix or not makensis:
         raise RuntimeError("Windows requires --windows-tools and --makensis")
     payload = work / "root"
+    # The checked-in .syso resources are reproducible from the existing brand SVG.
+    copy(ROOT / "packaging/windows/aibid.ico", payload / "aibid.ico")
     binary(payload / "gestor-documental.exe", "windows", "amd64")
+    run(["go", "build", "-trimpath", "-ldflags", "-s -w -H windowsgui", "-o", payload / "AIBID.exe", "./cmd/aibid-launcher"],
+        env=dict(os.environ, CGO_ENABLED="0", GOOS="windows", GOARCH="amd64"))
+    check_windows_icon(payload / "gestor-documental.exe")
+    check_windows_icon(payload / "AIBID.exe", gui=True)
     documents(payload / "docs")
     windows_tools(prefix, payload / "tools", payload / "docs")
     check_pe_imports(payload / "tools/Library/bin")
     copy(ROOT / "packaging/windows/manage.ps1", payload / "manage.ps1", template=True)
     copy(ROOT / "packaging/windows/admin.cmd", payload / "admin.cmd")
     define = "/D" if os.name == "nt" else "-D"
-    run([makensis, f"{define}VERSION={VERSION}", f"{define}STAGE={payload}",
-         f"{define}OUTPUT={output / ('AIBID-Pruebas-' + VERSION + '-Windows-amd64.exe')}", ROOT / "packaging/windows/installer.nsi"])
+    package_version = VERSION+"-"+WINDOWS_REVISION
+    run([makensis, f"{define}VERSION={package_version}", f"{define}STAGE={payload}",
+         f"{define}OUTPUT={output / ('AIBID-Pruebas-' + package_version + '-Windows-amd64.exe')}", ROOT / "packaging/windows/installer.nsi"])
     copy(payload / "docs/windows-ocr.lock.json", output / "windows-ocr.lock.json")
     copy(ROOT / "packaging/windows/ocr-explicit.txt", output / "windows-ocr-explicit.txt")
 
@@ -292,7 +344,7 @@ def main():
         copy(ROOT / "packaging/ubuntu" / name, output / "ubuntu-offline" / name, 0o755)
     records = []
     for artifact in sorted(output.rglob("*")):
-        if artifact.is_file() and artifact.name != "SHA256SUMS":
+        if artifact.is_file() and artifact.name != "SHA256SUMS" and not any(part.startswith(".") for part in artifact.relative_to(output).parts):
             records.append(hashlib.sha256(artifact.read_bytes()).hexdigest() + "  " + artifact.relative_to(output).as_posix())
     (output / "SHA256SUMS").write_text("\n".join(records) + "\n")
     print(f"Installers: {output}")

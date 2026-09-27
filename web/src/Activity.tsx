@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { api, formatDate, message, type Attempt, type AuditEvent } from './api';
+import { formatDate, type Attempt } from './api';
+import { AuditTable } from './AuditTable';
 import { SessionTable } from './Account';
 import { Notice, PageEnd, usePage } from './components';
 
@@ -39,31 +40,6 @@ export function Access() {
   </>;
 }
 
-const eventNames: Record<string, string> = {
-  'installation.bootstrapped': 'Administrador inicial creado', 'authentication.success': 'Autenticación correcta',
-  'authentication.failed': 'Autenticación fallida', 'authentication.rate_limited': 'Intentos de acceso limitados',
-  'session.started': 'Sesión iniciada', 'session.closed': 'Sesión cerrada', 'user.created': 'Usuario creado',
-  'user.updated': 'Usuario actualizado', 'permissions.global_changed': 'Permisos globales modificados',
-  'user.sessions_revoked': 'Sesiones revocadas', 'password.changed': 'Contraseña cambiada',
-  'password.reset': 'Contraseña restablecida', 'password.local_recovery': 'Recuperación administrativa local'
-};
-
 export function Events() {
-  const [query, setQuery] = useState('');
-  const list = usePage<AuditEvent>(`/audit-events?${query}`);
-  const [detail, setDetail] = useState<AuditEvent | null>(null);
-  const [error, setError] = useState('');
-  async function view(eventID: string) {
-    setError(''); setDetail(null);
-    try { setDetail(await api<AuditEvent>(`/audit-events/${eventID}`)); } catch (error) { setError(message(error)); }
-  }
-  return <>
-    <header className="page-heading"><p className="eyebrow">TRAZABILIDAD</p><h1>Visor de eventos</h1><p>Bitácora de las acciones de usuarios y del sistema.</p></header>
-    <section className="card"><Filters onApply={query => { setQuery(query); setDetail(null); }}><label>Tipo de evento<select name="event_type"><option value="">Todos</option>{Object.entries(eventNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></Filters>
-      <Notice text={list.error || error} /><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Evento</th><th>Actor</th><th>IP observada</th><th>Detalle</th></tr></thead><tbody>{list.items.map(event => <tr key={event.id}>
-        <td>{formatDate(event.occurred_at)}</td><td>{eventNames[event.event_type] ?? event.event_type}</td><td>{event.actor_kind === 'system' ? 'Sistema' : event.actor_kind === 'anonymous' ? 'Sin sesión' : event.actor_user_id}</td><td>{event.observed_ip ?? '—'}</td><td><button className="text-button" onClick={() => void view(event.id)}>Ver detalle</button></td>
-      </tr>)}</tbody></table></div><PageEnd {...list} empty={list.items.length === 0} />
-    </section>
-    {detail && <section className="card"><div className="section-heading"><h2>{eventNames[detail.event_type] ?? detail.event_type}</h2><button className="secondary" onClick={() => setDetail(null)}>Cerrar detalle</button></div><p className="muted">{formatDate(detail.occurred_at)}</p><dl className="event-detail">{Object.entries(detail.details ?? {}).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'string' ? value : JSON.stringify(value)}</dd></div>)}</dl><small>Referencia: {detail.request_id}</small></section>}
-  </>;
+ return <><header className="page-heading"><p className="eyebrow">TRAZABILIDAD</p><h1>Auditoría</h1><p>Consulta las acciones de usuarios y del sistema.</p></header><AuditTable /></>;
 }

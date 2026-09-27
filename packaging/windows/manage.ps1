@@ -1,6 +1,7 @@
 #Requires -Version 5.1
 param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor')][string]$Action,
-      [string]$InstallRoot = "$env:ProgramFiles\AIBID-Test")
+      [string]$InstallRoot = "$env:ProgramFiles\AIBID-Test",
+      [string]$PreflightBinary = '')
 $ErrorActionPreference = 'Stop'
 $ServiceName = 'AIBIDTest'
 $DataRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'AIBID-Test'
@@ -28,6 +29,12 @@ function Assert-PrivatePath([string]$Path) {
         $Current = Split-Path -Parent $Current
     }
 }
+function Write-LauncherTarget {
+    # Publish only the browser origin in Program Files. Private configuration,
+    # license keys and database remain inaccessible to ordinary desktop users.
+    $Configuration = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+    @{ public_url = [string]$Configuration.public_url } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallRoot 'launcher.json') -Encoding UTF8
+}
 try {
     $Administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (!$Administrator) {
@@ -52,17 +59,22 @@ try {
             }
             if ((Test-Path $Config) -and !(Test-Path $Marker)) { throw 'Configuración existente sin versión de paquete. Requiere revisión antes de instalar.' }
             Stop-Aibid
-            if ((Test-Path $Binary) -and (Test-Path $Config)) { Invoke-Native $Binary @('migrate','--config',$Config) }
+            if (Test-Path $Config) {
+                if (!$PreflightBinary -or !(Test-Path -LiteralPath $PreflightBinary)) { throw 'Falta el comprobador del nuevo instalador.' }
+                # The old executable has the Windows URI bug. Never call it here;
+                # the new checker only holds the state lock, without opening SQLite.
+                Invoke-Native $PreflightBinary @('check-state','--config',$Config)
+            }
         }
         'Configure' {
             $CommandLine = '"' + $Binary + '" serve --config "' + $Config + '"'
             if (!(Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
                 New-Service -Name $ServiceName -BinaryPathName $CommandLine -StartupType Manual -DisplayName 'AIBID Pruebas' | Out-Null
+                Invoke-Native sc.exe @('config',$ServiceName,'obj=','NT SERVICE\AIBIDTest')
             } else {
                 $Installed = Get-CimInstance Win32_Service -Filter "Name='AIBIDTest'"
                 if ($Installed.PathName -ne $CommandLine) { throw 'Existe un servicio AIBIDTest con otra ruta. Requiere revisión.' }
             }
-            Invoke-Native sc.exe @('config',$ServiceName,'obj=','NT SERVICE\AIBIDTest')
             Invoke-Native sc.exe @('sidtype',$ServiceName,'unrestricted')
             if (![Diagnostics.EventLog]::SourceExists($ServiceName)) { New-EventLog -LogName Application -Source $ServiceName }
             if (!(Test-Path $DataRoot)) { New-Item -ItemType Directory -Path $DataRoot | Out-Null }
@@ -74,7 +86,9 @@ try {
             if (!(Test-Path $Config)) {
                 Invoke-Native $Binary @('init','--config',$Config,'--listen','127.0.0.1:18090','--tools',(Join-Path $InstallRoot 'tools\Library\bin'),'--tessdata',(Join-Path $InstallRoot 'tools\tessdata'),'--fontconfig',(Join-Path $InstallRoot 'tools\fonts.conf'))
             }
+            Invoke-Native $Binary @('configure-license','--config',$Config)
             Set-Content -LiteralPath (Join-Path $DataRoot 'package-version') -Value $Version -Encoding ASCII
+            Write-LauncherTarget
             if (Test-Path (Join-Path $DataRoot 'service-enabled')) { Start-Service $ServiceName }
         }
         'Admin' {
@@ -85,14 +99,16 @@ try {
                 New-Item -ItemType File -Path (Join-Path $DataRoot 'service-enabled') -Force | Out-Null
             }
             Invoke-Native sc.exe @('config',$ServiceName,'start=','delayed-auto')
+            Write-LauncherTarget
             Start-Service $ServiceName
             Write-Host 'AIBID Pruebas: http://127.0.0.1:18090. Puedes cerrar la consola.'
-            Start-Process 'http://127.0.0.1:18090'
+            $Configuration = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+            Start-Process ([string]$Configuration.public_url)
         }
         'Doctor' { Invoke-Native $Binary @('doctor','--config',$Config,'--sample-directory',(Join-Path $InstallRoot 'docs\pdf')) }
         'Remove' {
             Stop-Aibid
-            if (Test-Path $Config) { Invoke-Native $Binary @('migrate','--config',$Config) }
+            if (Test-Path $Config) { Invoke-Native $Binary @('check-state','--config',$Config) }
             if (Get-Service $ServiceName -ErrorAction SilentlyContinue) { Invoke-Native sc.exe @('delete',$ServiceName) }
             Write-Host "Datos, configuración y documentos preservados en $DataRoot."
         }

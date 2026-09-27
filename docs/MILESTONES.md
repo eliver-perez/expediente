@@ -217,3 +217,30 @@ PDF/OCR, bootstrap local y desinstalación conservadora; el instalador rechaza c
 Windows empaqueta runtime PDF/OCR spa/eng con inventario fijado; Ubuntu tiene scripts de preparación
 e instalación de repositorio offline. No se afirma aprobación de ACC-24/25/26 por compilar.
 Evidencia de ejecución y pendientes: [H7](H7.md), [plan de pruebas](../packaging/TEST-PLAN.md).
+
+### Revisión Windows r2
+
+El propietario confirmó instalador y diagnóstico PDF/OCR nativos; encontró un error en la URI
+de la DB al configurar. Corregido con pruebas del error exacto y de lectura/escritura/reapertura.
+Se generó el instalador 0.7.0-test.1-r2 con reparación sobre la revisión anterior y lanzador GUI
+para Escritorio/Inicio. Pruebas de storage/CLI/lanzador con detector de carreras, vet y diseño pasan;
+backend/tests y lanzador GUI compilan para Windows amd64. Pendiente confirmar la reinstalación
+y el acceso cotidiano en el Windows del propietario. [Guía r2](H7-WINDOWS-R2.md).
+
+### Revisión Windows r3 (2026-09-26)
+
+El propietario confirmó instalación r2 y alta de carpetas tras configurar la cuenta
+del equipo en el dominio. Reportó bloqueo de extracción con 9,000 archivos. Se corrigió
+el worker compartido y la relectura de hashes; se agregó seguimiento, cancelación,
+reintentos por ruta, duplicados, auditoría, configuración organizada e icono.
+[Informe de implementación y validación](REVISION-PROCESAMIENTO.md).
+No equivale al cierre de las pruebas nativas, backup/restore completo ni integración comercial.
+
+### Revisión Windows r4 (2026-09-27)
+
+[Informe r4](REVISION-R4.md): grupos limitados de extracción/OCR, detección de
+recursos, configuración administrativa, búsqueda agrupada e interna, explorador alterno y
+visor ampliado. Activación/renovación real verificadas con la clave pública autorizada;
+instalación temporal de prueba desactivada al terminar. Nueve pruebas Chrome y las suites
+Go aprobadas. No se ejecuta carga masiva por petición del propietario. La emisión offline
+manual del servidor y la validación del instalador en Windows siguen pendientes.

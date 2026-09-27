@@ -230,7 +230,19 @@ func (service *Service) Jobs(ctx context.Context, principal domain.Principal, li
 		last := page.Items[49]
 		page.Next = nextListCursor(scope, last.Created, last.ID)
 	}
-	return page, rows.Err()
+	if err = rows.Err(); err != nil {
+		return page, err
+	}
+	rows.Close()
+	for index := range page.Items {
+		if err = service.enrichJob(ctx, &page.Items[index]); err != nil {
+			return page, err
+		}
+		if service.require(ctx, service.Database.Reader, principal, libraryID, "storage.view_paths") != nil {
+			page.Items[index].RootPath = ""
+		}
+	}
+	return page, nil
 }
 func (service *Service) Job(ctx context.Context, principal domain.Principal, identifier string) (Job, error) {
 	var job Job
@@ -253,7 +265,11 @@ func (service *Service) Job(ctx context.Context, principal domain.Principal, ide
 	if err = service.Read(ctx, principal, job.LibraryID, "indexing.run"); err != nil {
 		return Job{}, err
 	}
-	return job, nil
+	err = service.enrichJob(ctx, &job)
+	if service.require(ctx, service.Database.Reader, principal, job.LibraryID, "storage.view_paths") != nil {
+		job.RootPath = ""
+	}
+	return job, err
 }
 func (service *Service) Verify(ctx context.Context, principal domain.Principal, libraryID, rootID string, metadata domain.RequestMetadata) error {
 	return service.write(ctx, principal, libraryID, "indexing.run", func(transaction *sql.Tx, current domain.Principal) error {
@@ -265,6 +281,9 @@ func (service *Service) Verify(ctx context.Context, principal domain.Principal, 
 		for _, root := range roots {
 			if verifiableRoot(root) && (rootID == "" || rootID == root.ID) {
 				found = true
+				if _, err = transaction.ExecContext(ctx, "DELETE FROM root_scan_controls WHERE root_id=?", root.ID); err != nil {
+					return err
+				}
 				if err = enqueueVerification(ctx, transaction, root); err != nil {
 					return err
 				}
@@ -316,6 +335,11 @@ func (service *Service) Retry(ctx context.Context, principal domain.Principal, j
 		}
 		if err != sql.ErrNoRows {
 			return err
+		}
+		if job.Kind == "scan" {
+			if _, err = transaction.ExecContext(ctx, "DELETE FROM root_scan_controls WHERE root_id=(SELECT target_version FROM jobs WHERE id=?)", jobID); err != nil {
+				return err
+			}
 		}
 		if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,retry_of_job_id,created_at) SELECT ?,library_id,physical_file_id,job_type,target_version,?,payload_json,'queued',?,?,? FROM jobs WHERE id=?", identifier, identifier, now(), jobID, now(), jobID); err != nil {
 			return err

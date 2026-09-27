@@ -11,11 +11,14 @@ type Options struct {
 	ServerURL         string     `json:"server_url"`
 	TrustedKeys       []TrustKey `json:"trusted_keys"`
 	RefreshHours      int        `json:"refresh_hours"`
-	DevelopmentBypass bool       `json:"development_bypass,omitempty"`
+	DevelopmentBypass bool       `json:"development_bypass"`
 	DevelopmentCAFile string     `json:"development_ca_file,omitempty"`
 }
 
 func DefaultOptions() Options {
+	if !developmentEnabled {
+		return ProviderOptions()
+	}
 	return Options{TrustedKeys: []TrustKey{}, RefreshHours: 24, DevelopmentBypass: developmentEnabled}
 }
 func (options Options) Validate() error {

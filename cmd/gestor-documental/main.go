@@ -40,11 +40,11 @@ func main() {
 
 func run(ctx context.Context, ready func()) error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("uso: gestor-documental version|init|doctor|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
+		return fmt.Errorf("uso: gestor-documental version|init|configure-license|doctor|check-state|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
 	}
 	command := os.Args[1]
 	if command == "version" {
-		fmt.Printf("AIBID %s (%s; %s/%s)\n", buildinfo.Version, buildinfo.Channel, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("AIBID %s (%s; %s/%s)\n", buildinfo.DisplayVersion(), buildinfo.Channel, runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -108,10 +108,24 @@ func run(ctx context.Context, ready func()) error {
 	if *initialState != "" || *initialListen != "" || *initialTools != "" || *initialTessdata != "" || *initialFontconfig != "" {
 		return fmt.Errorf("state/listen/tools/tessdata only apply to init")
 	}
-	if command != "serve" && command != "doctor" && command != "bootstrap-ready" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
+	if command == "configure-license" {
+		if err := config.ProvisionProvider(*configurationPath); err != nil {
+			return err
+		}
+		fmt.Println("Servidor y confianza de licencias configurados; bypass deshabilitado. Configuración anterior respaldada.")
+		return nil
+	}
+
+	if command != "serve" && command != "doctor" && command != "check-state" && command != "bootstrap-ready" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
 		return fmt.Errorf("comando no reconocido")
 	}
-	configuration, err := config.Load(*configurationPath)
+	var configuration config.Config
+	var err error
+	if command == "check-state" {
+		configuration, _, err = config.PrepareProvider(*configurationPath)
+	} else {
+		configuration, err = config.Load(*configurationPath)
+	}
 	if err != nil {
 		return err
 	}
@@ -123,6 +137,10 @@ func run(ctx context.Context, ready func()) error {
 		return err
 	}
 	defer unlock()
+	if command == "check-state" {
+		fmt.Println("Configuración y acceso exclusivo al estado: OK. No se abrió ni migró la base de datos.")
+		return nil
+	}
 	database, err := storage.Open(ctx, configuration.StateDirectory)
 	if err != nil {
 		return err
@@ -212,7 +230,7 @@ func run(ctx context.Context, ready func()) error {
 			serverError <- server.Serve(listener)
 		}
 	}()
-	logger.Info("service starting", "address", configuration.ListenAddress, "version", buildinfo.Version, "channel", buildinfo.Channel)
+	logger.Info("service starting", "address", configuration.ListenAddress, "version", buildinfo.DisplayVersion(), "channel", buildinfo.Channel)
 	ready()
 	select {
 	case err := <-serverError:

@@ -3,41 +3,77 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"gestor-documental/internal/domain"
+	"gestor-documental/internal/extraction"
 	"github.com/fsnotify/fsnotify"
 )
 
 type Job struct {
-	ID        string `json:"id"`
-	LibraryID string `json:"library_id"`
-	FileID    string `json:"physical_file_id,omitempty"`
-	Kind      string `json:"job_type"`
-	Version   string `json:"-"`
-	Status    string `json:"status"`
-	Attempts  int    `json:"attempt_count"`
-	Error     string `json:"last_error_code"`
-	Created   string `json:"created_at"`
-	Fence     int64  `json:"-"`
+	LibraryName    string `json:"library_name"`
+	Filename       string `json:"filename"`
+	Relative       string `json:"relative_path"`
+	RootPath       string `json:"root_path"`
+	RootID         string `json:"root_id"`
+	Operation      string `json:"operation"`
+	CompletedUnits int    `json:"completed_units"`
+	TotalUnits     *int   `json:"total_units"`
+	Started        string `json:"started_at"`
+	Finished       string `json:"finished_at"`
+	Updated        string `json:"updated_at"`
+	Cancelling     bool   `json:"cancelling"`
+	ID             string `json:"id"`
+	LibraryID      string `json:"library_id"`
+	FileID         string `json:"physical_file_id,omitempty"`
+	Kind           string `json:"job_type"`
+	Version        string `json:"-"`
+	Status         string `json:"status"`
+	Attempts       int    `json:"attempt_count"`
+	Error          string `json:"last_error_code"`
+	Created        string `json:"created_at"`
+	Fence          int64  `json:"-"`
 }
 type Runtime struct {
-	Service            *Service
-	watcher            *fsnotify.Watcher
-	mutex              sync.Mutex
-	directories        map[string]string
-	dirty              map[string]time.Time
-	degraded           map[string]string
-	cancel             context.CancelFunc
-	workers            sync.WaitGroup
-	nextRetentionCheck time.Time
+	Service                 *Service
+	watcher                 *fsnotify.Watcher
+	mutex                   sync.Mutex
+	directories             map[string]string
+	dirty                   map[string]time.Time
+	degraded                map[string]string
+	cancel                  context.CancelFunc
+	workers                 sync.WaitGroup
+	nextRetentionCheck      time.Time
+	contentMutex            sync.Mutex
+	nativeActive, ocrActive int
+	ocrQueue                chan *ocrTask
 }
 
 func (service *Service) Start(ctx context.Context) (*Runtime, error) {
-	runtime := &Runtime{Service: service, directories: map[string]string{}, dirty: map[string]time.Time{}, degraded: map[string]string{}}
+	// The state lock excludes a surviving process. Only disposable private
+	// snapshots created by this extractor are removed; originals are elsewhere.
+	entries, err := os.ReadDir(filepath.Join(service.Identity.Config.StateDirectory, "extraction"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "job-") {
+			if err := os.RemoveAll(filepath.Join(service.Identity.Config.StateDirectory, "extraction", entry.Name())); err != nil {
+				return nil, err
+			}
+		}
+	}
+	settings, err := service.ProcessingConfiguration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	runtime := &Runtime{Service: service, directories: map[string]string{}, dirty: map[string]time.Time{}, degraded: map[string]string{}, ocrQueue: make(chan *ocrTask, 2*settings.Effective.OCR)}
 	if err := service.recoverUploads(ctx); err != nil {
 		return nil, err
 	}
@@ -53,9 +89,15 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 	}
 	runtime.workers.Add(1)
 	go runtime.schedule(workerContext)
-	for worker := 0; worker < service.Identity.Config.Indexing.Workers; worker++ {
+	for worker := 0; worker < 8; worker++ {
 		runtime.workers.Add(1)
-		go runtime.worker(workerContext)
+		go runtime.worker(workerContext, "content", worker)
+	}
+	runtime.workers.Add(1)
+	go runtime.worker(workerContext, "scan", 0)
+	for worker := 0; worker < 4; worker++ {
+		runtime.workers.Add(1)
+		go runtime.ocrWorker(workerContext, worker)
 	}
 	return runtime, nil
 }
@@ -68,7 +110,7 @@ func (service *Service) recoverJobs(ctx context.Context) error {
 		if _, err := transaction.ExecContext(ctx, "UPDATE materializations SET state=CASE WHEN state IN ('committed','cleaned') THEN state ELSE 'failed' END,error_code='PROCESS_RESTARTED',updated_at=? WHERE id IN (SELECT target_version FROM jobs WHERE job_type='materialize' AND status='running')", now()); err != nil {
 			return err
 		}
-		_, err := transaction.ExecContext(ctx, "UPDATE jobs SET status=CASE WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'retry_wait' END,available_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code='PROCESS_RESTARTED',fencing_token=fencing_token+1 WHERE status='running'", now())
+		_, err := transaction.ExecContext(ctx, "UPDATE jobs SET status=CASE WHEN EXISTS(SELECT 1 FROM job_controls WHERE job_id=jobs.id AND cancel_requested=1) THEN 'cancelled' WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'retry_wait' END,available_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code='PROCESS_RESTARTED',fencing_token=fencing_token+1 WHERE status='running'", now())
 		return err
 	})
 }
@@ -77,6 +119,17 @@ func (runtime *Runtime) Close() {
 		runtime.cancel()
 	}
 	runtime.workers.Wait()
+	for {
+		select {
+		case task := <-runtime.ocrQueue:
+			task.cancel()
+			<-task.done
+			task.prepared.cleanup()
+		default:
+			goto drained
+		}
+	}
+drained:
 	if runtime.watcher != nil {
 		runtime.watcher.Close()
 	}
@@ -119,6 +172,13 @@ func (runtime *Runtime) watch(ctx context.Context) {
 				delete(runtime.directories, event.Name)
 			}
 			runtime.mutex.Unlock()
+			if rootID != "" && (event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove)) {
+				if root, err := runtime.Service.root(ctx, rootID); err == nil {
+					if relative, err := filepath.Rel(root.Path, event.Name); err == nil && relativeSafe(filepath.ToSlash(relative)) {
+						_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "DELETE FROM file_scan_cache WHERE root_id=? AND relative_path=?", rootID, filepath.ToSlash(relative))
+					}
+				}
+			}
 		case _, open := <-runtime.watcher.Errors:
 			if !open {
 				return
@@ -151,6 +211,10 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 	}
 	active := map[string]bool{}
 	for _, root := range roots {
+		var paused int
+		if err := runtime.Service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce((SELECT paused FROM root_scan_controls WHERE root_id=?),0)", root.ID).Scan(&paused); err != nil || paused == 1 {
+			continue
+		}
 		if !verifiableRoot(root) {
 			continue
 		}
@@ -209,10 +273,11 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		runtime.mutex.Unlock()
 	}
 }
-func (service *Service) claim(ctx context.Context) (Job, error) {
+func (service *Service) claim(ctx context.Context) (Job, error) { return service.claimLane(ctx, "all") }
+func (service *Service) claimLane(ctx context.Context, lane string) (Job, error) {
 	var job Job
 	err := service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token FROM jobs j WHERE status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 64", now())
+		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 64", lane, lane, lane, now())
 		if err != nil {
 			return err
 		}
@@ -261,7 +326,7 @@ func (service *Service) claim(ctx context.Context) (Job, error) {
 	}
 	return job, err
 }
-func (runtime *Runtime) worker(ctx context.Context) {
+func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 	defer runtime.workers.Done()
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
@@ -271,12 +336,35 @@ func (runtime *Runtime) worker(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		job, err := runtime.Service.claim(ctx)
-		if err != nil {
+		if lane == "content" && !runtime.acquireContent(ctx, "native", index) {
 			continue
 		}
-		operationContext, cancel := context.WithTimeout(ctx, time.Hour)
+		job, err := runtime.Service.claimLane(ctx, lane)
+		if err != nil {
+			if lane == "content" {
+				runtime.releaseContent("native")
+			}
+			continue
+		}
+		operationContext, cancel := context.WithCancel(ctx)
+		if job.Kind != "scan" && job.Kind != "extract" {
+			cancel()
+			operationContext, cancel = context.WithTimeout(ctx, time.Hour)
+		}
+		done := make(chan struct{})
+		go runtime.Service.monitorCancellation(operationContext, job, cancel, done)
+		_ = runtime.Service.reportProgress(operationContext, job, job.Kind, "", 0, 0)
 		if job.Kind == "scan" {
+			var payload string
+			var paths []string
+			if queryErr := runtime.Service.Database.Reader.QueryRowContext(operationContext, "SELECT payload_json FROM jobs WHERE id=?", job.ID).Scan(&payload); queryErr == nil {
+				var options struct {
+					Paths []string `json:"paths"`
+				}
+				_ = json.Unmarshal([]byte(payload), &options)
+				paths = options.Paths
+			}
+			operationContext = context.WithValue(operationContext, scanPathsKey{}, paths)
 			err = runtime.Service.Scan(operationContext, job.Version, int64(runtime.Service.Identity.Config.Indexing.MaximumFileMB)<<20, func(path string) error {
 				watchError := runtime.register(job.Version, path)
 				if watchError != nil {
@@ -289,19 +377,47 @@ func (runtime *Runtime) worker(ctx context.Context) {
 		} else if job.Kind == "verify_managed" {
 			err = runtime.Service.VerifyManagedRoot(operationContext, job.Version)
 		} else if job.Kind == "extract" {
-			err = runtime.Service.Extract(operationContext, job, runtime.Service.Identity.Config.Indexing)
+			var prepared *preparedExtraction
+			prepared, err = runtime.Service.prepareExtraction(operationContext, job, runtime.Service.Identity.Config.Indexing)
+			if err == nil {
+				if extraction.NeedsOCR(prepared.pages) {
+					_ = runtime.Service.reportProgress(operationContext, job, "waiting_ocr", "", 0, len(prepared.pages))
+					runtime.releaseContent("native")
+					task := &ocrTask{job: job, ctx: operationContext, cancel: cancel, done: done, prepared: prepared}
+					select {
+					case runtime.ocrQueue <- task:
+					case <-operationContext.Done():
+						runtime.completeTask(ctx, task, operationContext.Err())
+					}
+					continue
+				}
+				err = prepared.complete(operationContext)
+				prepared.cleanup()
+			}
 		} else {
 			err = scanFailure("UNKNOWN_JOB")
 		}
+		if lane == "content" {
+			runtime.releaseContent("native")
+		}
 		cancel()
+		<-done
 		// Cancellation leaves a lease for restart recovery; do not publish after shutdown.
 		if ctx.Err() != nil {
 			return
+		}
+		var requested int
+		_ = runtime.Service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce((SELECT cancel_requested FROM job_controls WHERE job_id=?),0)", job.ID).Scan(&requested)
+		if requested == 1 {
+			err = scanFailure("USER_CANCELLED")
 		}
 		_ = runtime.Service.finish(ctx, job, err)
 	}
 }
 func (service *Service) finish(ctx context.Context, job Job, cause error) error {
+	if errors.Is(cause, context.DeadlineExceeded) {
+		cause = scanFailure("PROCESS_TIMEOUT")
+	}
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
 		if licenseBlocked(cause) {
 			code := failureCode(cause)
@@ -333,7 +449,7 @@ func (service *Service) finish(ctx context.Context, job Job, cause error) error 
 				status = "retry_wait"
 				available = domain.Timestamp(time.Now().Add(time.Duration(1<<job.Attempts) * time.Second))
 			}
-			if code == "ROOT_DISABLED" || code == "VERSION_SUPERSEDED" || code == "ROOT_PLAN_STALE" {
+			if code == "USER_CANCELLED" || code == "ROOT_DISABLED" || code == "VERSION_SUPERSEDED" || code == "ROOT_PLAN_STALE" {
 				status = "cancelled"
 			}
 		}

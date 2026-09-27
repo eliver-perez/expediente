@@ -26,18 +26,72 @@ func appendDocumentObservation(ctx context.Context, transaction *sql.Tx, eventID
 	_, err := transaction.ExecContext(ctx, "INSERT INTO document_history(id,document_id,revision,event_id,snapshot_json) SELECT ?,id,revision,?,? FROM documents WHERE id=?", domain.NewID(), eventID, encode(map[string]string{"content_version_id": versionID}), documentID)
 	return err
 }
-func (service *Service) Extract(ctx context.Context, job Job, options extraction.Options) error {
-	if err := service.jobLicense(ctx, service.Database.Reader, job); err != nil {
+
+type preparedExtraction struct {
+	service                    *Service
+	job                        Job
+	root                       Root
+	file                       *os.File
+	before                     os.FileInfo
+	path, temporary, languages string
+	relative                   string
+	options                    extraction.Options
+	pages                      []extraction.Page
+}
+
+func (p *preparedExtraction) cleanup() { p.file.Close(); os.RemoveAll(p.temporary) }
+func (p *preparedExtraction) complete(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Hour)
+	defer cancel()
+	p.options.Progress = func(operation string, completed, total int) {
+		_ = p.service.reportProgress(ctx, p.job, operation, p.relative, completed, total)
+	}
+	pages, err := p.options.Recognize(ctx, p.path, p.languages, p.pages)
+	if err != nil {
+		return p.service.extractionFailure(ctx, p.job, p.languages, err)
+	}
+	after, err := p.file.Stat()
+	if err != nil || after.Size() != p.before.Size() || !after.ModTime().Equal(p.before.ModTime()) {
+		return scanFailure("FILE_UNSTABLE")
+	}
+	_ = p.service.reportProgress(ctx, p.job, "publishing", "", len(pages), len(pages))
+	return p.service.publish(ctx, p.job, p.root, pages, p.languages)
+}
+func (service *Service) extractionFailure(ctx context.Context, job Job, languages string, cause error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	err := service.Database.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,error_code) VALUES(?,?,?,'poppler-tesseract-v2',?,'failed',?)", domain.NewID(), job.FileID, job.Version, languages, failureCode(cause))
 		return err
+	})
+	if err != nil {
+		return err
+	}
+	return cause
+}
+func (service *Service) Extract(ctx context.Context, job Job, options extraction.Options) error {
+	prepared, err := service.prepareExtraction(ctx, job, options)
+	if err != nil {
+		return err
+	}
+	defer prepared.cleanup()
+	return prepared.complete(ctx)
+}
+func (service *Service) prepareExtraction(ctx context.Context, job Job, options extraction.Options) (prepared *preparedExtraction, resultError error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Hour)
+	defer cancel()
+	if err := service.jobLicense(ctx, service.Database.Reader, job); err != nil {
+		return nil, err
 	}
 	var rootID, relative, expectedHash, identity, languages, availability, libraryID string
 	var size int64
 	err := service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce(l.root_id,''),coalesce(l.relative_path,''),v.sha256,v.size_bytes,f.os_identity_key,b.ocr_languages,f.availability,f.library_id FROM physical_files f LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN content_versions v ON v.id=f.current_content_version_id JOIN libraries b ON b.id=f.library_id JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND v.id=? AND d.deleted_at IS NULL", job.FileID, job.Version).Scan(&rootID, &relative, &expectedHash, &size, &identity, &languages, &availability, &libraryID)
 	if err == sql.ErrNoRows {
-		return scanFailure("VERSION_SUPERSEDED")
+		return nil, scanFailure("VERSION_SUPERSEDED")
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	root := Root{LibraryID: libraryID}
 	var file *os.File
@@ -46,70 +100,73 @@ func (service *Service) Extract(ctx context.Context, job Job, options extraction
 	} else {
 		root, err = service.root(ctx, rootID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !verifiableRoot(root) {
-			return scanFailure("ROOT_DISABLED")
+			return nil, scanFailure("ROOT_DISABLED")
 		}
 		file, err = openLinked(root, relative)
 	}
 	if err != nil {
-		return scanFailure("DOCUMENT_UNAVAILABLE")
+		return nil, scanFailure("DOCUMENT_UNAVAILABLE")
 	}
-	defer file.Close()
+	defer func() {
+		if resultError != nil {
+			file.Close()
+		}
+	}()
 	currentIdentity, _, err := physicalIdentity(file)
 	if err != nil || currentIdentity != identity {
-		return scanFailure("VERSION_SUPERSEDED")
+		return nil, scanFailure("VERSION_SUPERSEDED")
 	}
 	temporaryRoot := filepath.Join(service.Identity.Config.StateDirectory, "extraction")
 	if err = storage.PreparePrivateDirectory(temporaryRoot); err != nil {
-		return err
+		return nil, err
 	}
 	temporary, err := os.MkdirTemp(temporaryRoot, "job-")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer os.RemoveAll(temporary)
+	defer func() {
+		if resultError != nil {
+			os.RemoveAll(temporary)
+		}
+	}()
 	if err = storage.ProtectPrivatePath(temporary, true); err != nil {
-		return err
+		return nil, err
 	}
 	documentPath := filepath.Join(temporary, "source.pdf")
 	snapshot, err := os.OpenFile(documentPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	defer snapshot.Close()
 	before, err := file.Stat()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hash := sha256.New()
-	written, copyError := io.Copy(io.MultiWriter(snapshot, hash), io.LimitReader(file, (int64(options.MaximumFileMB)<<20)+1))
+	_ = service.reportProgress(ctx, job, "snapshot", relative, 0, 0)
+	written, copyError := io.Copy(io.MultiWriter(snapshot, hash), contextReader{ctx, io.LimitReader(file, (int64(options.MaximumFileMB)<<20)+1)})
 	closeError := snapshot.Close()
 	if copyError != nil {
-		return copyError
+		return nil, copyError
 	}
 	if closeError != nil {
-		return closeError
+		return nil, closeError
 	}
 	if written != size || fmt.Sprintf("%x", hash.Sum(nil)) != expectedHash {
-		return scanFailure("FILE_UNSTABLE")
+		return nil, scanFailure("FILE_UNSTABLE")
 	}
-	pages, err := options.Extract(ctx, documentPath, languages)
+	options.Progress = func(operation string, completed, total int) {
+		_ = service.reportProgress(ctx, job, operation, relative, completed, total)
+	}
+	pages, err := options.Prepare(ctx, documentPath)
 	if err != nil {
-		recordError := service.Database.Write(ctx, func(transaction *sql.Tx) error {
-			_, insertError := transaction.ExecContext(ctx, "INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,error_code) VALUES(?,?,?,'poppler-tesseract-v1',?,'failed',?)", domain.NewID(), job.FileID, job.Version, languages, failureCode(err))
-			return insertError
-		})
-		if recordError != nil {
-			return recordError
-		}
-		return err
+		return nil, service.extractionFailure(ctx, job, languages, err)
 	}
-	after, err := file.Stat()
-	if err != nil || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
-		return scanFailure("FILE_UNSTABLE")
-	}
-	return service.publish(ctx, job, root, pages, languages)
+	prepared = &preparedExtraction{service: service, job: job, root: root, file: file, before: before, path: documentPath, temporary: temporary, languages: languages, relative: relative, options: options, pages: pages}
+	return prepared, nil
 }
 func (service *Service) publish(ctx context.Context, job Job, root Root, pages []extraction.Page, languages string) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
@@ -129,14 +186,14 @@ func (service *Service) publish(ctx context.Context, job Job, root Root, pages [
 			return scanFailure("VERSION_SUPERSEDED")
 		}
 		var permitted int
-		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs j JOIN physical_files f ON f.id=j.physical_file_id JOIN documents d ON d.physical_file_id=f.id WHERE j.id=? AND j.status='running' AND j.fencing_token=? AND f.current_content_version_id=? AND d.deleted_at IS NULL AND d.approval_status<>'cancelled'", job.ID, job.Fence, job.Version).Scan(&permitted); err != nil {
+		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs j JOIN physical_files f ON f.id=j.physical_file_id JOIN documents d ON d.physical_file_id=f.id WHERE j.id=? AND j.status='running' AND j.fencing_token=? AND NOT EXISTS(SELECT 1 FROM job_controls WHERE job_id=j.id AND cancel_requested=1) AND f.current_content_version_id=? AND d.deleted_at IS NULL AND d.approval_status<>'cancelled'", job.ID, job.Fence, job.Version).Scan(&permitted); err != nil {
 			return err
 		}
 		if permitted != 1 {
 			return scanFailure("VERSION_SUPERSEDED")
 		}
 		extractionID := domain.NewID()
-		if _, err := transaction.ExecContext(ctx, "INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,page_count,completed_at) VALUES(?,?,?,'poppler-tesseract-v1',?,'complete',?,?)", extractionID, job.FileID, job.Version, languages, len(pages), now()); err != nil {
+		if _, err := transaction.ExecContext(ctx, "INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,page_count,completed_at) VALUES(?,?,?,'poppler-tesseract-v2',?,'complete',?,?)", extractionID, job.FileID, job.Version, languages, len(pages), now()); err != nil {
 			return err
 		}
 		if _, err := transaction.ExecContext(ctx, "DELETE FROM indexed_pages WHERE physical_file_id=?", job.FileID); err != nil {
@@ -153,4 +210,16 @@ func (service *Service) publish(ctx context.Context, job Job, root Root, pages [
 		_, err := transaction.ExecContext(ctx, "UPDATE physical_files SET indexed_extraction_id=?,indexed_at=?,extraction_freshness='current' WHERE id=?", extractionID, now(), job.FileID)
 		return err
 	})
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
 }

@@ -19,6 +19,7 @@ export function DocumentList({ documents, open }: { documents: Document[]; open:
 
 export function DocumentViewer({ document: initial, initialPage = 1, preferredCaseID, canRemove, close, changed }: { document: Document; initialPage?: number; preferredCaseID?: string; canRemove: boolean; close: () => void; changed: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const [expanded,setExpanded]=useState(false);
   const [document, setDocument] = useState(initial);
   const [page, setPage] = useState(initialPage);
   const [text, setText] = useState('');
@@ -34,9 +35,9 @@ export function DocumentViewer({ document: initial, initialPage = 1, preferredCa
       .then(value => { setText(value.text); setMethod(value.extraction_method); }).catch(error => { if (!controller.signal.aborted) setError(message(error)); });
     return () => controller.abort();
   }, [document.id, document.page_count, document.revision, page]);
-  return <dialog ref={dialog} className="document-dialog" onCancel={close} aria-labelledby="document-heading">
+  return <dialog ref={dialog} className={`document-dialog${expanded ? ' pdf-expanded' : ''}`} onCancel={event=>{event.preventDefault();if(expanded)setExpanded(false);else close();}} aria-labelledby="document-heading">
     <div className="section-heading"><div><p className="eyebrow">DOCUMENTO {document.storage_source === 'managed' ? 'ADMINISTRADO' : 'VINCULADO'}</p><h2 id="document-heading">{document.title || document.original_filename}</h2></div><button className="secondary" onClick={close}>Cerrar ficha</button></div>
-    <Notice text={error} /><div className="document-badges"><span className="badge">{availabilityLabel[document.availability]}</span>{document.extraction_freshness === 'stale' && <span className="badge">Texto anterior conservado</span>}{document.can_download && <a className="button-link" href={`/api/v1/documents/${document.id}/download`}>Descargar PDF</a>}</div>
+    <Notice text={error} /><div className="document-badges">{document.can_preview_original&&<button className="secondary compact" aria-pressed={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'Volver a vista dividida':'Ampliar PDF'}</button>}<span className="badge">{availabilityLabel[document.availability]}</span>{document.extraction_freshness === 'stale' && <span className="badge">Texto anterior conservado</span>}{document.can_download && <a className="button-link" href={`/api/v1/documents/${document.id}/download`}>Descargar PDF</a>}</div>
     <p>{approvalLabel[document.approval_status]}{document.case_identifier ? ` · Expediente ${document.case_identifier}` : ' · Sin expediente'}</p>
     {(document.category_name || document.document_type_name) && <p>{document.category_name} · {document.document_type_name}</p>}
     {document.original_path && <p className="path-text muted">{document.storage_source === 'managed' ? 'Ruta definitiva' : 'Ruta original'}: {document.original_path}</p>}

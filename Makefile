@@ -28,7 +28,7 @@ check: frontend
 test-e2e: frontend
 	npm --prefix web run test:e2e
 
-# Internal H7 previews: isolated service/data, development license, no release signing.
+# Internal H7 previews: isolated service/data, production licensing, no release signing.
 installer-macos: frontend
 	python3 scripts/build_installers.py --target macos
 

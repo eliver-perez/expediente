@@ -29,6 +29,7 @@ fi
 if [ ! -e "$BASE/data/config.json" ]; then
     /usr/bin/sudo -u "$ACCOUNT" "$BASE/bin/gestor-documental" init --config "$BASE/data/config.json" --listen 127.0.0.1:18090 --tools /opt/homebrew/bin
 fi
+/usr/bin/sudo -u "$ACCOUNT" "$BASE/bin/gestor-documental" configure-license --config "$BASE/data/config.json"
 /usr/bin/printf '%s\n' '@VERSION@' > "$BASE/data/package-version"
 /usr/sbin/chown "$ACCOUNT:$ACCOUNT" "$BASE/data/package-version"
 /bin/chmod 600 "$BASE/data/package-version"

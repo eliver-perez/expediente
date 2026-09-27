@@ -17,25 +17,27 @@ import (
 )
 
 type Filters struct {
-	RootID       string `json:"root_id"`
-	ViewID       string `json:"view_id"`
-	Prefix       string `json:"prefix"`
-	Availability string `json:"availability"`
-	Approval     string `json:"approval_status"`
-	CaseID       string `json:"case_id"`
-	CategoryID   string `json:"category_id"`
-	TypeID       string `json:"document_type_id"`
-	Exercise     string `json:"exercise"`
-	Source       string `json:"storage_source"`
-	Unassigned   bool   `json:"unassigned"`
+	DirectChildren bool   `json:"direct_children"`
+	RootID         string `json:"root_id"`
+	ViewID         string `json:"view_id"`
+	Prefix         string `json:"prefix"`
+	Availability   string `json:"availability"`
+	Approval       string `json:"approval_status"`
+	CaseID         string `json:"case_id"`
+	CategoryID     string `json:"category_id"`
+	TypeID         string `json:"document_type_id"`
+	Exercise       string `json:"exercise"`
+	Source         string `json:"storage_source"`
+	Unassigned     bool   `json:"unassigned"`
 }
 type SearchInput struct {
-	Query     string   `json:"query"`
-	Type      string   `json:"search_type"`
-	Libraries []string `json:"library_ids"`
-	Filters   Filters  `json:"filters"`
-	Limit     int      `json:"limit"`
-	Cursor    string   `json:"cursor"`
+	SummaryOnly bool     `json:"summary_only,omitempty"`
+	Query       string   `json:"query"`
+	Type        string   `json:"search_type"`
+	Libraries   []string `json:"library_ids"`
+	Filters     Filters  `json:"filters"`
+	Limit       int      `json:"limit"`
+	Cursor      string   `json:"cursor"`
 }
 type Segment struct {
 	Text        string `json:"text"`
@@ -46,6 +48,7 @@ type Match struct {
 	Segments []Segment `json:"segments"`
 }
 type Document struct {
+	LibraryName    string            `json:"library_name,omitempty"`
 	Integrity      string            `json:"integrity_status"`
 	CategoryName   string            `json:"category_name"`
 	TypeName       string            `json:"document_type_name"`
@@ -80,11 +83,17 @@ type Document struct {
 	Download       bool              `json:"can_download"`
 	Matches        []Match           `json:"matches"`
 }
+type SearchGroup struct {
+	LibraryID string `json:"library_id"`
+	Name      string `json:"library_name"`
+	Count     int    `json:"result_count"`
+}
 type SearchResult struct {
-	Items     []Document `json:"items"`
-	Count     int        `json:"result_count"`
-	Cursor    string     `json:"next_cursor,omitempty"`
-	Libraries []string   `json:"consulted_library_ids"`
+	Groups    []SearchGroup `json:"groups"`
+	Items     []Document    `json:"items"`
+	Count     int           `json:"result_count"`
+	Cursor    string        `json:"next_cursor,omitempty"`
+	Libraries []string      `json:"consulted_library_ids"`
 }
 
 const documentColumns = "d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,coalesce(l.root_id,''),coalesce(l.relative_path,''),coalesce(l.canonical_path,''),f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0),f.storage_source,coalesce(d.case_id,''),coalesce(c.identifier,''),coalesce(d.category_id,''),coalesce(d.document_type_id,''),coalesce(d.created_by,''),d.metadata_json,coalesce(cat.name,''),coalesce(dt.name,''),f.integrity_status"
@@ -162,7 +171,7 @@ func compileQuery(query string) (string, []string, error) {
 	return strings.Join(expressions, " AND "), tokens, nil
 }
 func (service *Service) Search(ctx context.Context, principal domain.Principal, input SearchInput, metadata domain.RequestMetadata, auditSearch bool) (SearchResult, error) {
-	result := SearchResult{Items: []Document{}, Libraries: []string{}}
+	result := SearchResult{Items: []Document{}, Libraries: []string{}, Groups: []SearchGroup{}}
 	if input.Type == "" {
 		input.Type = "general"
 	}
@@ -187,10 +196,21 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	err = service.Identity.AuthorizedWrite(ctx, principal, "", func(transaction *sql.Tx, current domain.Principal) error {
-		if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
-			return err
-		}
+	// License.Status uses its own read transaction. Do not nest it after acquiring
+	// a reader: concurrent searches could otherwise exhaust the four-reader pool.
+	if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
+		return result, err
+	}
+	transaction, err := service.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return result, err
+	}
+	defer transaction.Rollback()
+	current, err := service.Identity.LoadPrincipal(ctx, transaction, principal.TokenDigest)
+	if err != nil {
+		return result, err
+	}
+	err = func() error {
 		permission := "search.execute"
 		if !auditSearch {
 			permission = "documents.read"
@@ -201,12 +221,12 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 		}
 		authorized := map[string]bool{}
 		for rows.Next() {
-			var identifier string
-			if err = rows.Scan(&identifier); err != nil {
+			var id string
+			if err = rows.Scan(&id); err != nil {
 				rows.Close()
 				return err
 			}
-			authorized[identifier] = true
+			authorized[id] = true
 		}
 		err = rows.Err()
 		rows.Close()
@@ -214,15 +234,15 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			return err
 		}
 		if len(input.Libraries) > 0 {
-			for _, identifier := range input.Libraries {
-				if !authorized[identifier] {
+			for _, id := range input.Libraries {
+				if !authorized[id] {
 					return domain.Failure("FORBIDDEN", "No tienes permiso sobre el ámbito solicitado.", 403)
 				}
+				result.Libraries = append(result.Libraries, id)
 			}
-			result.Libraries = append(result.Libraries, input.Libraries...)
 		} else {
-			for identifier := range authorized {
-				result.Libraries = append(result.Libraries, identifier)
+			for id := range authorized {
+				result.Libraries = append(result.Libraries, id)
 			}
 			sort.Strings(result.Libraries)
 		}
@@ -232,9 +252,9 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			conditions = append(conditions, "0=1")
 		} else {
 			placeholders := []string{}
-			for _, identifier := range result.Libraries {
+			for _, id := range result.Libraries {
 				placeholders = append(placeholders, "?")
-				arguments = append(arguments, identifier)
+				arguments = append(arguments, id)
 			}
 			conditions = append(conditions, "d.library_id IN ("+strings.Join(placeholders, ",")+")")
 		}
@@ -251,7 +271,11 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 				return notFound()
 			}
 			input.Filters.RootID = rootID
-			input.Filters.Prefix = prefix
+			if input.Filters.Prefix == "" {
+				input.Filters.Prefix = prefix
+			} else if prefix != "" && input.Filters.Prefix != prefix && !strings.HasPrefix(input.Filters.Prefix, prefix+"/") {
+				return invalid("La carpeta debe pertenecer a la vista seleccionada.")
+			}
 		}
 		if input.Filters.RootID != "" {
 			conditions = append(conditions, "l.root_id=?")
@@ -261,12 +285,19 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			conditions = append(conditions, "(l.relative_path=? OR substr(l.relative_path,1,length(?)+1)=? || '/')")
 			arguments = append(arguments, input.Filters.Prefix, input.Filters.Prefix, input.Filters.Prefix)
 		}
+		if input.Filters.DirectChildren {
+			start := 1
+			if input.Filters.Prefix != "" {
+				start = len([]rune(input.Filters.Prefix)) + 2
+			}
+			conditions = append(conditions, "instr(substr(coalesce(l.relative_path,d.original_filename),?),'/')=0")
+			arguments = append(arguments, start)
+		}
 		if input.Filters.Availability != "" {
 			conditions = append(conditions, "(CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END)=?")
 			arguments = append(arguments, input.Filters.Availability)
 		}
-
-		for _, filter := range []struct{ column, value string }{{"d.case_id", input.Filters.CaseID}, {"d.category_id", input.Filters.CategoryID}, {"d.document_type_id", input.Filters.TypeID}, {"c.exercise", input.Filters.Exercise}, {"f.storage_source", input.Filters.Source}} {
+		for _, filter := range []struct{ column, value string }{{"d.case_id", input.Filters.CaseID}, {"d.category_id", input.Filters.CategoryID}, {"d.document_type_id", input.Filters.TypeID}, {"c.exercise", input.Filters.Exercise}, {"f.storage_source", input.Filters.Source}, {"d.approval_status", input.Filters.Approval}} {
 			if filter.value != "" {
 				conditions = append(conditions, filter.column+"=?")
 				arguments = append(arguments, filter.value)
@@ -274,11 +305,6 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 		}
 		if input.Filters.Unassigned {
 			conditions = append(conditions, "d.case_id IS NULL")
-		}
-
-		if input.Filters.Approval != "" {
-			conditions = append(conditions, "d.approval_status=?")
-			arguments = append(arguments, input.Filters.Approval)
 		}
 		if expression != "" {
 			textCondition := "f.id IN (SELECT p.physical_file_id FROM indexed_pages p JOIN pages_fts ON pages_fts.rowid=p.id WHERE pages_fts MATCH ?)"
@@ -290,16 +316,17 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			}
 			nameCondition := "(" + strings.Join(names, " AND ") + ")"
 			identifierCondition := "instr(coalesce(c.identifier_key,''),?)>0"
-			if input.Type == "identifier" {
+			switch input.Type {
+			case "identifier":
 				conditions = append(conditions, identifierCondition)
 				arguments = append(arguments, searchKey(strings.TrimSpace(input.Query)))
-			} else if input.Type == "ocr" {
+			case "ocr":
 				conditions = append(conditions, textCondition)
 				arguments = append(arguments, expression)
-			} else if input.Type == "name" {
+			case "name":
 				conditions = append(conditions, nameCondition)
 				arguments = append(arguments, nameArgs...)
-			} else {
+			default:
 				conditions = append(conditions, "("+textCondition+" OR "+nameCondition+" OR "+identifierCondition+")")
 				arguments = append(arguments, expression)
 				arguments = append(arguments, nameArgs...)
@@ -309,10 +336,7 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 		scope := domain.Digest(encode([]any{current.User.ID, input.Query, input.Type, result.Libraries, input.Filters}))
 		after := ""
 		if input.Cursor != "" {
-			var cursor struct {
-				After string
-				Scope string
-			}
+			var cursor struct{ After, Scope string }
 			contents, err := base64.RawURLEncoding.DecodeString(input.Cursor)
 			if err != nil || json.Unmarshal(contents, &cursor) != nil || cursor.Scope != scope || len(cursor.After) != 36 {
 				return invalid("El cursor no corresponde a esta consulta.")
@@ -320,8 +344,26 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			after = cursor.After
 		}
 		where := " WHERE " + strings.Join(conditions, " AND ")
-		if err = transaction.QueryRowContext(ctx, "SELECT count(*)"+documentJoins+where, arguments...).Scan(&result.Count); err != nil {
+		groups, err := transaction.QueryContext(ctx, "SELECT d.library_id,(SELECT name FROM libraries WHERE id=d.library_id),count(*)"+documentJoins+where+" GROUP BY d.library_id ORDER BY 2,d.library_id", arguments...)
+		if err != nil {
 			return err
+		}
+		for groups.Next() {
+			var group SearchGroup
+			if err = groups.Scan(&group.LibraryID, &group.Name, &group.Count); err != nil {
+				groups.Close()
+				return err
+			}
+			result.Groups = append(result.Groups, group)
+			result.Count += group.Count
+		}
+		err = groups.Err()
+		groups.Close()
+		if err != nil {
+			return err
+		}
+		if input.SummaryOnly {
+			return nil
 		}
 		pageArgs := append(append([]any{}, arguments...), after, input.Limit+1)
 		rows, err = transaction.QueryContext(ctx, "SELECT "+documentColumns+documentJoins+where+" AND d.id>? ORDER BY d.id LIMIT ?", pageArgs...)
@@ -345,15 +387,20 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			result.Items = result.Items[:input.Limit]
 			result.Cursor = base64.RawURLEncoding.EncodeToString([]byte(encode(map[string]string{"After": result.Items[len(result.Items)-1].ID, "Scope": scope})))
 		}
+		permissionsByLibrary := map[string]map[string]bool{}
 		for index := range result.Items {
 			document := &result.Items[index]
-			permissions, err := service.permissions(ctx, transaction, current.User.ID, document.LibraryID)
-			if err != nil {
-				return err
-			}
-			allowed := map[string]bool{}
-			for _, permission := range permissions {
-				allowed[permission] = true
+			allowed := permissionsByLibrary[document.LibraryID]
+			if allowed == nil {
+				permissions, err := service.permissions(ctx, transaction, current.User.ID, document.LibraryID)
+				if err != nil {
+					return err
+				}
+				allowed = map[string]bool{}
+				for _, permission := range permissions {
+					allowed[permission] = true
+				}
+				permissionsByLibrary[document.LibraryID] = allowed
 			}
 			document.Preview = (document.Availability == "available" || document.Availability == "staged") && allowed["documents.read"]
 			document.CanCancel = document.Availability == "staged" && document.CreatedBy == current.User.ID && allowed["documents.cancel_own"] && (document.Approval == "draft" || document.Approval == "rejected")
@@ -385,16 +432,30 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 				}
 			}
 		}
-		if !auditSearch {
-			return nil
-		}
-		eventID := domain.NewID()
-		if err = audit.Append(ctx, transaction, time.Now(), audit.Event{ID: eventID, Type: "search.executed", ActorUserID: current.User.ID, SessionID: current.SessionID, Metadata: metadata, Details: map[string]any{"result_count": result.Count, "returned_count": len(result.Items)}}); err != nil {
+		return nil
+	}()
+	if err != nil {
+		return result, err
+	}
+	if err = transaction.Commit(); err != nil {
+		return result, err
+	}
+	if auditSearch {
+		err = service.Identity.AuthorizedWrite(ctx, principal, "", func(transaction *sql.Tx, current domain.Principal) error {
+			for _, libraryID := range result.Libraries {
+				if err := service.require(ctx, transaction, current, libraryID, "search.execute"); err != nil {
+					return err
+				}
+			}
+			eventID := domain.NewID()
+			if err := audit.Append(ctx, transaction, time.Now(), audit.Event{ID: eventID, Type: "search.executed", ActorUserID: current.User.ID, SessionID: current.SessionID, Metadata: metadata, Details: map[string]any{"result_count": result.Count, "returned_count": len(result.Items)}}); err != nil {
+				return err
+			}
+			_, err := transaction.ExecContext(ctx, "INSERT INTO search_audit_details(event_id,exact_query_text,search_type,consulted_library_ids_json,applied_filters_json,result_count) VALUES(?,?,?,?,?,?)", eventID, input.Query, input.Type, encode(result.Libraries), encode(input.Filters), result.Count)
 			return err
-		}
-		_, err = transaction.ExecContext(ctx, "INSERT INTO search_audit_details(event_id,exact_query_text,search_type,consulted_library_ids_json,applied_filters_json,result_count) VALUES(?,?,?,?,?,?)", eventID, input.Query, input.Type, encode(result.Libraries), encode(input.Filters), result.Count)
-		return err
-	})
+		})
+	}
+
 	return result, err
 }
 func segments(value string) []Segment {

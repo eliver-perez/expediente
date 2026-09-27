@@ -77,9 +77,12 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/users/{id}/global-roles", server.protected("permissions.manage_global", true, server.setRoles))
 	mux.HandleFunc("GET /api/v1/sessions", server.protected("sessions.read_all", true, server.sessions))
 	mux.HandleFunc("GET /api/v1/authentication-attempts", server.protected("authentication_attempts.read", true, server.attempts))
-	mux.HandleFunc("GET /api/v1/audit-events", server.protected("audit.read_global", true, server.events))
+	mux.HandleFunc("GET /api/v1/audit-events", server.protected("audit.read_global", true, server.auditList))
+	mux.HandleFunc("GET /api/v1/audit-options", server.protected("audit.read_global", true, server.auditOptions))
 	mux.HandleFunc("GET /api/v1/audit-events/{id}", server.protected("audit.read_global", true, server.event))
 	mux.HandleFunc("GET /api/v1/system/status", server.protected("system.configure", false, server.status))
+	mux.HandleFunc("GET /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
+	mux.HandleFunc("PUT /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
 	mux.HandleFunc("/api/", func(writer http.ResponseWriter, request *http.Request) {
 		server.fail(writer, request, domain.Failure("NOT_FOUND", "No se encontró el endpoint.", 404))
 	})
@@ -254,7 +257,7 @@ func (server *Server) frontend(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	switch request.URL.Path {
-	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license":
+	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing":
 		contents, err := fs.ReadFile(assets, "index.html")
 		if err != nil {
 			http.Error(writer, "Aplicación no disponible.", 503)

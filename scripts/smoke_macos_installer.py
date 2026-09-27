@@ -123,7 +123,7 @@ def main():
         with sqlite3.connect(str(state / "documental.db")) as database:
             assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
             assert not database.execute("PRAGMA foreign_key_check").fetchall()
-            assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 5
+            assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 7
             assert database.execute("SELECT count(*) FROM bootstrap_state").fetchone()[0] == 1
         print(json.dumps({"package_sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
                           "result": "PASS", "checks": "PDF/OCR, PTY bootstrap with 6 characters, HTTP/login, lock, stop/restart, SQLite integrity, private permissions",

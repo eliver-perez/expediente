@@ -573,7 +573,7 @@ func TestInvalidPDFDoesNotExposeContentsOrBlockOtherDiscoveries(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := addRoot(t, service, principal, library, path)
-	if err := service.Scan(context.Background(), root, 256<<20, nil); err == nil || failureCode(err) != "INVALID_PDF" {
+	if err := service.Scan(context.Background(), root, 256<<20, nil); err == nil || failureCode(err) != "SCAN_PARTIAL" {
 		t.Fatal("invalid PDF accepted", err)
 	}
 	var count int

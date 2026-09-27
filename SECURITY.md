@@ -219,3 +219,11 @@ Documentos, discos o NAS. La desinstalación conserva datos y configuración.
 Reinstalar otra versión queda bloqueado hasta completar backup/restore y actualización firmada.
 La matriz nativa, prueba offline Ubuntu y obligaciones de distribución de dependencias siguen
 abiertas; [guía y límites](docs/H7.md).
+
+### Acceso diario Windows r2
+
+El lanzador GUI usa solo SC_MANAGER_CONNECT y SERVICE_QUERY_STATUS; no inicia/detiene el servicio
+ni solicita elevación. Lee exclusivamente `launcher.json` en Program Files, con la URL pública
+escrita por el configurador administrativo. Acepta HTTPS u HTTP loopback, sin esquemas de comandos,
+credenciales, query ni fragmentos; abre mediante ShellExecuteW sin shell de comandos. La configuración
+privada y sus ACL no se amplían para facilitar este acceso.

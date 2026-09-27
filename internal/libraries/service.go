@@ -6,11 +6,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"gestor-documental/internal/audit"
 	"gestor-documental/internal/domain"
+	"gestor-documental/internal/extraction"
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/storage"
@@ -21,10 +23,14 @@ type Service struct {
 	Database             *storage.Database
 	uploadSlots          chan struct{}
 	materializationFault func(string) error
+	processingMutex      sync.Mutex
+	processingCached     ProcessingConfiguration
+	processingCachedAt   time.Time
+	resources            extraction.Resources
 }
 
 func New(identityService *identity.Service) *Service {
-	return &Service{Identity: identityService, Database: identityService.Database, uploadSlots: make(chan struct{}, 2)}
+	return &Service{Identity: identityService, Database: identityService.Database, uploadSlots: make(chan struct{}, 2), resources: extraction.DetectResources()}
 }
 func invalid(message string) error { return domain.Failure("INVALID_REQUEST", message, 422) }
 func notFound() error              { return domain.Failure("NOT_FOUND", "No se encontró el recurso.", 404) }
