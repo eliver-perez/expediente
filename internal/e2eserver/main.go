@@ -25,6 +25,7 @@ import (
 	"gestor-documental/internal/libraries"
 	"gestor-documental/internal/licensefixture"
 	"gestor-documental/internal/licensing"
+	"gestor-documental/internal/network"
 	"gestor-documental/internal/storage"
 )
 
@@ -73,6 +74,10 @@ func run() error {
 	configuration.License.RefreshHours = 0
 	configuration.ListenAddress = "127.0.0.1:8099"
 	configuration.PublicURL = "http://127.0.0.1:8099"
+	configurationPath := filepath.Join(directory, "config.json")
+	if err = config.InitializeWith(configurationPath, func(value *config.Config) { *value = configuration }); err != nil {
+		return err
+	}
 	database, err := storage.Open(context.Background(), directory)
 	if err != nil {
 		return err
@@ -101,12 +106,20 @@ func run() error {
 		return err
 	}
 	defer runtime.Close()
-	server := &http.Server{Addr: configuration.ListenAddress, Handler: httpapi.New(service, configuration, slog.Default()).Handler(), ReadHeaderTimeout: 5 * time.Second}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	go func() { <-ctx.Done(); server.Close() }()
-	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+	access := network.New(configurationPath, configuration)
+	if err = access.Start(func(active config.Config) http.Handler {
+		return httpapi.New(service, active, slog.Default()).WithNetwork(access).Handler()
+	}); err != nil {
 		return err
 	}
-	return nil
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	select {
+	case <-ctx.Done():
+	case err = <-access.Errors():
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = access.Close(shutdown)
+	return err
 }

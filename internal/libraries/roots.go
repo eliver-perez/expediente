@@ -14,6 +14,9 @@ import (
 )
 
 type Root struct {
+	LastResult    string `json:"last_scan_result"`
+	LastCompleted string `json:"last_scan_completed_at"`
+	LastChanges   int    `json:"last_scan_changes"`
 	Source        string `json:"storage_source"`
 	ID            string `json:"id"`
 	LibraryID     string `json:"library_id"`
@@ -59,6 +62,15 @@ func (service *Service) Roots(ctx context.Context, principal domain.Principal, l
 	roots, err := rootsQuery(ctx, service.Database.Reader, libraryID)
 	if err != nil {
 		return nil, err
+	}
+	for index := range roots {
+		if roots[index].Source == "managed" {
+			continue
+		}
+		err := service.Database.Reader.QueryRowContext(ctx, "SELECT CASE WHEN s.status='complete' AND coalesce(s.last_error_code,'')<>'' THEN 'partial' ELSE s.status END,coalesce(s.completed_at,''),coalesce(p.changed_files,0) FROM root_scans s LEFT JOIN scan_progress p ON p.scan_id=s.id WHERE s.root_id=? ORDER BY s.started_at DESC,s.id DESC LIMIT 1", roots[index].ID).Scan(&roots[index].LastResult, &roots[index].LastCompleted, &roots[index].LastChanges)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
 	}
 	canSee := service.require(ctx, service.Database.Reader, principal, libraryID, "storage.view_paths") == nil
 	for index := range roots {
@@ -227,7 +239,7 @@ func (service *Service) ConfirmRoot(ctx context.Context, principal domain.Princi
 		if relation == "ancestor" && !consolidate {
 			return domain.Failure("ROOT_CONSOLIDATION_REQUIRED", "Confirma la consolidación de las raíces hijas.", 409)
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO storage_roots(id,library_id,storage_source,canonical_path,comparison_key,volume_identity,case_sensitive,status,watch_mode,reconcile_interval_seconds,created_at,directory_identity) VALUES(?,?,?,?,?,?,?, 'active','polling',900,?,?)", rootID, libraryID, source, path, comparison(path, directory.CaseSensitive), volumeKey(identity), directory.CaseSensitive, now(), identity); err != nil {
+		if _, err = transaction.ExecContext(ctx, "INSERT INTO storage_roots(id,library_id,storage_source,canonical_path,comparison_key,volume_identity,case_sensitive,status,watch_mode,reconcile_interval_seconds,created_at,directory_identity) VALUES(?,?,?,?,?,?,?, 'active','polling',86400,?,?)", rootID, libraryID, source, path, comparison(path, directory.CaseSensitive), volumeKey(identity), directory.CaseSensitive, now(), identity); err != nil {
 			return err
 		}
 		if relation == "ancestor" {
@@ -334,7 +346,7 @@ func (service *Service) AddView(ctx context.Context, principal domain.Principal,
 }
 func enqueueScan(ctx context.Context, transaction *sql.Tx, libraryID, rootID string) error {
 	var count int
-	if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_type='scan' AND target_version=? AND status IN ('queued','running','retry_wait')", rootID).Scan(&count); err != nil {
+	if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_type IN ('scan','verify_managed') AND target_version=? AND status IN ('queued','running','retry_wait','paused')", rootID).Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {

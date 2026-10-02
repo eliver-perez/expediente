@@ -18,7 +18,7 @@ func backupBeforeProcessingUpgrade(ctx context.Context, connection *sql.DB, stat
 		return nil
 	}
 	var old, current int
-	if err := connection.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(name='0007_processing_settings.up.sql'),0) FROM schema_migrations").Scan(&old, &current); err != nil {
+	if err := connection.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(name='0008_reconciliation.up.sql'),0) FROM schema_migrations").Scan(&old, &current); err != nil {
 		return err
 	}
 	if old == 0 || current > 0 {

@@ -13,6 +13,8 @@ UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
+# Only AIBID's private configuration directory is writable under /etc.
+ReadWritePaths=/etc/aibid-test
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

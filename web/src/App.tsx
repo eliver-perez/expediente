@@ -4,6 +4,7 @@ import { Notice } from './components';
 import { Libraries } from './Libraries';
 import { Search } from './Search';
 import { ProcessingSettings } from './ProcessingSettings';
+import { NetworkSettings } from './NetworkSettings';
 import { Brand } from './Brand';
 import { Account } from './Account';
 import { License, licenseStates } from './License';
@@ -73,6 +74,7 @@ export function App() {
     { path: '/admin/access', label: 'Accesos', available: can('sessions.read_all') && can('authentication_attempts.read') },
     { path: '/admin/events', label: 'Eventos', available: can('audit.read_global') },
     { path: '/admin/processing', label: 'Procesamiento', available: can('system.configure') },
+    { path: '/admin/network', label: 'Acceso y red', available: can('system.configure') },
     { path: '/admin/license', label: 'Licencia', available: can('license.manage') }];
   let content = <Account user={user} onPasswordChanged={() => endSession('Contraseña actualizada. Inicia sesión con tu nueva contraseña.')} />;
   if (path === '/libraries') content = <Libraries user={user} />;
@@ -81,6 +83,7 @@ export function App() {
   else if (path === '/admin/access' && can('sessions.read_all') && can('authentication_attempts.read')) content = <Access />;
   else if (path === '/admin/events' && can('audit.read_global')) content = <Events />;
   else if (path === '/admin/processing' && can('system.configure')) content = <ProcessingSettings />;
+  else if (path === '/admin/network' && can('system.configure')) content = <NetworkSettings />;
   else if (path === '/admin/license' && can('license.manage')) content = <License onChange={refreshSession} />;
   else if (path.startsWith('/admin/')) content = <Notice text="No tienes permiso para consultar esta página." />;
   return <div className="app-layout"><aside className="sidebar"><Brand dark variant="vertical" className="sidebar-brand" /><p className="nav-label">ESPACIO DE TRABAJO</p><nav aria-label="Principal">{links.filter(link => link.available).map(link => <a key={link.path} href={link.path} aria-current={path === link.path ? 'page' : undefined} onClick={event => { event.preventDefault(); setError(''); navigate(link.path); }}>{link.label}</a>)}</nav><div className="sidebar-footer"><span className="status-dot" /> Instalación local</div></aside>

@@ -116,7 +116,7 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		if lookup != sql.ErrNoRows {
 			return lookup
 		}
-		_, err := transaction.ExecContext(ctx, "INSERT INTO root_scans(id,root_id,configuration_revision,status,checkpoint_json,started_at) VALUES(?,?,?,'running',?,?)", scanID, root.ID, root.Revision, encode(pending), now())
+		_, err := transaction.ExecContext(ctx, "INSERT INTO root_scans(id,root_id,configuration_revision,status,checkpoint_json,started_at,loss_generation) VALUES(?,?,?,'running',?,?,coalesce((SELECT loss_generation FROM root_watch_recovery WHERE root_id=?),0))", scanID, root.ID, root.Revision, encode(pending), now(), root.ID)
 		if err != nil {
 			return err
 		}
@@ -293,7 +293,10 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 			if _, err := transaction.ExecContext(ctx, "UPDATE root_scans SET status='complete',completed_at=?,can_confirm_absence=0,last_error_code=? WHERE id=?", now(), diagnostic, scanID); err != nil {
 				return err
 			}
-			_, err := transaction.ExecContext(ctx, "UPDATE storage_roots SET status='active',last_scan_at=?,last_error_code=? WHERE id=?", now(), diagnostic, root.ID)
+			// A full traversal with unreadable entries still observes the periodic
+			// interval. It must not create an immediate endless scan loop, nor
+			// acknowledge missing files or lost watcher events.
+			_, err := transaction.ExecContext(ctx, "UPDATE storage_roots SET status='active',last_scan_at=CASE WHEN ? THEN last_scan_at ELSE ? END,last_error_code=CASE WHEN last_error_code IN ('WATCH_EVENTS_LOST','WATCH_LIMIT') THEN last_error_code ELSE ? END WHERE id=?", partial, now(), diagnostic, root.ID)
 			return err
 		}
 		// Retire only locations proven absent; retain the historical row and its OCR.
@@ -329,11 +332,14 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		if _, err := transaction.ExecContext(ctx, "UPDATE root_scans SET status='complete',completed_at=?,can_confirm_absence=1 WHERE id=?", now(), scanID); err != nil {
 			return err
 		}
+		if _, err := transaction.ExecContext(ctx, "UPDATE root_watch_recovery SET recovered_generation=max(recovered_generation,(SELECT loss_generation FROM root_scans WHERE id=?)) WHERE root_id=?", scanID, root.ID); err != nil {
+			return err
+		}
 		diagnostic := ""
 		if skippedLinks {
 			diagnostic = "INTERNAL_LINK_SKIPPED"
 		}
-		_, err = transaction.ExecContext(ctx, "UPDATE storage_roots SET status='active',last_verified_at=?,last_scan_at=?,last_error_code=CASE WHEN last_error_code IN ('WATCH_LIMIT','WATCH_EVENTS_LOST') THEN last_error_code ELSE ? END WHERE id=?", now(), now(), diagnostic, root.ID)
+		_, err = transaction.ExecContext(ctx, "UPDATE storage_roots SET status='active',last_verified_at=?,last_scan_at=?,last_error_code=CASE WHEN last_error_code='WATCH_LIMIT' THEN last_error_code WHEN EXISTS(SELECT 1 FROM root_watch_recovery w WHERE w.root_id=storage_roots.id AND w.loss_generation>w.recovered_generation) THEN 'WATCH_EVENTS_LOST' ELSE ? END WHERE id=?", now(), now(), diagnostic, root.ID)
 		return err
 	})
 	if err == nil && incomplete {
@@ -541,6 +547,9 @@ func (service *Service) ingest(ctx context.Context, root Root, scanID string, ob
 				return appendDocumentObservation(ctx, transaction, domain.NewID(), "document.linked_reappeared", root.LibraryID, documentID, versionID)
 			}
 			return nil
+		}
+		if _, err = transaction.ExecContext(ctx, "UPDATE scan_progress SET changed_files=changed_files+1 WHERE scan_id=?", scanID); err != nil {
+			return err
 		}
 		versionID = domain.NewID()
 		var generation int

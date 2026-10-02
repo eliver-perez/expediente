@@ -329,9 +329,11 @@ func (client *Client) recordContact(ctx context.Context, cause error) {
 func (client *Client) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	nextAttempt := time.Time{}
 	for {
 		client.ObserveClock(ctx)
+		client.mutex.Lock()
+		nextAttempt := client.nextAttempt
+		client.mutex.Unlock()
 		if client.Options.ServerURL != "" && client.Options.RefreshHours > 0 && !client.Now().Before(nextAttempt) {
 			state, err := readLocal(ctx, client.Database.Reader)
 			if err == nil && state.JWS != "" && !state.Deactivated {
@@ -344,7 +346,9 @@ func (client *Client) Run(ctx context.Context) {
 						requestID = domain.NewID()
 					}
 					_, _ = client.Online(ctx, "refresh", requestID, "", nil, domain.RequestMetadata{RequestID: requestID})
-					nextAttempt = client.Now().Add(15 * time.Minute)
+					client.mutex.Lock()
+					client.nextAttempt = client.Now().Add(15 * time.Minute)
+					client.mutex.Unlock()
 				}
 			}
 		}

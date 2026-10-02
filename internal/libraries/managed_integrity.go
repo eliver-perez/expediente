@@ -21,6 +21,13 @@ func enqueueVerification(ctx context.Context, transaction *sql.Tx, root Root) er
 	if root.Source != "managed" {
 		return enqueueScan(ctx, transaction, root.LibraryID, root.ID)
 	}
+	var pending int
+	if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_type IN ('scan','verify_managed') AND target_version=? AND status IN ('queued','running','retry_wait','paused')", root.ID).Scan(&pending); err != nil {
+		return err
+	}
+	if pending > 0 {
+		return nil
+	}
 	identifier := domain.NewID()
 	_, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'verify_managed',?,?,'{}','queued',?,?)", identifier, root.LibraryID, root.ID, identifier, now(), now())
 	return err

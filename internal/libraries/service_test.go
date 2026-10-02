@@ -557,6 +557,12 @@ func TestNativeWatcherNewDirectoriesAndOverflowRecovery(t *testing.T) {
 		err := service.Database.Reader.QueryRow("SELECT count(*) FROM root_scans WHERE root_id=? AND status='complete'", root).Scan(&count)
 		return err == nil && count >= 2
 	})
+	await("overflow recovered only after barrier", func() bool {
+		registered, err := service.root(context.Background(), root)
+		var pending int
+		service.Database.Reader.QueryRow("SELECT count(*) FROM root_watch_recovery WHERE root_id=? AND loss_generation>recovered_generation", root).Scan(&pending)
+		return err == nil && pending == 0 && registered.LastError == "" && registered.WatchMode == "native"
+	})
 }
 
 func TestInvalidPDFDoesNotExposeContentsOrBlockOtherDiscoveries(t *testing.T) {

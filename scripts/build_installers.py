@@ -20,7 +20,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "0.7.0-test.1"
-WINDOWS_REVISION = "r4"
+PACKAGE_REVISION = "r7"
 DEB_VERSION = "0.7.0~test.1"
 EPOCH = 1790294400  # Fixed packaging timestamp, 2026-09-25 UTC.
 
@@ -43,7 +43,8 @@ def binary(destination, system, architecture):
     environment = dict(os.environ, CGO_ENABLED="0", GOOS=system, GOARCH=architecture)
     run(["go", "build", "-trimpath", "-ldflags",
          "-s -w -X gestor-documental/internal/buildinfo.Channel=installer-test"
-         + (" -X gestor-documental/internal/buildinfo.ServiceName=AIBIDTest -X gestor-documental/internal/buildinfo.Revision="+WINDOWS_REVISION if system == "windows" else ""),
+         + " -X gestor-documental/internal/buildinfo.Revision="+PACKAGE_REVISION
+         + (" -X gestor-documental/internal/buildinfo.ServiceName=AIBIDTest" if system == "windows" else ""),
          "-o", destination, "./cmd/gestor-documental"], env=environment)
 
 
@@ -57,6 +58,8 @@ def documents(destination):
     copy(ROOT / "docs/H7-WINDOWS-R2.md", destination / "WINDOWS-R2.md")
     copy(ROOT / "docs/REVISION-PROCESAMIENTO.md", destination / "REVISION-PROCESAMIENTO.md")
     copy(ROOT / "docs/REVISION-R4.md", destination / "REVISION-R4.md")
+    copy(ROOT / "docs/REVISION-R6.md", destination / "REVISION-R6.md")
+    copy(ROOT / "docs/CIERRE-1.0.md", destination / "CIERRE-1.0.md")
     # A few small fixtures exercise actual PDF and image OCR after native installation.
     for path in (ROOT / "testdata/documents").glob("*.pdf"):
         copy(path, destination / "pdf" / path.name)
@@ -84,6 +87,9 @@ def macos(output, work):
         "Umask": 0o077, "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"},
         "StandardOutPath": install+"/data/logs/service.log", "StandardErrorPath": install+"/data/logs/service.log"
     }))
+    manifest = [hashlib.sha256(path.read_bytes()).hexdigest() + "\t/" + path.relative_to(payload).as_posix()
+                for path in sorted(payload.rglob("*")) if path.is_file()]
+    (base / "package-files.tsv").write_text("\n".join(manifest) + "\n")
     # Installer ownership must never inherit the developer's UID or group.
     scripts = work / "scripts"
     for name in ["preinstall", "postinstall"]:
@@ -130,31 +136,32 @@ def ar_member(stream, name, data):
         stream.write(b"\n")
 
 
-def ubuntu(output, work):
+def ubuntu(output, work, architecture):
     payload, control = work / "root", work / "control"
-    binary(payload / "usr/lib/aibid-test/gestor-documental", "linux", "amd64")
+    binary(payload / "usr/lib/aibid-test/gestor-documental", "linux", architecture)
     documents(payload / "usr/share/doc/aibid-test")
     for name in ["prepare-offline.sh", "install-offline.sh"]:
         copy(ROOT / "packaging/ubuntu" / name, payload / "usr/share/doc/aibid-test/offline" / name, 0o755)
     copy(ROOT / "packaging/ubuntu/aibid-test.service", payload / "usr/lib/systemd/system/aibid-test.service")
     copy(ROOT / "packaging/ubuntu/aibid-test-admin", payload / "usr/sbin/aibid-test-admin", 0o755)
+    copy(ROOT / "packaging/ubuntu/aibid-test-uninstall", payload / "usr/sbin/aibid-test-uninstall", 0o755)
     control.mkdir()
     size = sum(path.stat().st_size for path in payload.rglob("*") if path.is_file()) // 1024
     (control / "control").write_text(f"""Package: aibid-test
 Version: {DEB_VERSION}
 Section: utils
 Priority: optional
-Architecture: amd64
+Architecture: {architecture}
 Maintainer: AIBID local test builds <aibid@example.invalid>
 Installed-Size: {size}
 Depends: adduser, util-linux, systemd, poppler-utils, tesseract-ocr, tesseract-ocr-spa, tesseract-ocr-eng, fonts-dejavu-core
 Description: AIBID - Aplicacion de Indexacion de Bibliotecas Digitales (pruebas)
  Servicio local aislado de prueba. Datos conservados incluso al desinstalar.
- No es una version comercial y no necesita servidor de licencias.
+ Requiere activar una licencia para habilitar las modificaciones.
 """)
     for name in ["preinst", "postinst", "prerm", "postrm"]:
         copy(ROOT / "packaging/ubuntu" / name, control / name, 0o755, template=True)
-    with (output / f"aibid-test_{DEB_VERSION}_amd64.deb").open("wb") as stream:
+    with (output / f"aibid-test_{DEB_VERSION}_{architecture}.deb").open("wb") as stream:
         stream.write(b"!<arch>\n")
         ar_member(stream, "debian-binary", b"2.0\n")
         ar_member(stream, "control.tar.gz", tar_bytes(control))
@@ -314,8 +321,11 @@ def windows(output, work, prefix, makensis):
     check_pe_imports(payload / "tools/Library/bin")
     copy(ROOT / "packaging/windows/manage.ps1", payload / "manage.ps1", template=True)
     copy(ROOT / "packaging/windows/admin.cmd", payload / "admin.cmd")
+    manifest = [{"path": path.relative_to(payload).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                for path in sorted(payload.rglob("*")) if path.is_file()]
+    (payload / "package-files.json").write_text(json.dumps(manifest), encoding="utf-8")
     define = "/D" if os.name == "nt" else "-D"
-    package_version = VERSION+"-"+WINDOWS_REVISION
+    package_version = VERSION+"-"+PACKAGE_REVISION
     run([makensis, f"{define}VERSION={package_version}", f"{define}STAGE={payload}",
          f"{define}OUTPUT={output / ('AIBID-Pruebas-' + package_version + '-Windows-amd64.exe')}", ROOT / "packaging/windows/installer.nsi"])
     copy(payload / "docs/windows-ocr.lock.json", output / "windows-ocr.lock.json")
@@ -328,6 +338,8 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "dist/installers")
     parser.add_argument("--windows-tools", type=Path)
     parser.add_argument("--makensis")
+    parser.add_argument("--ubuntu-arch", choices=["amd64", "arm64", "all"], default="all",
+                        help="Ubuntu architectures to build (default: both)")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -337,8 +349,12 @@ def main():
             work = Path(directory).resolve()
             if target == "windows":
                 windows(output, work, args.windows_tools, args.makensis)
+            elif target == "ubuntu":
+                architectures = ["amd64", "arm64"] if args.ubuntu_arch == "all" else [args.ubuntu_arch]
+                for architecture in architectures:
+                    ubuntu(output, work / architecture, architecture)
             else:
-                {"macos": macos, "ubuntu": ubuntu}[target](output, work)
+                macos(output, work)
     documents(output / "LEEME")
     for name in ["prepare-offline.sh", "install-offline.sh"]:
         copy(ROOT / "packaging/ubuntu" / name, output / "ubuntu-offline" / name, 0o755)

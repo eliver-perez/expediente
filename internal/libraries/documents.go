@@ -336,6 +336,16 @@ func (service *Service) Retry(ctx context.Context, principal domain.Principal, j
 		if err != sql.ErrNoRows {
 			return err
 		}
+		if job.Kind == "scan" || job.Kind == "verify_managed" {
+			err := transaction.QueryRowContext(ctx, "SELECT id FROM jobs WHERE job_type IN ('scan','verify_managed') AND target_version=(SELECT target_version FROM jobs WHERE id=?) AND status IN ('queued','running','retry_wait','paused')", jobID).Scan(&existing)
+			if err == nil {
+				identifier = existing
+				return nil
+			}
+			if err != sql.ErrNoRows {
+				return err
+			}
+		}
 		if job.Kind == "scan" {
 			if _, err = transaction.ExecContext(ctx, "DELETE FROM root_scan_controls WHERE root_id=(SELECT target_version FROM jobs WHERE id=?)", jobID); err != nil {
 				return err
@@ -408,11 +418,17 @@ func (service *Service) Members(ctx context.Context, principal domain.Principal,
 }
 
 type Event struct {
-	ID         string `json:"id"`
-	Kind       string `json:"event_type"`
-	DocumentID string `json:"document_id"`
-	At         string `json:"occurred_at"`
-	Details    string `json:"details_json"`
+	LibraryID    string `json:"library_id"`
+	LibraryName  string `json:"library_name"`
+	DocumentName string `json:"document_name"`
+	ActorKind    string `json:"actor_kind"`
+	ActorID      string `json:"actor_user_id,omitempty"`
+	ActorName    string `json:"actor_name"`
+	ID           string `json:"id"`
+	Kind         string `json:"event_type"`
+	DocumentID   string `json:"document_id"`
+	At           string `json:"occurred_at"`
+	Details      string `json:"details_json"`
 }
 
 func (service *Service) Events(ctx context.Context, principal domain.Principal, libraryID, documentID, cursor string) (Page[Event], error) {
@@ -434,14 +450,14 @@ func (service *Service) Events(ctx context.Context, principal domain.Principal, 
 	if err != nil {
 		return page, err
 	}
-	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,event_type,coalesce(document_id,''),occurred_at,details_json FROM audit_events WHERE library_id=? AND (?='' OR document_id=?) AND (?='' OR occurred_at<? OR (occurred_at=? AND id<?)) ORDER BY occurred_at DESC,id DESC LIMIT 51", libraryID, documentID, documentID, after.Time, after.Time, after.Time, after.ID)
+	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT a.id,a.event_type,coalesce(a.document_id,''),a.occurred_at,a.details_json,a.actor_kind,coalesce(a.actor_user_id,''),coalesce(u.display_name,CASE a.actor_kind WHEN 'system' THEN 'Sistema' WHEN 'anonymous' THEN 'Sin sesión' ELSE 'Usuario no disponible' END),a.library_id,coalesce(library.name,''),coalesce(nullif(d.title,''),d.original_filename,'') FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id LEFT JOIN libraries library ON library.id=a.library_id LEFT JOIN documents d ON d.id=a.document_id WHERE a.library_id=? AND (?='' OR a.document_id=?) AND (?='' OR a.occurred_at<? OR (a.occurred_at=? AND a.id<?)) ORDER BY a.occurred_at DESC,a.id DESC LIMIT 51", libraryID, documentID, documentID, after.Time, after.Time, after.Time, after.ID)
 	if err != nil {
 		return page, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var event Event
-		if err = rows.Scan(&event.ID, &event.Kind, &event.DocumentID, &event.At, &event.Details); err != nil {
+		if err = rows.Scan(&event.ID, &event.Kind, &event.DocumentID, &event.At, &event.Details, &event.ActorKind, &event.ActorID, &event.ActorName, &event.LibraryID, &event.LibraryName, &event.DocumentName); err != nil {
 			return page, err
 		}
 		page.Items = append(page.Items, event)
@@ -455,8 +471,10 @@ func (service *Service) Events(ctx context.Context, principal domain.Principal, 
 }
 
 type Duplicate struct {
-	Hash  string `json:"sha256"`
-	Count int    `json:"count"`
+	Size      int64  `json:"size_bytes"`
+	Libraries int    `json:"library_count"`
+	Hash      string `json:"sha256"`
+	Count     int    `json:"count"`
 }
 
 func (service *Service) Duplicates(ctx context.Context, principal domain.Principal, libraryID string) ([]Duplicate, error) {
@@ -479,8 +497,8 @@ func (service *Service) Duplicates(ctx context.Context, principal domain.Princip
 	return duplicates, rows.Err()
 }
 func (service *Service) ConfigureRoot(ctx context.Context, principal domain.Principal, rootID string, enabled bool, interval int, revision int64, metadata domain.RequestMetadata) error {
-	if interval < 10 || interval > 86400 {
-		return invalid("El intervalo debe estar entre 10 segundos y 24 horas.")
+	if interval < 10 || interval > 30*86400 {
+		return invalid("El intervalo debe estar entre 10 segundos y 30 días.")
 	}
 	root, err := service.root(ctx, rootID)
 	if err != nil {

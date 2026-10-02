@@ -192,6 +192,32 @@ func TestOfflineActivationRenewalAndPendingDeactivation(t *testing.T) {
 		t.Fatal("remote manual decision claimed knowledge on offline client")
 	}
 }
+
+func TestReactivationPreservesInstallationIdentity(t *testing.T) {
+	ctx := context.Background()
+	mock, err := licensefixture.NewMock("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(mock)
+	defer server.Close()
+	client, directory := developmentClient(t, server)
+	first, err := client.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.Online(ctx, "deactivate", domain.NewID(), "", nil, domain.RequestMetadata{}); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := licensing.New(client.Database, directory, client.Options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := restarted.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{})
+	if err != nil || !state.WriteAllowed || state.InstallationID != first.InstallationID || state.PublicKey != first.PublicKey || state.ActivationID == first.ActivationID {
+		t.Fatal("reactivation lost binding or reused retired activation", state, err)
+	}
+}
 func TestDevelopmentVectorsAreReproducibleAndCrossCheckProofs(t *testing.T) {
 	directory := t.TempDir()
 	if err := licensefixture.GenerateVectors(directory); err != nil {

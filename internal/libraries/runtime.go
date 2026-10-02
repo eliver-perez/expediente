@@ -46,6 +46,9 @@ type Runtime struct {
 	mutex                   sync.Mutex
 	directories             map[string]string
 	dirty                   map[string]time.Time
+	dirtyPaths              map[string]map[string]bool
+	dirtySince              map[string]time.Time
+	watchInitialized        map[string]bool
 	degraded                map[string]string
 	cancel                  context.CancelFunc
 	workers                 sync.WaitGroup
@@ -136,6 +139,9 @@ drained:
 }
 func (runtime *Runtime) register(rootID, path string) error {
 	if runtime.watcher == nil {
+		runtime.mutex.Lock()
+		runtime.degraded[rootID] = "WATCH_LIMIT"
+		runtime.mutex.Unlock()
 		return errors.New("native watcher unavailable")
 	}
 	runtime.mutex.Lock()
@@ -160,25 +166,7 @@ func (runtime *Runtime) watch(ctx context.Context) {
 			if !open {
 				return
 			}
-			runtime.mutex.Lock()
-			rootID := runtime.directories[filepath.Dir(event.Name)]
-			if rootID == "" {
-				rootID = runtime.directories[event.Name]
-			}
-			if rootID != "" {
-				runtime.dirty[rootID] = time.Now()
-			}
-			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-				delete(runtime.directories, event.Name)
-			}
-			runtime.mutex.Unlock()
-			if rootID != "" && (event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove)) {
-				if root, err := runtime.Service.root(ctx, rootID); err == nil {
-					if relative, err := filepath.Rel(root.Path, event.Name); err == nil && relativeSafe(filepath.ToSlash(relative)) {
-						_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "DELETE FROM file_scan_cache WHERE root_id=? AND relative_path=?", rootID, filepath.ToSlash(relative))
-					}
-				}
-			}
+			runtime.handleWatchEvent(ctx, event)
 		case _, open := <-runtime.watcher.Errors:
 			if !open {
 				return
@@ -222,6 +210,15 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 			continue
 		}
 		active[root.ID] = true
+		runtime.mutex.Lock()
+		if runtime.watchInitialized == nil {
+			runtime.watchInitialized = map[string]bool{}
+		}
+		if !runtime.watchInitialized[root.ID] && root.Source != "managed" {
+			runtime.watchInitialized[root.ID] = true
+			runtime.markDirtyLocked(root.ID, "")
+		}
+		runtime.mutex.Unlock()
 		watchError := errors.New("managed uses periodic verification")
 		if root.Source != "managed" {
 			watchError = runtime.register(root.ID, root.Path)
@@ -229,16 +226,22 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		runtime.mutex.Lock()
 		dirtyAt, dirty := runtime.dirty[root.ID]
 		degraded := runtime.degraded[root.ID]
+		paths := []string{}
+		for path := range runtime.dirtyPaths[root.ID] {
+			paths = append(paths, path)
+		}
+		firstDirty := runtime.dirtySince[root.ID]
 		runtime.mutex.Unlock()
 		if root.Source == "managed" {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling' WHERE id=? AND watch_mode<>'polling'", root.ID)
 		} else if degraded != "" {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling',last_error_code=? WHERE id=? AND (watch_mode<>'polling' OR coalesce(last_error_code,'')<>?)", degraded, root.ID, degraded)
-		} else if watchError == nil {
+		} else if watchError == nil && root.LastError != "WATCH_EVENTS_LOST" && root.LastError != "WATCH_LIMIT" {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='native' WHERE id=? AND watch_mode<>'native'", root.ID)
 		}
 		scanned, _ := time.Parse(domain.TimeLayout, root.LastScan)
-		if time.Since(scanned) < time.Duration(root.Interval)*time.Second && (!dirty || time.Since(dirtyAt) < 750*time.Millisecond) {
+		due := time.Since(scanned) >= time.Duration(root.Interval)*time.Second
+		if !due && (!dirty || (time.Since(dirtyAt) < 2500*time.Millisecond && time.Since(firstDirty) < 5*time.Second)) {
 			continue
 		}
 		// Keep a dirty event while a scan is running: it causes a barrier scan afterwards.
@@ -252,12 +255,19 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 				return nil
 			}
 			queued = true
+			if !due && len(paths) > 0 && root.Source != "managed" {
+				id := domain.NewID()
+				_, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'scan',?,?,?,'queued',?,?)", id, root.LibraryID, root.ID, id, encode(map[string]any{"paths": paths}), now(), now())
+				return err
+			}
 			return enqueueVerification(ctx, transaction, root)
 		})
 		if err == nil && queued && dirty {
 			runtime.mutex.Lock()
 			if runtime.dirty[root.ID] == dirtyAt {
 				delete(runtime.dirty, root.ID)
+				delete(runtime.dirtyPaths, root.ID)
+				delete(runtime.dirtySince, root.ID)
 			}
 			runtime.mutex.Unlock()
 		}
@@ -365,13 +375,24 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 				paths = options.Paths
 			}
 			operationContext = context.WithValue(operationContext, scanPathsKey{}, paths)
+			runtime.mutex.Lock()
+			if len(paths) == 0 {
+				delete(runtime.degraded, job.Version)
+			}
+			runtime.mutex.Unlock()
+			watchFailed := false
 			err = runtime.Service.Scan(operationContext, job.Version, int64(runtime.Service.Identity.Config.Indexing.MaximumFileMB)<<20, func(path string) error {
 				watchError := runtime.register(job.Version, path)
 				if watchError != nil {
+					watchFailed = true
 					_, _ = runtime.Service.Database.Writer.ExecContext(operationContext, "UPDATE storage_roots SET watch_mode='polling',last_error_code='WATCH_LIMIT' WHERE id=?", job.Version)
 				}
 				return watchError
 			})
+			if err == nil && !watchFailed && len(paths) == 0 {
+				_, _ = runtime.Service.Database.Writer.ExecContext(operationContext, "UPDATE storage_roots SET last_error_code=CASE WHEN last_error_code='WATCH_LIMIT' THEN '' ELSE last_error_code END,watch_mode=CASE WHEN EXISTS(SELECT 1 FROM root_watch_recovery w WHERE w.root_id=storage_roots.id AND w.loss_generation>w.recovered_generation) THEN 'polling' ELSE 'native' END WHERE id=? AND EXISTS(SELECT 1 FROM root_scans s WHERE s.root_id=storage_roots.id AND s.status='complete' AND s.can_confirm_absence=1 AND s.id=(SELECT id FROM root_scans WHERE root_id=storage_roots.id ORDER BY started_at DESC,id DESC LIMIT 1))", job.Version)
+			}
+
 		} else if job.Kind == "materialize" {
 			err = runtime.Service.Materialize(operationContext, job)
 		} else if job.Kind == "verify_managed" {
@@ -477,15 +498,4 @@ func (service *Service) finish(ctx context.Context, job Job, cause error) error 
 		}
 		return nil
 	})
-}
-
-// Event loss is a rescan request, never evidence that files were deleted.
-func (runtime *Runtime) eventsLost(ctx context.Context) {
-	runtime.mutex.Lock()
-	for _, rootID := range runtime.directories {
-		runtime.dirty[rootID] = time.Now().Add(-time.Second)
-		runtime.degraded[rootID] = "WATCH_EVENTS_LOST"
-	}
-	runtime.mutex.Unlock()
-	_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling',last_error_code='WATCH_EVENTS_LOST' WHERE status IN ('active','inaccessible')")
 }

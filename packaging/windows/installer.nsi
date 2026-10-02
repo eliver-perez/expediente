@@ -3,6 +3,9 @@ Unicode true
 !include "x64.nsh"
 !include "LogicLib.nsh"
 !include "WinVer.nsh"
+!include "nsDialogs.nsh"
+Var EraseData
+Var EraseCheckbox
 Name "AIBID Pruebas ${VERSION}"
 !define MUI_ICON "${STAGE}/aibid.ico"
 !define MUI_UNICON "${STAGE}/aibid.ico"
@@ -12,12 +15,13 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 BrandingText "AIBID — Tu biblioteca digital, ordenada y al alcance."
 !define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TEXT "Instalación de pruebas independiente. Usa http://127.0.0.1:18090 y conserva los datos al desinstalar.$\r$\n$\r$\nDespués abre Configurar AIBID Pruebas para crear tu administrador (mínimo 6 caracteres). No necesita servidor de licencias.$\r$\n$\r$\nEsta compilación no es una versión comercial."
+!define MUI_WELCOMEPAGE_TEXT "Instalación de pruebas independiente. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIBID Pruebas para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIBID.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIBID Pruebas desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIBID Pruebas en el Escritorio o Abrir AIBID en Inicio: abre el navegador sin pedir permisos de administrador."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
+UninstPage custom un.DataOptions un.ConfirmDataOptions
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "Spanish"
 
@@ -33,6 +37,29 @@ Function .onInit
     SetRegView 64
     SetShellVarContext all
     ${DisableX64FSRedirection}
+FunctionEnd
+
+Function un.DataOptions
+    StrCpy $EraseData ""
+    nsDialogs::Create 1018
+    Pop $0
+    ${NSD_CreateCheckbox} 0 10u 100% 20u "Eliminar los datos de AIBID al desinstalar"
+    Pop $EraseCheckbox
+    ${NSD_Uncheck} $EraseCheckbox
+    ${NSD_CreateLabel} 0 40u 100% 65u "Se eliminarán la base de datos, los índices, el contenido extraído, los usuarios y la configuración. Tus documentos físicos, incluidas las bibliotecas administradas y cargas, permanecerán intactos en sus rutas.$\r$\n$\r$\nPara usar la licencia en una instalación nueva, desactívala primero desde AIBID. Esta limpieza no libera la activación en el servidor."
+    Pop $0
+    nsDialogs::Show
+FunctionEnd
+
+Function un.ConfirmDataOptions
+    ${NSD_GetState} $EraseCheckbox $0
+    StrCpy $EraseData ""
+    ${If} $0 == ${BST_CHECKED}
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "¿Eliminar los datos internos de AIBID? Se perderán usuarios, bibliotecas registradas, índices, historial y configuración. Los documentos físicos permanecerán intactos.$\r$\n$\r$\nUna reinstalación comenzará desde cero y requerirá activar la licencia." IDYES confirmed
+        Abort
+        confirmed:
+        StrCpy $EraseData "-EraseInternalData"
+    ${EndIf}
 FunctionEnd
 
 Section "Instalar"
@@ -71,23 +98,22 @@ Section "Uninstall"
     SetRegView 64
     SetShellVarContext all
     ${DisableX64FSRedirection}
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\manage.ps1" -Action Remove -InstallRoot "$INSTDIR"'
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\manage.ps1" -Action Remove -InstallRoot "$INSTDIR" $EraseData'
     Pop $0
     ${If} $0 != 0
-        Abort "No se pudo detener el servicio. Se conserva el programa."
+        Abort "No se pudo completar la preparación de la desinstalación. Consulta el detalle; se conserva el programa."
     ${EndIf}
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest"
-    RMDir /r "$SMPROGRAMS\AIBID Pruebas"
+    Delete "$SMPROGRAMS\AIBID Pruebas\Configurar AIBID Pruebas.lnk"
+    Delete "$SMPROGRAMS\AIBID Pruebas\Desinstalar.lnk"
+    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.lnk"
+    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.url"
+    RMDir "$SMPROGRAMS\AIBID Pruebas"
     Delete "$DESKTOP\AIBID Pruebas.lnk"
-    ; Only code-owned subdirectories; ProgramData and library roots are never removed.
-    RMDir /r "$INSTDIR\tools"
-    RMDir /r "$INSTDIR\docs"
-    Delete "$INSTDIR\gestor-documental.exe"
-    Delete "$INSTDIR\AIBID.exe"
-    Delete "$INSTDIR\aibid.ico"
+    ; Packaged files were checked by hash. Keep unknown and modified files.
+    RMDir "$INSTDIR\tools"
+    RMDir "$INSTDIR\docs"
     Delete "$INSTDIR\launcher.json"
-    Delete "$INSTDIR\manage.ps1"
-    Delete "$INSTDIR\admin.cmd"
     Delete "$INSTDIR\Desinstalar.exe"
     RMDir "$INSTDIR"
 SectionEnd

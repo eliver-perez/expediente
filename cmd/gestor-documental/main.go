@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +21,8 @@ import (
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/libraries"
 	"gestor-documental/internal/licensing"
+	"gestor-documental/internal/maintenance"
+	"gestor-documental/internal/network"
 	"gestor-documental/internal/storage"
 	"golang.org/x/term"
 )
@@ -40,7 +41,7 @@ func main() {
 
 func run(ctx context.Context, ready func()) error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("uso: gestor-documental version|init|configure-license|doctor|check-state|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
+		return fmt.Errorf("uso: gestor-documental version|init|configure-license|doctor|check-state|erase-internal-data|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
 	}
 	command := os.Args[1]
 	if command == "version" {
@@ -49,6 +50,7 @@ func run(ctx context.Context, ready func()) error {
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	recoveryReason := flags.String("reason", "", "Motivo de recuperación de identidad de licencia")
+	confirmErase := flags.Bool("confirm-erase-internal-data", false, "Confirmar eliminación de metadatos; conserva documentos físicos")
 	confirmRecovery := flags.Bool("confirm-license-recovery", false, "Confirmar nueva identidad; requiere nueva activación del proveedor")
 	configurationPath := flags.String("config", "", "Archivo privado de configuración (por defecto, el del usuario)")
 	initialState := flags.String("state", "", "Directorio de datos (solo init)")
@@ -107,6 +109,16 @@ func run(ctx context.Context, ready func()) error {
 	}
 	if *initialState != "" || *initialListen != "" || *initialTools != "" || *initialTessdata != "" || *initialFontconfig != "" {
 		return fmt.Errorf("state/listen/tools/tessdata only apply to init")
+	}
+	if command == "erase-internal-data" {
+		if !*confirmErase {
+			return fmt.Errorf("se requiere confirmar la eliminación de los datos internos; los documentos físicos se conservan")
+		}
+		if err := maintenance.EraseInternal(*configurationPath); err != nil {
+			return err
+		}
+		fmt.Println("Datos internos eliminados. Los documentos físicos y archivos no reconocidos permanecen en sus rutas.")
+		return nil
 	}
 	if command == "configure-license" {
 		if err := config.ProvisionProvider(*configurationPath); err != nil {
@@ -209,40 +221,28 @@ func run(ctx context.Context, ready func()) error {
 	}
 	defer background.Close()
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	application := httpapi.New(service, configuration, logger)
-	server := &http.Server{Addr: configuration.ListenAddress, Handler: application.Handler(), ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	access := network.New(*configurationPath, configuration)
+	if err := access.Start(func(active config.Config) http.Handler {
+		return httpapi.New(service, active, logger).WithNetwork(access).Handler()
+	}); err != nil {
+		return err
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = access.Close(shutdown)
+	}()
 	termination, stop := context.WithCancel(ctx)
 	defer stop()
 	licenseDone := make(chan struct{})
 	go func() { defer close(licenseDone); service.License.Run(termination) }()
 	defer func() { stop(); <-licenseDone }()
-	serverError := make(chan error, 1)
-	listener, err := net.Listen("tcp", configuration.ListenAddress)
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-	go func() {
-		if configuration.TLSCertificate != "" {
-			serverError <- server.ServeTLS(listener, configuration.TLSCertificate, configuration.TLSPrivateKey)
-		} else {
-			serverError <- server.Serve(listener)
-		}
-	}()
 	logger.Info("service starting", "address", configuration.ListenAddress, "version", buildinfo.DisplayVersion(), "channel", buildinfo.Channel)
 	ready()
 	select {
-	case err := <-serverError:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
+	case err := <-access.Errors():
+		return err
 	case <-termination.Done():
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownContext); err != nil {
-			return err
-		}
 	}
 	return nil
 }

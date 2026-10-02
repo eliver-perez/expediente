@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor')][string]$Action,
       [string]$InstallRoot = "$env:ProgramFiles\AIBID-Test",
-      [string]$PreflightBinary = '')
+      [string]$PreflightBinary = '',
+      [switch]$EraseInternalData)
 $ErrorActionPreference = 'Stop'
 $ServiceName = 'AIBIDTest'
 $DataRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'AIBID-Test'
@@ -34,6 +35,28 @@ function Write-LauncherTarget {
     # license keys and database remain inaccessible to ordinary desktop users.
     $Configuration = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
     @{ public_url = [string]$Configuration.public_url } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallRoot 'launcher.json') -Encoding UTF8
+}
+function Remove-PackagedFiles {
+    $Manifest = Join-Path $InstallRoot 'package-files.json'
+    $Entries = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
+    $RootPrefix = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
+    # Validate the complete manifest before removing anything. Unknown or changed
+    # files are preserved, even if someone placed documents in the program folder.
+    foreach ($Entry in $Entries) {
+        $Path = [IO.Path]::GetFullPath((Join-Path $InstallRoot $Entry.path))
+        if (!$Path.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase) -or $Entry.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Manifiesto de programa inválido.' }
+        Assert-PrivatePath $Path
+    }
+    foreach ($Entry in $Entries) {
+        $Path = Join-Path $InstallRoot $Entry.path
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -eq $Entry.sha256) {
+                Remove-Item -LiteralPath $Path -Force
+            } else { Write-Host "Se conserva el archivo modificado: $Path" }
+        }
+    }
+    Remove-Item -LiteralPath $Manifest
+    # Leave directories in place; the installer only removes empty top-level folders.
 }
 try {
     $Administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -109,8 +132,13 @@ try {
         'Remove' {
             Stop-Aibid
             if (Test-Path $Config) { Invoke-Native $Binary @('check-state','--config',$Config) }
+            if ($EraseInternalData -and (Test-Path $Config)) {
+                Invoke-Native $Binary @('erase-internal-data','--config',$Config,'--confirm-erase-internal-data')
+            }
             if (Get-Service $ServiceName -ErrorAction SilentlyContinue) { Invoke-Native sc.exe @('delete',$ServiceName) }
-            Write-Host "Datos, configuración y documentos preservados en $DataRoot."
+            Remove-PackagedFiles
+            if ($EraseInternalData) { Write-Host "Datos internos eliminados. Documentos físicos conservados; las cargas privadas permanecen en $DataRoot\state\uploads." }
+            else { Write-Host "Datos, configuración y documentos preservados en $DataRoot." }
         }
     }
     exit 0

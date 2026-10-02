@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gestor-documental/internal/extraction"
@@ -21,6 +22,7 @@ type Config struct {
 	Indexing             extraction.Options `json:"indexing"`
 	ListenAddress        string             `json:"listen_address"`
 	PublicURL            string             `json:"public_url"`
+	NetworkMode          string             `json:"network_mode,omitempty"`
 	StateDirectory       string             `json:"state_directory"`
 	UploadDirectory      string             `json:"upload_directory,omitempty"`
 	TLSCertificate       string             `json:"tls_certificate"`
@@ -116,7 +118,8 @@ func (configuration Config) Validate() error {
 		return err
 	}
 	host, port, err := net.SplitHostPort(configuration.ListenAddress)
-	if err != nil || port == "0" || port == "" {
+	portNumber, portError := strconv.Atoi(port)
+	if err != nil || portError != nil || portNumber < 1 || portNumber > 65535 || strconv.Itoa(portNumber) != port {
 		return fmt.Errorf("listen_address must contain an explicit IP and port")
 	}
 	listenIP, err := netip.ParseAddr(host)
@@ -129,8 +132,23 @@ func (configuration Config) Validate() error {
 	}
 	if publicURL.Scheme != "https" {
 		publicIP, parseError := netip.ParseAddr(publicURL.Hostname())
-		if publicURL.Scheme != "http" || !listenIP.IsLoopback() || (publicURL.Hostname() != "localhost" && (parseError != nil || !publicIP.IsLoopback())) {
+		// HTTP on the LAN is an explicit installation choice. Old configurations
+		// retain their original HTTPS requirement and exact public origin.
+		explicitLAN := configuration.NetworkMode == "lan" && host == "0.0.0.0"
+		if publicURL.Scheme != "http" || (!listenIP.IsLoopback() && !explicitLAN) || (publicURL.Hostname() != "localhost" && (parseError != nil || !publicIP.IsLoopback())) {
 			return fmt.Errorf("LAN access requires HTTPS; HTTP is restricted to loopback")
+		}
+	}
+	if configuration.NetworkMode != "" {
+		if configuration.NetworkMode != "local" && configuration.NetworkMode != "lan" {
+			return fmt.Errorf("network_mode must be local or lan")
+		}
+		expected := "127.0.0.1"
+		if configuration.NetworkMode == "lan" {
+			expected = "0.0.0.0"
+		}
+		if host != expected || configuration.PublicURL != "http://127.0.0.1:"+port || configuration.TLSCertificate != "" || configuration.TLSPrivateKey != "" || len(configuration.TrustedProxies) != 0 {
+			return fmt.Errorf("local/LAN mode requires its IPv4 listener and local HTTP URL without TLS or proxies")
 		}
 	}
 	if (configuration.TLSCertificate == "") != (configuration.TLSPrivateKey == "") {

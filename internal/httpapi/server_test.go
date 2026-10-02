@@ -118,7 +118,7 @@ func TestHTTPAuthorizationFailedAttemptsAndNoSecretDisclosure(t *testing.T) {
 		t.Fatal(created.Code, created.Body.String())
 	}
 	readerCookie, _ := fixture.login(t, "reader", "Reader-fixture-password")
-	for _, path := range []string{"/users", "/sessions", "/authentication-attempts", "/audit-events"} {
+	for _, path := range []string{"/users", "/sessions", "/authentication-attempts", "/audit-events", "/system/network"} {
 		if response := fixture.request("GET", path, "", readerCookie, ""); response.Code != 403 {
 			t.Fatal("unprivileged access", path, response.Code)
 		}

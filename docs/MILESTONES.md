@@ -244,3 +244,31 @@ visor ampliado. Activación/renovación real verificadas con la clave pública a
 instalación temporal de prueba desactivada al terminar. Nueve pruebas Chrome y las suites
 Go aprobadas. No se ejecuta carga masiva por petición del propietario. La emisión offline
 manual del servidor y la validación del instalador en Windows siguen pendientes.
+
+### Revisión Windows r5 (2026-09-27)
+
+El propietario confirmó la activación real y el bloqueo de modificaciones tras desactivar.
+La interfaz mostraba los módulos contratados como habilitados aun en solo lectura.
+Se corrigen las etiquetas según el estado efectivo, se identifica el registro anterior y
+se muestra la clave de licencia como texto visible. La configuración de concurrencia
+aclara la unidad procesos, el máximo de la aplicación y el límite compartido entre grupos.
+No cambia el contrato, la política de licencias ni la asignación de recursos.
+
+### Revisión Windows r6 (2026-09-28)
+
+Reconciliación diaria para nuevas raíces, watcher con recuperación por generaciones, unicidad
+de verificaciones y reanudación; limpieza explícita de metadatos preservando documentos.
+Duplicados en dos paneles, explorador paginado, historial y confirmaciones de retiro.
+Se conservan las reglas de bibliotecas, permisos, OCR y materialización.
+[Diagnóstico, semántica y validación](REVISION-R6.md).
+
+
+## Ajustes de cierre 1.0 — r7 (2026-09-29)
+
+Se incorporan selección persistente local/LAN, diagnóstico de firewall sin modificaciones,
+validación y restauración de la escucha, compatibilidad de UUID en HTTP, estados de licencia y siguiente
+validación, filtros antes de búsqueda y seis acordeones compartidos. Se mantienen los módulos existentes.
+Las suites Go normal/desarrollo, el detector de carreras de las áreas afectadas y 11 escenarios Chrome
+pasan. Ver decisiones, archivos y comprobaciones manuales en [CIERRE-1.0.md](CIERRE-1.0.md).
+Se conserva la versión base del canal de pruebas; el cierre comercial y la validación nativa en los
+sistemas destino siguen dependiendo de las pruebas indicadas en el informe.

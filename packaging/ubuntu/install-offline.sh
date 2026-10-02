@@ -2,10 +2,14 @@
 set -euo pipefail
 [[ $EUID == 0 ]] || { echo 'Ejecuta sudo ./install.sh' >&2; exit 1; }
 source /etc/os-release
-[[ $ID == ubuntu && $VERSION_ID == 24.04 && $(dpkg --print-architecture) == amd64 ]] || exit 1
+architecture=$(dpkg --print-architecture)
+[[ $ID == ubuntu && $VERSION_ID == 24.04 && ( $architecture == amd64 || $architecture == arm64 ) ]] || exit 1
 cd -- "$(dirname -- "$(realpath "$0")")"
 [[ $PWD != *[[:space:]]* ]] || { echo 'Usa una ruta sin espacios.' >&2; exit 1; }
 sha256sum --strict -c SHA256SUMS
+shopt -s nullglob
+packages=(repository/aibid-test_*.deb)
+[[ ${#packages[@]} == 1 && $(dpkg-deb -f "${packages[0]}" Architecture) == "$architecture" ]] || { echo "El bundle debe contener un paquete AIBID para $architecture." >&2; exit 1; }
 temporary=$(mktemp -d /var/tmp/aibid-offline.XXXXXXXX)
 trap 'rm -rf -- "$temporary"' EXIT
 chmod 755 "$temporary"

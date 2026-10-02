@@ -31,3 +31,31 @@ No enviar DB, contraseñas, identidad privada o documentos reales como evidencia
 
 La actualización N-1, backup/restore integral, firma de releases, ensayos de carga y certificación
 operativa completa pertenecen al cierre posterior de H7. No se consideran aprobados por compilar un paquete.
+
+## Ubuntu ARM64
+
+Para una VM sobre Apple Silicon comprobar `dpkg --print-architecture` = `arm64` y usar
+`aibid-test_0.7.0~test.1_arm64.deb`. Repetir instalación, diagnóstico PDF/OCR, inicio del
+servicio, acceso HTTP y ambas opciones de desinstalación. Preparar el bundle offline en
+Ubuntu 24.04 arm64; los scripts rechazan un paquete/bundle de otra arquitectura.
+
+
+## r7: cierre funcional de 1.0
+
+En macOS ARM64, Windows amd64 y Ubuntu 24.04 (amd64/arm64):
+
+1. Actualizar conservando datos y licencia. Confirmar `version` termina en `-r7`.
+2. En modo local, abrir 127.0.0.1:18090; comprobar que otro equipo no conecta por la IP del servidor.
+3. Guardar modo LAN, entrar por una IPv4 indicada y comprobar inicio de sesión, biblioteca, PDF y licencia.
+4. Reiniciar el servicio y el equipo; confirmar que mantiene LAN y el puerto. Revertir a local y comprobar
+   que deja de aceptar conexiones remotas, conservando la interfaz local y los trabajos documentales.
+5. Comprobar que un usuario sin `system.configure` no ve ni modifica la configuración de red.
+6. Revisar el diagnóstico del firewall del sistema. Si indica verificación incompleta, seguir sus
+   instrucciones con el administrador. No debe desactivar protecciones ni crear/modificar/borrar reglas.
+7. Mantener una licencia de prueba activada sin Internet, reiniciar y comprobar consulta/operaciones dentro
+   de su vigencia. Suscripciones: tolerancia de 15 días desde vencimiento. No usar la licencia real para
+   simular vencimientos ni cambiar el reloj del equipo de producción.
+8. Revisar los cinco filtros antes de buscar, en escritorio y móvil; probar los seis acordeones sin perder
+   contenido ni acciones. En LAN verificar biblioteca nueva, cargas y solicitudes de licencia.
+9. Desinstalar conservando datos y luego con borrado interno en una instalación desechable. AIBID r7 no
+   crea reglas de firewall: las reglas administradas por el usuario o por políticas externas se conservan.

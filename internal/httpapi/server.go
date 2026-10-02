@@ -20,6 +20,7 @@ import (
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/libraries"
 	"gestor-documental/internal/licensing"
+	"gestor-documental/internal/network"
 )
 
 //go:embed all:assets
@@ -33,6 +34,12 @@ type Server struct {
 	publicHost     string
 	secure         bool
 	trustedProxies []netip.Prefix
+	network        *network.Service
+}
+
+func (server *Server) WithNetwork(service *network.Service) *Server {
+	server.network = service
+	return server
 }
 
 func New(service *identity.Service, configuration config.Config, logger *slog.Logger) *Server {
@@ -83,6 +90,8 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/system/status", server.protected("system.configure", false, server.status))
 	mux.HandleFunc("GET /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
+	mux.HandleFunc("GET /api/v1/system/network", server.protected("system.configure", true, server.networkConfiguration))
+	mux.HandleFunc("PUT /api/v1/system/network", server.protected("system.configure", true, server.networkConfiguration))
 	mux.HandleFunc("/api/", func(writer http.ResponseWriter, request *http.Request) {
 		server.fail(writer, request, domain.Failure("NOT_FOUND", "No se encontró el endpoint.", 404))
 	})
@@ -139,8 +148,18 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 				server.fail(writer, request, fmt.Errorf("request panic"))
 			}
 		}()
-		if request.Host != server.publicHost {
+		allowedHost := request.Host == server.publicHost
+		if server.configuration.NetworkMode == "lan" {
+			allowedHost = network.AllowsHost(request.Host, server.configuration.ListenAddress)
+		}
+		if !allowedHost {
 			server.fail(writer, request, domain.Failure("INVALID_HOST", "Host no permitido.", 400))
+			return
+		}
+		// A connection accepted before switching to local mode must not retain
+		// LAN access through keep-alive. In-flight responses may finish normally.
+		if server.network != nil && server.network.LocalOnly() && !remoteAddress(request).IsLoopback() {
+			server.fail(writer, request, domain.Failure("NETWORK_LOCAL_ONLY", "AIBID solo permite acceso desde este equipo.", 403))
 			return
 		}
 		if server.secure && request.TLS == nil && (!server.isTrusted(remoteAddress(request)) || request.Header.Get("X-Forwarded-Proto") != "https") {
@@ -148,7 +167,11 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 			return
 		}
 		if request.Method != "GET" && request.Method != "HEAD" {
-			if request.Header.Get("Origin") != server.configuration.PublicURL {
+			expectedOrigin := server.configuration.PublicURL
+			if server.configuration.NetworkMode == "lan" {
+				expectedOrigin = "http://" + request.Host
+			}
+			if request.Header.Get("Origin") != expectedOrigin {
 				server.fail(writer, request, domain.Failure("CSRF_INVALID", "Origen no permitido.", 403))
 				return
 			}
@@ -257,7 +280,7 @@ func (server *Server) frontend(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	switch request.URL.Path {
-	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing":
+	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing", "/admin/network":
 		contents, err := fs.ReadFile(assets, "index.html")
 		if err != nil {
 			http.Error(writer, "Aplicación no disponible.", 503)

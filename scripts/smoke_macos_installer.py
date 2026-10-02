@@ -74,6 +74,13 @@ def main():
         if len(matches) != 1:
             raise RuntimeError("Unexpected package payload")
         binary = matches[0]
+        payload = binary.parents[4]
+        manifest = binary.parent.parent / "package-files.tsv"
+        for entry in manifest.read_text().splitlines():
+            digest, installed_path = entry.split("\t", 1)
+            packaged_path = payload / installed_path.lstrip("/")
+            assert packaged_path.resolve().is_relative_to(payload.resolve())
+            assert hashlib.sha256(packaged_path.read_bytes()).hexdigest() == digest
         print(command([binary, "version"]))
         command(["codesign", "--verify", "--strict", binary])
         with socket.socket() as reservation:
@@ -110,23 +117,73 @@ def main():
                         headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"})
                     with urllib.request.urlopen(request, timeout=15) as response:
                         assert response.status == 200
+                        session = json.load(response)
+                        cookie = response.headers['Set-Cookie'].split(';', 1)[0]
+                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                    def network_request(body=None):
+                        request = urllib.request.Request(f"http://127.0.0.1:{port}/api/v1/system/network",
+                            data=json.dumps(body).encode() if body is not None else None,
+                            method="PUT" if body is not None else "GET",
+                            headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}",
+                                     "Cookie": cookie, "X-CSRF-Token": session['csrf_token']})
+                        with opener.open(request, timeout=15) as response:
+                            return json.load(response)
+                    diagnostic = network_request()
+                    assert diagnostic['mode'] == ('local' if iteration == 0 else 'lan')
+                    assert diagnostic['listening']
+                    if iteration == 0:
+                        diagnostic = network_request({'mode': 'lan', 'revision': diagnostic['revision']})
+                    # Exercise the packaged production binary by its actual IPv4,
+                    # then restart with the persisted LAN setting before reverting.
+                    addresses = [item['url'] for item in diagnostic['interfaces'] if item['suggested']]
+                    if not addresses:
+                        raise RuntimeError('A connected IPv4 interface is required for this smoke test')
+                    with opener.open(addresses[0] + '/health/live', timeout=5) as response:
+                        assert response.status == 200
+                    if iteration == 1:
+                        diagnostic = network_request({'mode': 'local', 'revision': diagnostic['revision']})
+                        assert diagnostic['mode'] == 'local'
+                        try:
+                            opener.open(addresses[0] + '/health/live', timeout=2)
+                        except OSError:
+                            pass
+                        else:
+                            raise RuntimeError('LAN still accessible after reverting to local')
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
                         assert b"AIBID" in response.read()
                 finally:
                     service.terminate()
                     service.wait(timeout=30)
                 assert service.returncode == 0
-        assert previous == configuration.read_bytes()
+        current = json.loads(configuration.read_bytes())
+        assert current.pop('network_mode') == 'local'
+        assert current == json.loads(previous)
         assert configuration.stat().st_mode & 0o777 == 0o600
         state = configuration.parent / "state"
         assert state.stat().st_mode & 0o777 == 0o700
         with sqlite3.connect(str(state / "documental.db")) as database:
             assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
             assert not database.execute("PRAGMA foreign_key_check").fetchall()
-            assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 7
+            assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 8
             assert database.execute("SELECT count(*) FROM bootstrap_state").fetchone()[0] == 1
+        database.close()
+        original = state / "uploads/keep.pdf"
+        original.parent.mkdir(parents=True, exist_ok=True)
+        contents = (binary.parent.parent / "docs/pdf/native.pdf").read_bytes()
+        original.write_bytes(contents)
+        command([binary, "erase-internal-data", "--config", configuration], success=False)
+        assert configuration.exists()
+        command([binary, "erase-internal-data", "--config", configuration, "--confirm-erase-internal-data"])
+        assert original.read_bytes() == contents
+        assert not configuration.exists() and not (state / "documental.db").exists()
+        command([binary, "init", "--config", configuration, "--listen", f"127.0.0.1:{port}", "--tools", "/opt/homebrew/bin"])
+        command([binary, "migrate", "--config", configuration])
+        with sqlite3.connect(str(state / "documental.db")) as database:
+            assert database.execute("SELECT count(*) FROM bootstrap_state").fetchone()[0] == 0
+        database.close()
+        assert original.read_bytes() == contents
         print(json.dumps({"package_sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
-                          "result": "PASS", "checks": "PDF/OCR, PTY bootstrap with 6 characters, HTTP/login, lock, stop/restart, SQLite integrity, private permissions",
+                          "result": "PASS", "checks": "package manifest, PDF/OCR, PTY bootstrap with 6 characters, HTTP/login, local/LAN IPv4 with persisted restart and local-only restoration, lock, stop/restart, SQLite integrity, private permissions, confirmed metadata cleanup preserves PDF, fresh database",
                           "not_tested": "system installer, service account, launchd, native Windows/Ubuntu"}, indent=2))
 
 

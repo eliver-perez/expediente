@@ -1,5 +1,7 @@
+import { Accordion } from './Accordion';
+import { DocumentHistory } from './DocumentHistory';
 import { useEffect, useRef, useState } from 'react';
-import { api, formatDate, message } from './api';
+import { api, message } from './api';
 import { WorkflowPanel } from './Workflow';
 import { ClassificationForm } from './ClassificationForm';
 import { approvalLabel } from './organizationTypes';
@@ -25,7 +27,7 @@ export function DocumentViewer({ document: initial, initialPage = 1, preferredCa
   const [text, setText] = useState('');
   const [method, setMethod] = useState('');
   const [error, setError] = useState('');
-  const [history, setHistory] = useState<{ id: string; event_type: string; occurred_at: string }[] | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
   useEffect(() => { const controller = new AbortController(); api<Document>(`/documents/${initial.id}`, { signal: controller.signal }).then(setDocument).catch(error => { if (!controller.signal.aborted) setError(message(error)); }); return () => controller.abort(); }, [initial.id]);
   useEffect(() => {
@@ -49,7 +51,7 @@ export function DocumentViewer({ document: initial, initialPage = 1, preferredCa
     {['draft', 'rejected', 'pending_review', 'needs_review'].includes(document.approval_status) && (document.can_classify || document.can_associate || document.can_reassign) && <ClassificationForm key={document.revision} document={document} preferredCaseID={preferredCaseID} saved={updated => { setDocument(updated); changed(); }} />}
     <WorkflowPanel document={document} saved={updated => { setDocument(updated); changed(); }} />
     {document.can_cancel && <details><summary>Cancelar mi carga</summary><form className="filters" onSubmit={async event => { event.preventDefault(); try { await api(`/documents/${document.id}/cancel`, { method: 'POST', revision: document.revision, body: { reason: new FormData(event.currentTarget).get('reason') } }); setDocument(await api<Document>(`/documents/${document.id}`)); changed(); } catch (error) { setError(message(error)); } }}><label>Motivo de cancelación<input name="reason" required maxLength={1000} /></label><button className="secondary">Cancelar carga y conservar evidencia</button></form></details>}
-    <details><summary>Huella y trazabilidad</summary><p className="path-text">SHA-256: {document.sha256}</p><button className="secondary" onClick={() => void api<{ items: { id: string; event_type: string; occurred_at: string }[] }>(`/documents/${document.id}/history`).then(value => setHistory(value.items)).catch(error => setError(message(error)))}>Consultar historial</button>{history && <ul>{history.map(event => <li key={event.id}>{formatDate(event.occurred_at)} · {event.event_type}</li>)}</ul>}</details>
-    {canRemove && document.approval_status !== 'materializing' && <details className="remove-index"><summary>Retirar del índice</summary><p>Conserva el archivo original y la evidencia histórica. Dejará de aparecer en búsquedas.</p><form className="filters" onSubmit={async event => { event.preventDefault(); const data = new FormData(event.currentTarget); try { await api(`/documents/${document.id}/remove-index`, { method: 'POST', revision: document.revision, body: { reason: data.get('reason'), expected_case_id: document.case_id } }); changed(); close(); } catch (error) { setError(message(error)); } }}>{document.case_id && <label className="check"><input type="checkbox" required />Entiendo que este archivo dejará de contar en el expediente {document.case_identifier}.</label>}<label>Motivo<input name="reason" required maxLength={1000} /></label><button className="secondary">Confirmar retiro del índice</button></form></details>}
+    <Accordion title="Huella y trazabilidad"><p className="path-text">SHA-256: {document.sha256}</p><button className="secondary" onClick={()=>setShowHistory(true)}>Consultar historial</button>{showHistory && <DocumentHistory documentID={document.id} />}</Accordion>
+    {canRemove && document.approval_status !== 'materializing' && <details className="remove-index document-accordion"><summary>Retirar del índice</summary><p>Oculta el documento de las búsquedas y del listado de la biblioteca. Elimina el texto del índice de búsqueda. Conserva el archivo físico, los registros históricos de texto y OCR y la auditoría. Volver a recorrer la carpeta no lo incorpora automáticamente otra vez.</p><form className="filters" onSubmit={async event => { event.preventDefault(); const data = new FormData(event.currentTarget); try { await api(`/documents/${document.id}/remove-index`, { method: 'POST', revision: document.revision, body: { reason: data.get('reason'), expected_case_id: document.case_id } }); changed(); close(); } catch (error) { setError(message(error)); } }}>{document.case_id && <label className="check"><input type="checkbox" required />Entiendo que este archivo dejará de contar en el expediente {document.case_identifier}.</label>}<label className="check"><input type="checkbox" required />Confirmo que se retirará del índice de AIBID. El archivo físico permanecerá intacto.</label><label>Motivo<input name="reason" required maxLength={1000} /></label><button className="secondary">Confirmar retiro del índice</button></form></details>}
   </dialog>;
 }

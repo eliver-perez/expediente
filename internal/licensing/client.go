@@ -30,6 +30,7 @@ type Client struct {
 	mutex          sync.Mutex
 	lastEffective  time.Time
 	lastSample     time.Time
+	nextAttempt    time.Time
 	cachedJWS      string
 	cachedClaims   Claims
 	cachedBinding  Binding
@@ -138,6 +139,7 @@ type Status struct {
 	OnlineConfigured     bool            `json:"online_configured"`
 	ClockWarning         bool            `json:"clock_warning"`
 	LastContact          string          `json:"last_contact_at"`
+	NextValidation       string          `json:"next_validation_at"`
 	LastError            string          `json:"last_error_code"`
 	Diagnostic           string          `json:"diagnostic"`
 	DeactivationPending  bool            `json:"offline_deactivation_pending"`
@@ -223,6 +225,19 @@ func (client *Client) Status(ctx context.Context) (Status, error) {
 		if state.Deactivated || retired {
 			result.Diagnostic = "ACTIVATION_DEACTIVATED"
 		}
+	}
+	if client.Options.ServerURL != "" && client.Options.RefreshHours > 0 && !state.Deactivated && !retired {
+		last, _ := utcInstant(state.LastContact)
+		next := last.Add(time.Duration(client.Options.RefreshHours) * time.Hour)
+		if last.IsZero() {
+			next = client.Now()
+		}
+		client.mutex.Lock()
+		if client.nextAttempt.After(next) {
+			next = client.nextAttempt
+		}
+		client.mutex.Unlock()
+		result.NextValidation = next.UTC().Format(time.RFC3339Nano)
 	}
 	return result, nil
 }

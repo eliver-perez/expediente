@@ -23,6 +23,30 @@ func TestLANRequiresHTTPSAndTrustedProxy(t *testing.T) {
 	}
 }
 
+func TestExplicitLANAndPortValidation(t *testing.T) {
+	configuration := Defaults(filepath.Join(t.TempDir(), "state"))
+	configuration.NetworkMode = "lan"
+	configuration.ListenAddress = "0.0.0.0:8090"
+	if err := configuration.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, port := range []string{"0", "-1", "65536", "http", "08090"} {
+		invalid := configuration
+		invalid.ListenAddress = "0.0.0.0:" + port
+		if err := invalid.Validate(); err == nil {
+			t.Fatal("invalid port accepted", port)
+		}
+	}
+	configuration.NetworkMode = "local"
+	if err := configuration.Validate(); err == nil {
+		t.Fatal("local mode accepted wildcard listener")
+	}
+	configuration.ListenAddress = "127.0.0.1:8090"
+	if err := configuration.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInstallerInitializationPreservesExistingConfiguration(t *testing.T) {
 	directory, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
