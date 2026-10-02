@@ -1,3 +1,4 @@
+import { FileSettings } from './FileSettings';
 import { newRequestID } from './requestID';
 import { ExplorerEntries } from './ExplorerEntries';
 import { useState, type FormEvent } from 'react';
@@ -46,7 +47,7 @@ function LibraryWorkspace({ library, user, back, refresh }: { library: Library; 
     {tab === 'roots' && can('storage.manage_roots') && <Roots library={library} refresh={refresh} />}
     {tab === 'jobs' && can('indexing.run') && <LibraryJobs library={library} />}
     {tab === 'members' && <LibraryMembers library={library} />}
-    {tab === 'settings' && can('libraries.configure') && <ManagedSettings library={library} refresh={refresh} />}
+    {tab === 'settings' && can('libraries.configure') && <><ManagedSettings library={library} refresh={refresh} /><FileSettings libraryID={library.id} /></>}
     {tab === 'uploads' && can('documents.upload') && <Uploads library={library} />}
     {tab === 'cases' && library.settings.cases_enabled && <Cases library={library} />}
     {tab === 'reviews' && can('documents.review') && <Reviews library={library} />}

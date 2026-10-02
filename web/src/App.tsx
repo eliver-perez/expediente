@@ -3,6 +3,7 @@ import { api, APIError, message, setCSRF, type SessionResponse, type User, type 
 import { Notice } from './components';
 import { Libraries } from './Libraries';
 import { Search } from './Search';
+import { FileSettings } from './FileSettings';
 import { ProcessingSettings } from './ProcessingSettings';
 import { NetworkSettings } from './NetworkSettings';
 import { Brand } from './Brand';
@@ -73,6 +74,7 @@ export function App() {
     { path: '/admin/users', label: 'Usuarios', available: can('users.manage') },
     { path: '/admin/access', label: 'Accesos', available: can('sessions.read_all') && can('authentication_attempts.read') },
     { path: '/admin/events', label: 'Eventos', available: can('audit.read_global') },
+    { path: '/admin/files', label: 'Archivos y procesamiento', available: can('system.configure') },
     { path: '/admin/processing', label: 'Procesamiento', available: can('system.configure') },
     { path: '/admin/network', label: 'Acceso y red', available: can('system.configure') },
     { path: '/admin/license', label: 'Licencia', available: can('license.manage') }];
@@ -82,6 +84,7 @@ export function App() {
   else if (path === '/admin/users' && can('users.manage')) content = <Users currentUser={user} refreshSession={refreshSession} />;
   else if (path === '/admin/access' && can('sessions.read_all') && can('authentication_attempts.read')) content = <Access />;
   else if (path === '/admin/events' && can('audit.read_global')) content = <Events />;
+  else if (path === '/admin/files' && can('system.configure')) content = <FileSettings />;
   else if (path === '/admin/processing' && can('system.configure')) content = <ProcessingSettings />;
   else if (path === '/admin/network' && can('system.configure')) content = <NetworkSettings />;
   else if (path === '/admin/license' && can('license.manage')) content = <License onChange={refreshSession} />;

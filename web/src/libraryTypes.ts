@@ -3,13 +3,22 @@ export interface Library { id: string; name: string; mode: string; revision: num
 export interface Root { last_scan_result: string; last_scan_completed_at: string; last_scan_changes: number; id: string; library_id: string; server_path?: string; status: string; watch_mode: string; revision: number; reconcile_interval_seconds: number; last_error_code: string; last_scan_at: string; storage_source: string }
 export interface FolderView { id: string; name: string; root_id: string; relative_prefix: string }
 export interface RootPlan { id: string; relation: string; expected_configuration_revision: number; related_root_ids: string[]; server_path: string; storage_source: string }
-export interface Document { size_bytes?: number | null; created_at?: string; modified_at?: string; library_name?: string; integrity_status: string; id: string; library_id: string; title: string; original_filename: string; availability: string; approval_status: string; extraction_freshness: string; revision: number; root_id: string; relative_path: string; original_path?: string; sha256: string; page_count: number; can_preview_original: boolean; can_download: boolean; matches: { page_number: number; segments: { text: string; highlighted: boolean }[] }[]; storage_source: string; case_id: string; case_identifier: string; category_id: string; document_type_id: string; created_by: string; metadata: Record<string, string>; can_classify: boolean; can_associate: boolean; can_reassign: boolean; can_cancel: boolean; category_name: string; document_type_name: string }
+export interface Document { format: string; detected_mime: string; extension: string; extension_mismatch: boolean; index_block_reason: string; size_bytes?: number | null; created_at?: string; modified_at?: string; library_name?: string; integrity_status: string; id: string; library_id: string; title: string; original_filename: string; availability: string; approval_status: string; extraction_freshness: string; revision: number; root_id: string; relative_path: string; original_path?: string; sha256: string; page_count: number; can_preview_original: boolean; can_download: boolean; matches: { page_number: number; segments: { text: string; highlighted: boolean }[] }[]; storage_source: string; case_id: string; case_identifier: string; category_id: string; document_type_id: string; created_by: string; metadata: Record<string, string>; can_classify: boolean; can_associate: boolean; can_reassign: boolean; can_cancel: boolean; category_name: string; document_type_name: string }
 export interface SearchInput { query: string; search_type: string; library_ids: string[]; filters: { root_id?: string; view_id?: string; prefix?: string; availability?: string; case_id?: string; category_id?: string; document_type_id?: string; exercise?: string; storage_source?: string; approval_status?: string; unassigned?: boolean }; limit?: number; cursor?: string }
 export interface SearchResult { groups: {library_id: string; library_name: string; result_count: number}[]; items: Document[]; result_count: number; next_cursor?: string; consulted_library_ids: string[] }
 export interface Job { library_name: string; filename: string; relative_path: string; root_path: string; root_id: string; operation: string; completed_units: number; total_units: number | null; started_at: string; finished_at: string; updated_at: string; cancelling: boolean; id: string; job_type: string; status: string; attempt_count: number; last_error_code: string; created_at: string }
 export const availabilityLabel: Record<string, string> = { available: 'Disponible', missing: 'No disponible', unknown: 'Raíz sin acceso', staged: 'Temporal privado' };
 export const jobLabel: Record<string, string> = { queued: 'En cola', running: 'Procesando', retry_wait: 'Esperando reintento', succeeded: 'Completada', failed: 'Requiere atención', paused: 'Pausada', cancelled: 'Cancelada' };
-export const diagnosticLabel: Record<string, string> = { PATH_ACCESS_DENIED: 'La cuenta del servicio no tiene permiso de lectura en esta ruta.', PATH_NOT_FOUND: 'La ruta dejó de estar disponible durante el recorrido.', SCAN_PARTIAL: 'Recorrido incompleto: consulta las rutas con error en Procesamiento.', USER_CANCELLED: 'Cancelado por el usuario.',
+export const diagnosticLabel: Record<string, string> = {
+  FILE_TYPE_BLOCKED: 'Archivo omitido por seguridad: ejecutable, script, paquete o archivo comprimido.',
+  FILE_TYPE_UNKNOWN: 'Formato o codificación no reconocidos.',
+  FILE_TYPE_MISMATCH: 'La extensión no coincide con el contenido detectado.',
+  INVALID_OFFICE_DOCUMENT: 'Estructura Office no válida.',
+  DOCUMENT_COMPLEXITY_LIMIT: 'El documento Office supera los límites de complejidad.',
+  FILE_FORMAT_DISABLED: 'Este formato no está permitido por la biblioteca.',
+  FILE_NOT_INDEXABLE: 'La biblioteca rechaza archivos que no pueden indexarse.',
+  FILE_INDEX_DISABLED: 'Extracción omitida por las reglas de archivos vigentes.',
+ PATH_ACCESS_DENIED: 'La cuenta del servicio no tiene permiso de lectura en esta ruta.', PATH_NOT_FOUND: 'La ruta dejó de estar disponible durante el recorrido.', SCAN_PARTIAL: 'Recorrido incompleto: consulta las rutas con error en Procesamiento.', USER_CANCELLED: 'Cancelado por el usuario.',
   LICENSE_FEATURE: 'Tarea pausada: se requiere un módulo de licencia.', LICENSE_READ_ONLY: 'Tarea pausada: la licencia está en solo lectura.', LICENSE_RECOVERY_REQUIRED: 'Tarea pausada: activa o recupera la licencia.',
   STORAGE_COLLISION: 'Ya existe otro archivo en el destino. No se sobrescribió.',
   STORAGE_UNAVAILABLE: 'No se puede escribir o comprobar el destino.', STORAGE_SPACE: 'El destino no tiene espacio suficiente.',
@@ -26,4 +35,12 @@ export const diagnosticLabel: Record<string, string> = { PATH_ACCESS_DENIED: 'La
   WATCH_EVENTS_LOST: 'Hay eventos pendientes de recuperar. El aviso se retirará tras una reconciliación completa sin errores.', FILE_AUTHORIZATION_CONFLICT: 'El archivo pertenece a otra biblioteca.',
   FILE_IDENTITY_AMBIGUOUS: 'La identidad del archivo requiere revisión.', VERSION_SUPERSEDED: 'Existe una versión más reciente.',
   ROOT_DISABLED: 'La raíz está pausada o retirada.', ROOT_PLAN_STALE: 'Cambió la configuración de la raíz.', PROCESS_RESTARTED: 'Tarea recuperada tras reiniciar el servicio.'
+};
+
+export const indexReasonLabel: Record<string, string> = {
+  content_rejected: 'Contenido externo no admitido: requiere revisión',
+  format_not_indexed: 'Conservado sin indexación de contenido',
+  index_size_limit: 'Conservado: supera el tamaño indexable',
+  extractor_pending: 'Conservado: extracción aún no disponible',
+  unknown_extension: 'Texto con extensión desconocida: sin indexación',
 };

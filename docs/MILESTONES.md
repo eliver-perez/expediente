@@ -272,3 +272,12 @@ Las suites Go normal/desarrollo, el detector de carreras de las áreas afectadas
 pasan. Ver decisiones, archivos y comprobaciones manuales en [CIERRE-1.0.md](CIERRE-1.0.md).
 Se conserva la versión base del canal de pruebas; el cierre comercial y la validación nativa en los
 sistemas destino siguen dependiendo de las pruebas indicadas en el informe.
+
+## AIBID 2.0 — fase 1 (2026-10-02)
+
+Base multiformato PDF/DOCX/XLSX/TXT/CSV sobre los servicios existentes. Catálogo y validación
+de contenido centralizados, reglas independientes para almacenamiento/indexación con herencia
+por campo, admisión segura, omisiones vinculadas y descarga del original. Migración aditiva 9
+con instantánea SQLite previa. Conserva PDF/OCR, usuarios, licencias y expedientes.
+[Archivos, decisiones, validación, límites y pruebas manuales](AIBID-2.0-FASE-1.md).
+La fase 2 y sus extractores quedan pendientes de autorización expresa.

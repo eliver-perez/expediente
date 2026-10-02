@@ -1,4 +1,4 @@
-name: AIBID H7 preview installers
+name: AIBID 2.0 phase 1 preview installers
 on:
   workflow_dispatch:
 permissions:
@@ -38,9 +38,9 @@ jobs:
       - if: runner.os != 'Windows'
         run: python3 scripts/build_installers.py --target ${{ matrix.target }}
       - if: runner.os == 'macOS'
-        run: python3 scripts/smoke_macos_installer.py dist/installers/AIBID-Pruebas-0.7.0-test.1-macOS-arm64.pkg
+        run: python3 scripts/smoke_macos_installer.py dist/aibid-2.0-fase-1/AIBID-Pruebas-2.0.0-alpha.1-macOS-arm64.pkg
       - if: runner.os == 'Linux'
-        run: dpkg-deb --info dist/installers/aibid-test_0.7.0~test.1_amd64.deb
+        run: dpkg-deb --info dist/aibid-2.0-fase-1/aibid-test_2.0.0~alpha.1_amd64.deb
       - if: runner.os == 'Windows'
         uses: mamba-org/setup-micromamba@v3
         with:
@@ -59,6 +59,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: AIBID-Pruebas-${{ matrix.target }}
-          path: dist/installers/
+          path: dist/aibid-2.0-fase-1/
           if-no-files-found: error
           retention-days: 14

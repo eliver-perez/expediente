@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/extraction"
 	"gestor-documental/internal/licensing"
@@ -27,12 +28,13 @@ func (service *Service) Document(ctx context.Context, principal domain.Principal
 	if err = service.Read(ctx, principal, document.LibraryID, "documents.read"); err != nil {
 		return Document{}, err
 	}
-	document.Preview = document.Availability == "available" || document.Availability == "staged"
+	available := (document.Availability == "available" || document.Availability == "staged") && document.IndexReason != "content_rejected"
+	document.Preview = available && document.Format == "pdf"
 	document.CanCancel = document.Availability == "staged" && document.CreatedBy == principal.User.ID && (document.Approval == "draft" || document.Approval == "rejected" || document.Approval == "pending_review") && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.cancel_own") == nil
 	document.CanClassify = service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.classify") == nil
 	document.CanAssociate = document.Source == "linked" && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.associate") == nil
 	document.CanReassign = service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.reassign") == nil
-	document.Download = document.Preview && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.download") == nil
+	document.Download = available && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.download") == nil
 	if document.Availability == "staged" || service.require(ctx, service.Database.Reader, principal, document.LibraryID, "storage.view_paths") != nil {
 		document.OriginalPath = ""
 	}
@@ -68,14 +70,14 @@ func (service *Service) OpenDocument(ctx context.Context, principal domain.Princ
 	if err != nil {
 		return nil, document, domain.Failure("DOCUMENT_UNAVAILABLE", "El original no está disponible; puedes consultar el texto retenido.", 409)
 	}
-	header := make([]byte, 5)
-	if _, err = io.ReadFull(file, header); err != nil || string(header) != "%PDF-" {
+	detection, err := documentformat.Detect(ctx, file, document.Filename)
+	if err != nil || detection.Format != document.Format {
 		file.Close()
 		return nil, document, scanFailure("DOCUMENT_UNAVAILABLE")
 	}
-	if _, err = file.Seek(0, io.SeekStart); err != nil {
+	if !download && detection.Format != "pdf" {
 		file.Close()
-		return nil, document, err
+		return nil, document, domain.Failure("PREVIEW_UNAVAILABLE", "Este formato está disponible para descarga; todavía no tiene vista previa.", 409)
 	}
 	identity, _, err := physicalIdentity(file)
 	if err != nil || identity != document.Identity {

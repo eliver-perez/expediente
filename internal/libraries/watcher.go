@@ -63,13 +63,9 @@ func (runtime *Runtime) handleWatchEvent(ctx context.Context, event fsnotify.Eve
 	}
 	path := ""
 	if !event.Has(fsnotify.Remove) && !event.Has(fsnotify.Rename) && relativeSafe(relative) {
-		if strings.EqualFold(filepath.Ext(relative), ".pdf") {
-			path = relative
-		} else if event.Has(fsnotify.Create) {
-			path = filepath.ToSlash(filepath.Dir(relative))
-		} else {
-			return
-		}
+		// Every regular file can contain a document regardless of its extension.
+		// scanOne performs byte-level admission; directories are traversed there.
+		path = relative
 	}
 	if relativeSafe(relative) {
 		_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "DELETE FROM file_scan_cache WHERE root_id=? AND relative_path=?", rootID, relative)

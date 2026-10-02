@@ -3,6 +3,8 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"gestor-documental/internal/documentformat"
 	"os"
 	"strings"
 	"time"
@@ -24,18 +26,19 @@ func (service *Service) observeCached(ctx context.Context, root Root, file *os.F
 		return observation{}, err
 	}
 	if strong && info.Size() <= maximumBytes && time.Since(info.ModTime()) >= 2*time.Second {
-		var hash, hashedAt string
-		err = service.Database.Reader.QueryRowContext(ctx, `SELECT sha256,hashed_at FROM file_scan_cache WHERE root_id=? AND relative_path=? AND identity_key=? AND size_bytes=? AND modified_ns=?`, root.ID, relative, identity, info.Size(), info.ModTime().UnixNano()).Scan(&hash, &hashedAt)
+		var hash, hashedAt, raw string
+		var detection documentformat.Detection
+		err = service.Database.Reader.QueryRowContext(ctx, `SELECT sha256,hashed_at,detection_json FROM file_scan_cache WHERE root_id=? AND relative_path=? AND identity_key=? AND size_bytes=? AND modified_ns=?`, root.ID, relative, identity, info.Size(), info.ModTime().UnixNano()).Scan(&hash, &hashedAt, &raw)
 		if err != nil && err != sql.ErrNoRows {
 			return observation{}, err
 		}
 		verified, _ := time.Parse(time.RFC3339Nano, hashedAt)
-		if err == nil && time.Since(verified) >= 0 && time.Since(verified) < 24*time.Hour {
+		if err == nil && json.Unmarshal([]byte(raw), &detection) == nil && detection.Format != "" && time.Since(verified) >= 0 && time.Since(verified) < 24*time.Hour {
 			after, err := file.Stat()
 			if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
 				return observation{}, scanFailure("FILE_UNSTABLE")
 			}
-			return observation{Identity: identity, Strong: strong, Relative: relative, Hash: hash, Size: info.Size(), Modified: nowModified(info), ModifiedNS: info.ModTime().UnixNano(), Unchanged: true}, nil
+			return observation{Identity: identity, Strong: strong, Relative: relative, Hash: hash, Size: info.Size(), Modified: nowModified(info), ModifiedNS: info.ModTime().UnixNano(), Unchanged: true, Detection: detection}, nil
 		}
 	}
 	observed, err := observe(ctx, file, relative, maximumBytes)

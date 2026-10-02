@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/storage"
 )
@@ -104,7 +105,22 @@ func (service *Service) verifyDecisionContent(ctx context.Context, document Docu
 		return scanFailure("DOCUMENT_UNAVAILABLE")
 	}
 	defer file.Close()
-	digest, _, err := hashFile(ctx, file, int64(service.Identity.Config.Indexing.MaximumFileMB)<<20)
+	configuration, err := service.fileConfiguration(ctx, service.Database.Reader, document.LibraryID)
+	if err != nil {
+		return err
+	}
+	detection, err := documentformat.Detect(ctx, file, document.Filename)
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if err = configuration.Effective.Admit(detection, info.Size()); err != nil {
+		return err
+	}
+	digest, _, err := hashFile(ctx, file, int64(configuration.Effective.MaximumFileMB)<<20)
 	if err != nil {
 		return err
 	}
@@ -115,7 +131,7 @@ func (service *Service) verifyDecisionContent(ctx context.Context, document Docu
 	if digest != document.Hash || identity != document.Identity {
 		return domain.Failure("CONTENT_CHANGED", "El archivo cambió. Verifica la biblioteca y vuelve a revisar el documento.", 409)
 	}
-	if document.Source == "managed" && document.Integrity == "changed" {
+	if document.Source == "managed" && document.Integrity == "changed" && detection.Format == "pdf" {
 		if _, err = file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
@@ -133,7 +149,7 @@ func (service *Service) verifyDecisionContent(ctx context.Context, document Docu
 			return err
 		}
 		hash := sha256.New()
-		_, copyErr := copyDocument(ctx, io.MultiWriter(snapshot, hash), io.LimitReader(file, (int64(service.Identity.Config.Indexing.MaximumFileMB)<<20)+1))
+		_, copyErr := copyDocument(ctx, io.MultiWriter(snapshot, hash), io.LimitReader(file, (int64(configuration.Effective.MaximumFileMB)<<20)+1))
 		closeErr := snapshot.Close()
 		if copyErr != nil {
 			return copyErr

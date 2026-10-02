@@ -77,8 +77,10 @@ try {
                 if ($Owner -notin @('S-1-5-18','S-1-5-32-544',$CurrentUser)) { throw 'La carpeta de datos existente pertenece a otra cuenta. Requiere revisión antes de instalar.' }
             }
             $Marker = Join-Path $DataRoot 'package-version'
-            if ((Test-Path $Marker) -and ((Get-Content $Marker -Raw).Trim() -ne $Version)) {
-                throw 'Actualización entre versiones pendiente del respaldo/restauración H7. Se conservan los datos.'
+            # Only this phase and the existing preview have a tested additive
+            # migration. Configure snapshots/migrates before updating the marker.
+            if ((Test-Path $Marker) -and ((Get-Content $Marker -Raw).Trim() -notin @('0.7.0-test.1', $Version))) {
+                throw 'Versión de datos no compatible con esta fase. Se conservan los datos.'
             }
             if ((Test-Path $Config) -and !(Test-Path $Marker)) { throw 'Configuración existente sin versión de paquete. Requiere revisión antes de instalar.' }
             Stop-Aibid
@@ -110,6 +112,7 @@ try {
                 Invoke-Native $Binary @('init','--config',$Config,'--listen','127.0.0.1:18090','--tools',(Join-Path $InstallRoot 'tools\Library\bin'),'--tessdata',(Join-Path $InstallRoot 'tools\tessdata'),'--fontconfig',(Join-Path $InstallRoot 'tools\fonts.conf'))
             }
             Invoke-Native $Binary @('configure-license','--config',$Config)
+            Invoke-Native $Binary @('migrate','--config',$Config)
             Set-Content -LiteralPath (Join-Path $DataRoot 'package-version') -Value $Version -Encoding ASCII
             Write-LauncherTarget
             if (Test-Path (Join-Path $DataRoot 'service-enabled')) { Start-Service $ServiceName }

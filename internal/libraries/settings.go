@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -201,9 +202,13 @@ func renderNamingSequence(settings Settings, input NamingInput, stableID string,
 	tokens := strings.NewReplacer("{identificador}", safeComponent(input.Identifier), "{ejercicio}", safeComponent(input.Exercise), "{categoria}", safeComponent(input.Category), "{tipo_documento}", safeComponent(input.DocumentType), "{prefijo}", safeComponent(settings.FilenamePrefix), "{consecutivo}", fmt.Sprintf("%04d", sequence))
 	filename := tokens.Replace(settings.FilenamePattern)
 	if settings.FilenamePattern == "original" {
-		filename = safeComponent(strings.TrimSuffix(input.OriginalFilename, ".pdf"))
+		filename = safeComponent(strings.TrimSuffix(input.OriginalFilename, filepath.Ext(input.OriginalFilename)))
 	}
-	return tokens.Replace(settings.StructurePattern) + "/" + safeComponent(filename) + "_" + stableID + ".pdf"
+	extension := filepath.Ext(input.OriginalFilename)
+	if extension == "" {
+		extension = ".txt"
+	}
+	return tokens.Replace(settings.StructurePattern) + "/" + safeComponent(filename) + "_" + stableID + extension
 }
 func (service *Service) NamingPreview(ctx context.Context, principal domain.Principal, libraryID string, input NamingInput) (map[string]string, error) {
 	if err := service.Read(ctx, principal, libraryID, "libraries.configure"); err != nil {

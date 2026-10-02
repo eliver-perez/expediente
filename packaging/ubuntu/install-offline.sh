@@ -10,6 +10,7 @@ sha256sum --strict -c SHA256SUMS
 shopt -s nullglob
 packages=(repository/aibid-test_*.deb)
 [[ ${#packages[@]} == 1 && $(dpkg-deb -f "${packages[0]}" Architecture) == "$architecture" ]] || { echo "El bundle debe contener un paquete AIBID para $architecture." >&2; exit 1; }
+package_version=$(dpkg-deb -f "${packages[0]}" Version)
 temporary=$(mktemp -d /var/tmp/aibid-offline.XXXXXXXX)
 trap 'rm -rf -- "$temporary"' EXIT
 chmod 755 "$temporary"
@@ -18,4 +19,4 @@ printf 'deb [trusted=yes] file:%s ./\n' "$PWD" > "$temporary/sources.list"
 options=(-o "Dir::Etc::sourcelist=$temporary/sources.list" -o Dir::Etc::sourceparts=- -o "Dir::State::lists=$temporary/lists" -o APT::Get::List-Cleanup=0)
 # APT reads only this local repository for this invocation; no permanent source is added.
 apt-get "${options[@]}" update
-apt-get "${options[@]}" --yes --no-install-recommends install aibid-test=0.7.0~test.1
+apt-get "${options[@]}" --yes --no-install-recommends install "aibid-test=$package_version"

@@ -1,0 +1,74 @@
+import { test, expect } from '@playwright/test';
+import { resolve } from 'node:path';
+
+test('multiformato: reglas heredadas, incorporación segura y descarga del original', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Usuario', { exact: true }).fill('admin-e2e');
+  await page.getByLabel('Contraseña', { exact: true }).fill('Browser-fixture-password-2026');
+  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await page.getByRole('link', { name: 'Archivos y procesamiento', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Archivos y procesamiento', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Almacenar DOCX', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Indexar DOCX', { exact: true })).not.toBeChecked();
+  await page.getByRole('button', { name: 'Guardar reglas de archivos' }).click();
+  await expect(page.getByText(/^Reglas guardadas\./)).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Almacenar CSV', { exact: true })).toBeChecked();
+
+  await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click();
+  await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
+  await page.getByLabel('Nombre de la biblioteca').fill('Formatos fase 1');
+  await page.getByLabel('Modalidad de biblioteca').selectOption('managed');
+  await page.getByLabel('Asignarme como gestor de esta biblioteca').check();
+  await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
+  await page.getByRole('tab', { name: 'Configuración', exact: true }).click();
+  await expect(page.getByLabel('Heredar formatos de almacenamiento', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Almacenar TXT', { exact: true })).toBeDisabled();
+  await page.getByLabel('Heredar formatos de almacenamiento', { exact: true }).uncheck();
+  await page.getByLabel('Almacenar TXT', { exact: true }).uncheck();
+  await expect(page.getByLabel('Heredar tamaño máximo de archivo', { exact: true })).toBeChecked();
+  await page.getByRole('button', { name: 'Guardar reglas de archivos' }).click();
+  await expect(page.getByText(/^Reglas guardadas\./)).toBeVisible();
+  await page.getByRole('tab', { name: 'Cargas', exact: true }).click();
+  await page.getByLabel('Archivos', { exact: true }).setInputFiles(resolve('../testdata/documents/sample.txt'));
+  await page.getByRole('button', { name: 'Guardar borradores', exact: true }).click();
+  await expect(page.locator('.upload-row').filter({ hasText: 'sample.txt' }).first()).toContainText('La biblioteca no permite almacenar este formato.');
+
+  await page.getByRole('tab', { name: 'Configuración', exact: true }).click();
+  await expect(page.getByLabel('Heredar formatos de almacenamiento', { exact: true })).not.toBeChecked();
+  await page.getByLabel('Heredar formatos de almacenamiento', { exact: true }).check();
+  await page.getByRole('button', { name: 'Guardar reglas de archivos' }).click();
+  await expect(page.getByText(/^Reglas guardadas\./)).toBeVisible();
+  await page.screenshot({ path: 'test-results/v2-library-file-rules.png', fullPage: true });
+
+  await page.getByRole('tab', { name: 'Cargas', exact: true }).click();
+  await page.getByLabel('Archivos', { exact: true }).setInputFiles(['docx', 'xlsx', 'txt', 'csv'].map(format => resolve(`../testdata/documents/sample.${format}`)));
+  await page.getByRole('button', { name: 'Guardar borradores', exact: true }).click();
+  await expect(page.getByText('Borrador guardado', { exact: false })).toHaveCount(4);
+  await page.getByRole('button', { name: 'Clasificar sample.docx', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Formato: DOCX');
+  await expect(dialog).toContainText('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  await expect(dialog).toContainText('Conservado sin indexación de contenido');
+  await expect(dialog.getByRole('heading', { name: 'Vista previa no disponible para este formato' })).toBeVisible();
+  await expect(dialog.locator('iframe')).toHaveCount(0);
+  const href = await dialog.getByRole('link', { name: 'Descargar DOCX', exact: true }).getAttribute('href');
+  const download = await page.request.get(href!);
+  expect(download.status()).toBe(200);
+  expect(download.headers()['content-type']).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  expect(download.headers()['content-disposition']).toContain('attachment');
+  expect(download.headers()['x-content-type-options']).toBe('nosniff');
+  await page.screenshot({ path: 'test-results/v2-docx-document.png', fullPage: true });
+  await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
+
+  await page.getByRole('button', { name: 'Iniciar otro lote', exact: true }).click();
+  await page.getByLabel('Archivos', { exact: true }).setInputFiles({ name: 'Camuflado.pdf', mimeType: 'application/pdf', buffer: Buffer.from('MZ executable disguised as PDF') });
+  await page.getByRole('button', { name: 'Guardar borradores', exact: true }).click();
+  await expect(page.locator('.upload-row').filter({ hasText: 'Camuflado.pdf' })).toContainText('categoría no permitida');
+  await page.getByRole('tab', { name: 'Procesamiento', exact: true }).click();
+  await expect(page.locator('.metric').filter({ hasText: 'Conservados sin indexación' }).locator('strong')).toHaveText('4');
+  await expect(page.locator('.metric').filter({ hasText: 'Pendientes de contenido' }).locator('strong')).toHaveText('0');
+  await page.getByRole('tab', { name: 'Configuración', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+});

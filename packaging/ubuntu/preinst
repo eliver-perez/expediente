@@ -1,8 +1,12 @@
 #!/bin/sh
 set -eu
-if [ -f /var/lib/aibid-test/package-version ] && [ "$(cat /var/lib/aibid-test/package-version)" != '@VERSION@' ]; then
-    echo 'Esta versión de prueba requiere datos de su misma versión. La actualización entre versiones queda pendiente del respaldo/restauración H7.' >&2
-    exit 1
+# Restrict upgrades to the tested preview path; postinst migrates with the new
+# binary (including its SQLite snapshot) before publishing the version marker.
+if [ -f /var/lib/aibid-test/package-version ]; then
+    case "$(cat /var/lib/aibid-test/package-version)" in
+        '0.7.0-test.1'|'@VERSION@') ;;
+        *) echo 'Versión de datos no compatible con esta fase. Se conservan los datos.' >&2; exit 1 ;;
+    esac
 fi
 for path in /var/lib/aibid-test /etc/aibid-test /etc/aibid-test/config.json; do
     [ ! -L "$path" ] || exit 1

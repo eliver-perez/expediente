@@ -54,7 +54,7 @@ export const closeReasons: Record<string, string> = {
   password_changed: 'Contraseña modificada', admin_revoked: 'Cerrada por administración'
 };
 
-export function uploadPDF<T>(batchID: string, clientID: string, file: File, progress: (percent: number) => void): Promise<T> {
+export function uploadDocument<T>(batchID: string, clientID: string, file: File, progress: (percent: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open('POST', `/api/v1/upload-batches/${batchID}/files`);

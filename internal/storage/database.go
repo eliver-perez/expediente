@@ -131,6 +131,16 @@ func (database *Database) RollbackEmpty(ctx context.Context) error {
 		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
 			return err
 		}
+		if count == 9 {
+			contents, err := db.Migrations.ReadFile("migrations/0009_document_formats.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
 		if count == 8 {
 			contents, err := db.Migrations.ReadFile("migrations/0008_reconciliation.down.sql")
 			if err != nil {

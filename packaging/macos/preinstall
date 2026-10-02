@@ -1,11 +1,13 @@
 #!/bin/sh
 set -eu
 BASE='/Library/Application Support/AIBID-Test'
-# A future schema-changing release needs the H7 verified backup/restore updater.
-# This preview permits only same-version reinstalls, including after uninstall.
-if [ -f "$BASE/data/package-version" ] && [ "$(cat "$BASE/data/package-version")" != '@VERSION@' ]; then
-    echo 'Esta versión de prueba no admite actualizar datos de otra versión. Conserva los datos y consulta docs/H7.md.' >&2
-    exit 1
+# Only the existing preview and this phase have a tested additive schema path.
+# The new binary snapshots SQLite before migration, before publishing the marker.
+if [ -f "$BASE/data/package-version" ]; then
+    case "$(cat "$BASE/data/package-version")" in
+        '0.7.0-test.1'|'@VERSION@') ;;
+        *) echo 'Versión de datos no compatible con esta fase. Se conservan los datos.' >&2; exit 1 ;;
+    esac
 fi
 if [ -L "$BASE" ] || [ -L "$BASE/data" ] || [ -L "$BASE/data/config.json" ]; then
     echo 'La ruta de instalación no puede ser un enlace.' >&2

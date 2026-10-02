@@ -14,7 +14,9 @@ func (server *Server) libraryRoutes(mux *http.ServeMux) {
 	server.organizationRoutes(mux)
 	server.workflowRoutes(mux)
 	routes := map[string]authorizedHandler{
-		"GET /api/v1/libraries/{library}": server.getLibrary, "GET /api/v1/jobs/{job}": server.getJob, "POST /api/v1/storage/path-inspections": server.inspectPath,
+		"GET /api/v1/libraries/{library}/file-settings": server.fileConfiguration,
+		"PUT /api/v1/libraries/{library}/file-settings": server.fileConfiguration,
+		"GET /api/v1/libraries/{library}":               server.getLibrary, "GET /api/v1/jobs/{job}": server.getJob, "POST /api/v1/storage/path-inspections": server.inspectPath,
 		"GET /api/v1/libraries/{library}/folders": server.libraryFolders,
 		"GET /api/v1/search-events":               server.searchEvents, "GET /api/v1/libraries/{library}/member-candidates": server.memberCandidates,
 		"GET /api/v1/libraries": server.listLibraries, "POST /api/v1/libraries": server.createLibrary, "PATCH /api/v1/libraries/{library}": server.updateLibrary,
@@ -241,7 +243,8 @@ func (server *Server) documentContent(writer http.ResponseWriter, request *http.
 	if download {
 		disposition = "attachment"
 	}
-	writer.Header().Set("Content-Type", "application/pdf")
+	writer.Header().Set("Content-Type", document.MIME)
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": document.Filename}))
 	writer.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'self'")
 	writer.Header().Set("X-Frame-Options", "SAMEORIGIN")

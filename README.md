@@ -3,6 +3,12 @@
 **Aplicación de Indexación de Bibliotecas Digitales**  
 Tu biblioteca digital, ordenada y al alcance.
 
+**AIBID 2.0 · fase 1 implementada:** base multiformato PDF/DOCX/XLSX/TXT/CSV,
+detección de contenido y reglas de almacenamiento/indexación globales y por biblioteca.
+La extracción de los formatos nuevos corresponde a la fase 2 y aún no está implementada.
+[Cambios, migración, validación y pruebas manuales](docs/AIBID-2.0-FASE-1.md).
+Paquetes de esta fase: `dist/aibid-2.0-fase-1/`; se conservan los anteriores.
+
 Producto comercial genérico de instalación local, con Go + React + SQLite WAL/FTS5
 y acceso por LAN. **H6 implementado:** cliente de licencias V1.0 online/offline, con simulador HTTPS,
 control de módulos y solo lectura al vencer. Incluye revisión, guardado definitivo
@@ -98,4 +104,5 @@ al terminar; no inicializa el producto ni descarga paquetes. Comprueba integrida
 restricciones relevantes, sesión única, conservación y publicación de texto FTS,
 y enlaces locales de documentación. Se ejecuta también dentro de make check.
 
-El siguiente hito es **H7: operación, respaldos e instaladores por sistema operativo**.
+El siguiente desarrollo es **AIBID 2.0, fase 2: extractores documentales**, pendiente de
+autorización. Los pendientes de operación e instaladores anteriores siguen documentados en H7.

@@ -89,6 +89,8 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/audit-events/{id}", server.protected("audit.read_global", true, server.event))
 	mux.HandleFunc("GET /api/v1/system/status", server.protected("system.configure", false, server.status))
 	mux.HandleFunc("GET /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
+	mux.HandleFunc("GET /api/v1/system/files", server.protected("system.configure", true, server.fileConfiguration))
+	mux.HandleFunc("PUT /api/v1/system/files", server.protected("system.configure", true, server.fileConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
 	mux.HandleFunc("GET /api/v1/system/network", server.protected("system.configure", true, server.networkConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/network", server.protected("system.configure", true, server.networkConfiguration))
@@ -280,7 +282,7 @@ func (server *Server) frontend(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	switch request.URL.Path {
-	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing", "/admin/network":
+	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing", "/admin/network", "/admin/files":
 		contents, err := fs.ReadFile(assets, "index.html")
 		if err != nil {
 			http.Error(writer, "Aplicación no disponible.", 503)

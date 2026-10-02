@@ -247,9 +247,19 @@ func (server *Server) uploadFile(writer http.ResponseWriter, request *http.Reque
 	_ = controller.SetWriteDeadline(time.Now().Add(5*time.Minute + time.Duration(server.libraries.Identity.Config.Indexing.PageTimeoutSeconds)*time.Second + 30*time.Second))
 	defer controller.SetWriteDeadline(time.Time{})
 	bad := func() {
-		server.fail(writer, request, domain.Failure("INVALID_UPLOAD", "Envía client_file_id seguido de un único archivo PDF en multipart.", 400))
+		server.fail(writer, request, domain.Failure("INVALID_UPLOAD", "Envía client_file_id seguido de un único documento en multipart.", 400))
 	}
-	request.Body = http.MaxBytesReader(writer, request.Body, (int64(server.libraries.Identity.Config.Indexing.MaximumFileMB)<<20)+65536)
+	batch, err := server.libraries.Batch(request.Context(), principal, request.PathValue("batch"))
+	if err != nil {
+		server.fail(writer, request, err)
+		return
+	}
+	settings, err := server.libraries.FileConfiguration(request.Context(), principal, batch.LibraryID)
+	if err != nil {
+		server.fail(writer, request, err)
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, (int64(settings.Effective.MaximumFileMB)<<20)+65536)
 	multipart, err := request.MultipartReader()
 	if err != nil {
 		bad()
@@ -275,7 +285,7 @@ func (server *Server) uploadFile(writer http.ResponseWriter, request *http.Reque
 	finish := func() error {
 		_, err := multipart.NextPart()
 		if err != io.EOF {
-			return domain.Failure("INVALID_UPLOAD", "Cada solicitud debe contener un solo archivo PDF.", 400)
+			return domain.Failure("INVALID_UPLOAD", "Cada solicitud debe contener un solo documento.", 400)
 		}
 		return nil
 	}

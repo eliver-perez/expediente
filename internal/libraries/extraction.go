@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gestor-documental/internal/audit"
+	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/extraction"
 	"gestor-documental/internal/storage"
@@ -84,9 +85,20 @@ func (service *Service) prepareExtraction(ctx context.Context, job Job, options 
 	if err := service.jobLicense(ctx, service.Database.Reader, job); err != nil {
 		return nil, err
 	}
+	configuration, err := service.fileConfiguration(ctx, service.Database.Reader, job.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	options.MaximumFileMB = configuration.Effective.MaximumIndexMB
+	if reason, err := service.versionIndexReason(ctx, service.Database.Reader, job.LibraryID, job.Version); err != nil {
+		return nil, err
+	} else if reason != "" {
+		_, _ = service.Database.Writer.ExecContext(ctx, "UPDATE content_versions SET index_block_reason=? WHERE id=?", reason, job.Version)
+		return nil, scanFailure("FILE_INDEX_DISABLED")
+	}
 	var rootID, relative, expectedHash, identity, languages, availability, libraryID string
 	var size int64
-	err := service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce(l.root_id,''),coalesce(l.relative_path,''),v.sha256,v.size_bytes,f.os_identity_key,b.ocr_languages,f.availability,f.library_id FROM physical_files f LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN content_versions v ON v.id=f.current_content_version_id JOIN libraries b ON b.id=f.library_id JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND v.id=? AND d.deleted_at IS NULL", job.FileID, job.Version).Scan(&rootID, &relative, &expectedHash, &size, &identity, &languages, &availability, &libraryID)
+	err = service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce(l.root_id,''),coalesce(l.relative_path,''),v.sha256,v.size_bytes,f.os_identity_key,b.ocr_languages,f.availability,f.library_id FROM physical_files f LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN content_versions v ON v.id=f.current_content_version_id JOIN libraries b ON b.id=f.library_id JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND v.id=? AND d.deleted_at IS NULL", job.FileID, job.Version).Scan(&rootID, &relative, &expectedHash, &size, &identity, &languages, &availability, &libraryID)
 	if err == sql.ErrNoRows {
 		return nil, scanFailure("VERSION_SUPERSEDED")
 	}
@@ -158,6 +170,15 @@ func (service *Service) prepareExtraction(ctx context.Context, job Job, options 
 	if written != size || fmt.Sprintf("%x", hash.Sum(nil)) != expectedHash {
 		return nil, scanFailure("FILE_UNSTABLE")
 	}
+	probe, err := os.Open(documentPath)
+	if err != nil {
+		return nil, err
+	}
+	_, err = documentformat.Detect(ctx, probe, "source.pdf")
+	probe.Close()
+	if err != nil {
+		return nil, err
+	}
 	options.Progress = func(operation string, completed, total int) {
 		_ = service.reportProgress(ctx, job, operation, relative, completed, total)
 	}
@@ -170,6 +191,11 @@ func (service *Service) prepareExtraction(ctx context.Context, job Job, options 
 }
 func (service *Service) publish(ctx context.Context, job Job, root Root, pages []extraction.Page, languages string) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
+		if reason, err := service.versionIndexReason(ctx, transaction, root.LibraryID, job.Version); err != nil {
+			return err
+		} else if reason != "" {
+			return scanFailure("FILE_INDEX_DISABLED")
+		}
 		if err := service.jobLicense(ctx, transaction, Job{Kind: "extract", LibraryID: root.LibraryID}); err != nil {
 			return err
 		}

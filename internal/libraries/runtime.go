@@ -381,7 +381,7 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 			}
 			runtime.mutex.Unlock()
 			watchFailed := false
-			err = runtime.Service.Scan(operationContext, job.Version, int64(runtime.Service.Identity.Config.Indexing.MaximumFileMB)<<20, func(path string) error {
+			err = runtime.Service.Scan(operationContext, job.Version, 0, func(path string) error {
 				watchError := runtime.register(job.Version, path)
 				if watchError != nil {
 					watchFailed = true
@@ -470,7 +470,7 @@ func (service *Service) finish(ctx context.Context, job Job, cause error) error 
 				status = "retry_wait"
 				available = domain.Timestamp(time.Now().Add(time.Duration(1<<job.Attempts) * time.Second))
 			}
-			if code == "USER_CANCELLED" || code == "ROOT_DISABLED" || code == "VERSION_SUPERSEDED" || code == "ROOT_PLAN_STALE" {
+			if code == "USER_CANCELLED" || code == "ROOT_DISABLED" || code == "VERSION_SUPERSEDED" || code == "ROOT_PLAN_STALE" || code == "FILE_INDEX_DISABLED" {
 				status = "cancelled"
 			}
 		}

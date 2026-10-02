@@ -65,6 +65,8 @@ def bootstrap(binary, configuration):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
+    parser.add_argument("--previous-package", type=Path,
+                        help="Also migrate disposable administrator data created by the schema-8 package")
     args = parser.parse_args()
     package = args.package.resolve()
     with tempfile.TemporaryDirectory(prefix="aibid-native-smoke-", dir="/private/tmp") as temporary:
@@ -74,6 +76,13 @@ def main():
         if len(matches) != 1:
             raise RuntimeError("Unexpected package payload")
         binary = matches[0]
+        initialization_binary = binary
+        if args.previous_package:
+            command(["pkgutil", "--expand-full", args.previous_package.resolve(), root / "previous"])
+            previous_matches = list((root / "previous").rglob("Payload/Library/Application Support/AIBID-Test/bin/gestor-documental"))
+            if len(previous_matches) != 1:
+                raise RuntimeError("Unexpected previous package payload")
+            initialization_binary = previous_matches[0]
         payload = binary.parents[4]
         manifest = binary.parent.parent / "package-files.tsv"
         for entry in manifest.read_text().splitlines():
@@ -87,13 +96,36 @@ def main():
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
         configuration = root / "private/config.json"
-        command([binary, "init", "--config", configuration, "--listen", f"127.0.0.1:{port}", "--tools", "/opt/homebrew/bin"])
+        command([initialization_binary, "init", "--config", configuration, "--listen", f"127.0.0.1:{port}", "--tools", "/opt/homebrew/bin"])
         previous = configuration.read_bytes()
         command([binary, "init", "--config", configuration], success=False)
         assert previous == configuration.read_bytes()
         print(command([binary, "doctor", "--config", configuration, "--sample-directory", binary.parent.parent / "docs/pdf"]))
-        command([binary, "serve", "--config", configuration], success=False)
-        bootstrap(binary, configuration)
+        command([initialization_binary, "serve", "--config", configuration], success=False)
+        bootstrap(initialization_binary, configuration)
+        if args.previous_package:
+            state_directory = configuration.parent / "state"
+            with sqlite3.connect(str(state_directory / "documental.db")) as database:
+                assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 8
+                original_users = database.execute("SELECT * FROM users ORDER BY id").fetchall()
+                original_audit = database.execute("SELECT * FROM audit_events ORDER BY id").fetchall()
+            database.close()
+            command([binary, "migrate", "--config", configuration])
+            assert configuration.read_bytes() == previous
+            with sqlite3.connect(str(state_directory / "documental.db")) as database:
+                assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 9
+                assert database.execute("SELECT * FROM users ORDER BY id").fetchall() == original_users
+                assert database.execute("SELECT * FROM audit_events ORDER BY id").fetchall() == original_audit
+            database.close()
+            snapshots = list((state_directory / "upgrade-backups").glob("*.db"))
+            assert len(snapshots) == 1
+            with sqlite3.connect(str(snapshots[0])) as database:
+                assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 8
+                assert database.execute("SELECT * FROM users ORDER BY id").fetchall() == original_users
+                assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            database.close()
+            command([binary, "migrate", "--config", configuration])
+            assert list((state_directory / "upgrade-backups").glob("*.db")) == snapshots
         command([binary, "bootstrap-ready", "--config", configuration])
         for iteration in range(2):
             with (root / "service.log").open("a") as log:
@@ -164,7 +196,7 @@ def main():
         with sqlite3.connect(str(state / "documental.db")) as database:
             assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
             assert not database.execute("PRAGMA foreign_key_check").fetchall()
-            assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 8
+            assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 9
             assert database.execute("SELECT count(*) FROM bootstrap_state").fetchone()[0] == 1
         database.close()
         original = state / "uploads/keep.pdf"
@@ -183,6 +215,7 @@ def main():
         database.close()
         assert original.read_bytes() == contents
         print(json.dumps({"package_sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+                          "previous_package_upgrade": "PASS" if args.previous_package else "not requested",
                           "result": "PASS", "checks": "package manifest, PDF/OCR, PTY bootstrap with 6 characters, HTTP/login, local/LAN IPv4 with persisted restart and local-only restoration, lock, stop/restart, SQLite integrity, private permissions, confirmed metadata cleanup preserves PDF, fresh database",
                           "not_tested": "system installer, service account, launchd, native Windows/Ubuntu"}, indent=2))
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 )
 
@@ -117,7 +118,16 @@ func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID
 		})
 	}
 	defer file.Close()
-	digest, size, err := hashFile(ctx, file, int64(service.Identity.Config.Indexing.MaximumFileMB)<<20)
+	configuration, err := service.fileConfiguration(ctx, service.Database.Reader, root.LibraryID)
+	if err != nil {
+		return err
+	}
+	// Integrity checks also cover already stored files after a limit is lowered.
+	var storedSize int64
+	if err = service.Database.Reader.QueryRowContext(ctx, "SELECT v.size_bytes FROM physical_files f JOIN content_versions v ON v.id=f.current_content_version_id WHERE f.id=?", fileID).Scan(&storedSize); err != nil {
+		return err
+	}
+	digest, size, err := hashFile(ctx, file, max(storedSize, int64(configuration.Effective.MaximumFileMB)<<20))
 	if err != nil {
 		return err
 	}
@@ -128,6 +138,15 @@ func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID
 	info, err := file.Stat()
 	if err != nil {
 		return err
+	}
+	detection, detectionError := documentformat.Detect(ctx, file, relative)
+	if detectionError != nil && !admissionSkip(detectionError) && failureCode(detectionError) != "INVALID_PDF" && failureCode(detectionError) != "FILE_SIZE_LIMIT" {
+		return detectionError
+	}
+	// External corruption is still a real version change requiring review.
+	// Preserve its evidence, but never enqueue rejected bytes for extraction.
+	if detection.Format == "" {
+		detection.Format = "unknown"
 	}
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
 		if err := service.checkRootRevision(ctx, transaction, root); err != nil {
@@ -161,8 +180,21 @@ func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID
 			return err
 		}
 		jobID := domain.NewID()
-		if _, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,'{}','queued',?,?)", jobID, root.LibraryID, fileID, newVersion, "extract:"+newVersion, now(), now()); err != nil {
+		live, err := service.fileConfiguration(ctx, transaction, root.LibraryID)
+		if err != nil {
 			return err
+		}
+		reason := live.Effective.IndexReason(detection, size)
+		if detectionError != nil {
+			reason = "content_rejected"
+		}
+		if err = saveDetection(ctx, transaction, newVersion, detection, reason); err != nil {
+			return err
+		}
+		if reason == "" {
+			if _, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,'{}','queued',?,?)", jobID, root.LibraryID, fileID, newVersion, "extract:"+newVersion, now(), now()); err != nil {
+				return err
+			}
 		}
 		return managedObservation(ctx, transaction, root.LibraryID, documentID, newVersion, "managed_changed")
 	})

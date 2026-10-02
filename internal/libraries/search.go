@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"gestor-documental/internal/audit"
+	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/licensing"
 )
@@ -48,6 +49,8 @@ type Match struct {
 	Segments []Segment `json:"segments"`
 }
 type Document struct {
+	documentformat.Detection
+	IndexReason    string            `json:"index_block_reason"`
 	Size           *int64            `json:"size_bytes"`
 	Created        string            `json:"created_at"`
 	Modified       string            `json:"modified_at"`
@@ -99,14 +102,14 @@ type SearchResult struct {
 	Libraries []string      `json:"consulted_library_ids"`
 }
 
-const documentColumns = "d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,coalesce(l.root_id,''),coalesce(l.relative_path,''),coalesce(l.canonical_path,''),f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0),f.storage_source,coalesce(d.case_id,''),coalesce(c.identifier,''),coalesce(d.category_id,''),coalesce(d.document_type_id,''),coalesce(d.created_by,''),d.metadata_json,coalesce(cat.name,''),coalesce(dt.name,''),f.integrity_status,v.size_bytes,d.created_at,coalesce(v.os_modified_at,'')"
+const documentColumns = "d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,coalesce(l.root_id,''),coalesce(l.relative_path,''),coalesce(l.canonical_path,''),f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0),f.storage_source,coalesce(d.case_id,''),coalesce(c.identifier,''),coalesce(d.category_id,''),coalesce(d.document_type_id,''),coalesce(d.created_by,''),d.metadata_json,coalesce(cat.name,''),coalesce(dt.name,''),f.integrity_status,v.size_bytes,d.created_at,coalesce(v.os_modified_at,''),coalesce(v.document_format,'pdf'),coalesce(v.detected_mime,'application/pdf'),coalesce(v.original_extension,'.pdf'),coalesce(v.extension_mismatch,0),coalesce(v.index_block_reason,'')"
 const documentJoins = " FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id LEFT JOIN storage_roots r ON r.id=l.root_id LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id LEFT JOIN cases c ON c.id=d.case_id LEFT JOIN categories cat ON cat.id=d.category_id LEFT JOIN document_types dt ON dt.id=d.document_type_id "
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanDocument(row rowScanner) (Document, error) {
 	var document Document
-	err := row.Scan(&document.ID, &document.LibraryID, &document.Title, &document.Filename, &document.Availability, &document.Approval, &document.Freshness, &document.Revision, &document.RootID, &document.RelativePath, &document.OriginalPath, &document.FileID, &document.Identity, &document.Hash, &document.Pages, &document.Source, &document.CaseID, &document.CaseIdentifier, &document.CategoryID, &document.TypeID, &document.CreatedBy, &document.MetadataJSON, &document.CategoryName, &document.TypeName, &document.Integrity, &document.Size, &document.Created, &document.Modified)
+	err := row.Scan(&document.ID, &document.LibraryID, &document.Title, &document.Filename, &document.Availability, &document.Approval, &document.Freshness, &document.Revision, &document.RootID, &document.RelativePath, &document.OriginalPath, &document.FileID, &document.Identity, &document.Hash, &document.Pages, &document.Source, &document.CaseID, &document.CaseIdentifier, &document.CategoryID, &document.TypeID, &document.CreatedBy, &document.MetadataJSON, &document.CategoryName, &document.TypeName, &document.Integrity, &document.Size, &document.Created, &document.Modified, &document.Format, &document.MIME, &document.Extension, &document.Mismatch, &document.IndexReason)
 	document.Matches = []Match{}
 	if err == nil {
 		err = json.Unmarshal([]byte(document.MetadataJSON), &document.Metadata)
