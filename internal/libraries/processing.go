@@ -54,6 +54,7 @@ type ProcessingPerformance struct {
 	WindowMinutes      int     `json:"window_minutes"`
 }
 type ProcessingReport struct {
+	Paused      bool                   `json:"paused"`
 	Skips       []ScanError            `json:"file_skips"`
 	Workers     extraction.Concurrency `json:"workers"`
 	Performance ProcessingPerformance  `json:"performance"`
@@ -129,6 +130,11 @@ func (service *Service) Processing(ctx context.Context, principal domain.Princip
 		return report, err
 	}
 	report.Workers = configuration.Effective
+	policy, err := service.ProcessingPolicy(ctx)
+	if err != nil {
+		return report, err
+	}
+	report.Paused = policy.Paused
 	for _, job := range report.Active {
 		if job.Kind != "extract" && job.Kind != "materialize" {
 			continue
@@ -182,6 +188,11 @@ func (service *Service) Processing(ctx context.Context, principal domain.Princip
 	return report, rows.Err()
 }
 func (service *Service) enrichJob(ctx context.Context, job *Job) error {
-	return service.Database.Reader.QueryRowContext(ctx, `SELECT b.name,coalesce(d.original_filename,''),coalesce(p.relative_path,l.relative_path,''),coalesce(r.canonical_path,''),coalesce(r.id,''),coalesce(p.operation,j.job_type),coalesce(p.completed_units,0),p.total_units,coalesce(p.updated_at,''),coalesce((SELECT started_at FROM job_attempts WHERE job_id=j.id ORDER BY attempt_number DESC LIMIT 1),''),coalesce((SELECT finished_at FROM job_attempts WHERE job_id=j.id ORDER BY attempt_number DESC LIMIT 1),''),coalesce(c.cancel_requested,0)
- FROM jobs j JOIN libraries b ON b.id=j.library_id LEFT JOIN documents d ON d.physical_file_id=j.physical_file_id LEFT JOIN physical_files f ON f.id=j.physical_file_id LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id LEFT JOIN storage_roots r ON r.id=CASE WHEN j.job_type IN ('scan','verify_managed') THEN j.target_version ELSE l.root_id END LEFT JOIN job_progress p ON p.job_id=j.id LEFT JOIN job_controls c ON c.job_id=j.id WHERE j.id=?`, job.ID).Scan(&job.LibraryName, &job.Filename, &job.Relative, &job.RootPath, &job.RootID, &job.Operation, &job.CompletedUnits, &job.TotalUnits, &job.Updated, &job.Started, &job.Finished, &job.Cancelling)
+	var result string
+	var paused bool
+	err := service.Database.Reader.QueryRowContext(ctx, `SELECT b.name,coalesce(d.original_filename,''),coalesce(p.relative_path,l.relative_path,''),coalesce(r.canonical_path,''),coalesce(r.id,''),coalesce(p.operation,j.job_type),coalesce(p.completed_units,0),p.total_units,coalesce(p.updated_at,''),coalesce((SELECT started_at FROM job_attempts WHERE job_id=j.id ORDER BY attempt_number DESC LIMIT 1),''),coalesce((SELECT finished_at FROM job_attempts WHERE job_id=j.id ORDER BY attempt_number DESC LIMIT 1),''),coalesce(c.cancel_requested,0),j.max_attempts,j.retry_delay_seconds,j.timeout_seconds,j.available_at,coalesce((SELECT result_code FROM extraction_runs e WHERE e.physical_file_id=j.physical_file_id AND e.content_version_id=j.target_version ORDER BY rowid DESC LIMIT 1),''),(SELECT paused FROM processing_policy WHERE singleton=1)
+ FROM jobs j JOIN libraries b ON b.id=j.library_id LEFT JOIN documents d ON d.physical_file_id=j.physical_file_id LEFT JOIN physical_files f ON f.id=j.physical_file_id LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id LEFT JOIN storage_roots r ON r.id=CASE WHEN j.job_type IN ('scan','verify_managed') THEN j.target_version ELSE l.root_id END LEFT JOIN job_progress p ON p.job_id=j.id LEFT JOIN job_controls c ON c.job_id=j.id WHERE j.id=?`, job.ID).Scan(&job.LibraryName, &job.Filename, &job.Relative, &job.RootPath, &job.RootID, &job.Operation, &job.CompletedUnits, &job.TotalUnits, &job.Updated, &job.Started, &job.Finished, &job.Cancelling, &job.MaximumAttempts, &job.RetryDelaySeconds, &job.TimeoutSeconds, &job.AvailableAt, &result, &paused)
+	job.ErrorClass = processingErrorClass(job.Error)
+	job.ProcessingState = jobProcessingState(*job, result, paused)
+	return err
 }

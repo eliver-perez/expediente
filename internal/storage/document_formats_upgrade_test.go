@@ -11,7 +11,10 @@ import (
 	"testing"
 )
 
-func TestDocumentFormatsUpgradeFromVersionEight(t *testing.T) {
+func TestDocumentFormatsUpgradeFromVersionEight(t *testing.T) { testDocumentUpgrade(t, 8) }
+func TestDocumentExtractorsUpgradeFromPhaseOne(t *testing.T)  { testDocumentUpgrade(t, 9) }
+func TestProcessingUpgradeFromPhaseTwo(t *testing.T)          { testDocumentUpgrade(t, 10) }
+func testDocumentUpgrade(t *testing.T, previousRevision int) {
 	directory, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +33,7 @@ func TestDocumentFormatsUpgradeFromVersionEight(t *testing.T) {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasSuffix(name, ".up.sql") || name >= "0009" {
+		if !strings.HasSuffix(name, ".up.sql") || name >= fmt.Sprintf("%04d", previousRevision+1) {
 			continue
 		}
 		migration, err := db.Migrations.ReadFile("migrations/" + name)
@@ -57,6 +60,11 @@ func TestDocumentFormatsUpgradeFromVersionEight(t *testing.T) {
  `); err != nil {
 		t.Fatal(err)
 	}
+	if previousRevision >= 10 {
+		if _, err = connection.Exec("UPDATE extraction_runs SET extractor_id='poppler-tesseract',extractor_version='2',unit_count=page_count,result_code=status,summary_json=json_object('pages',page_count)"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	connection.Close()
 	database, err := Open(context.Background(), directory)
 	if err != nil {
@@ -66,6 +74,14 @@ func TestDocumentFormatsUpgradeFromVersionEight(t *testing.T) {
 	err = database.Reader.QueryRow(`SELECT count(*) FROM documents d JOIN physical_files f ON f.id=d.physical_file_id JOIN content_versions v ON v.id=f.current_content_version_id WHERE d.id='document' AND d.case_id='case' AND d.revision=12 AND f.indexed_extraction_id='extraction' AND f.extraction_freshness='current' AND v.sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AND v.document_format='pdf' AND v.detected_mime='application/pdf' AND v.extension_mismatch=0 AND v.index_block_reason=''`).Scan(&unchanged)
 	if err != nil || unchanged != 1 {
 		t.Fatal("upgrade changed PDF identity/hash/association/index", err)
+	}
+	var descriptor, version string
+	if err = database.Reader.QueryRow("SELECT extractor_id,extractor_version FROM extraction_runs WHERE id='extraction'").Scan(&descriptor, &version); err != nil || descriptor != "poppler-tesseract" || version != "2" {
+		t.Fatal("legacy descriptor lost", descriptor, version, err)
+	}
+	var unitCount int
+	if err = database.Reader.QueryRow("SELECT unit_count FROM extraction_runs WHERE id='extraction'").Scan(&unitCount); err != nil || unitCount != 1 {
+		t.Fatal("legacy units lost", err)
 	}
 	var text string
 	if err = database.Reader.QueryRow("SELECT page_text FROM pages_fts WHERE pages_fts MATCH 'evidencia'").Scan(&text); err != nil || text != "Evidencia original indexada" {
@@ -90,7 +106,7 @@ func TestDocumentFormatsUpgradeFromVersionEight(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer backup.Close()
-	if err = backup.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&revision); err != nil || revision != 8 {
+	if err = backup.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&revision); err != nil || revision != previousRevision {
 		t.Fatal("backup does not contain old schema", err, revision)
 	}
 	database, err = Open(context.Background(), directory)

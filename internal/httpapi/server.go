@@ -88,6 +88,8 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/audit-options", server.protected("audit.read_global", true, server.auditOptions))
 	mux.HandleFunc("GET /api/v1/audit-events/{id}", server.protected("audit.read_global", true, server.event))
 	mux.HandleFunc("GET /api/v1/system/status", server.protected("system.configure", false, server.status))
+	mux.HandleFunc("GET /api/v1/system/processing-policy", server.protected("system.configure", true, server.processingPolicy))
+	mux.HandleFunc("PUT /api/v1/system/processing-policy", server.protected("system.configure", true, server.processingPolicy))
 	mux.HandleFunc("GET /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
 	mux.HandleFunc("GET /api/v1/system/files", server.protected("system.configure", true, server.fileConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/files", server.protected("system.configure", true, server.fileConfiguration))

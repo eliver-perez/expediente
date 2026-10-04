@@ -95,7 +95,7 @@ func (r *Runtime) ocrWorker(ctx context.Context, index int) {
 			cause = r.Service.jobLicense(task.ctx, r.Service.Database.Reader, task.job)
 		}
 		if cause == nil {
-			cause = task.prepared.complete(task.ctx)
+			cause = isolatedOperation(func() error { return task.prepared.complete(task.ctx) })
 		}
 		r.releaseContent("ocr")
 		r.completeTask(ctx, task, cause)

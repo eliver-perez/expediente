@@ -9,8 +9,11 @@ import (
 	"io"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 )
+
+var printerSettingsPart = regexp.MustCompile(`^(xl|word)/printerSettings/printerSettings[0-9]+\.bin$`)
 
 type cancellableReader struct {
 	context context.Context
@@ -65,7 +68,7 @@ func detectOffice(ctx context.Context, file *os.File, size int64) (string, error
 		if path.IsAbs(clean) || path.Clean(clean) != clean || clean == ".." || strings.HasPrefix(clean, "../") || strings.ContainsAny(clean, "\\:\x00") || entry.Mode()&os.ModeSymlink != 0 || entries[name] != nil || entry.Flags&1 != 0 {
 			return invalid()
 		}
-		if strings.Contains(name, "vbaproject") || strings.Contains(name, "activex/") || strings.Contains(name, "embeddings/") || !entry.FileInfo().IsDir() && BlockedExtension(entry.Name) {
+		if strings.Contains(name, "vbaproject") || strings.Contains(name, "activex/") || strings.Contains(name, "embeddings/") || !entry.FileInfo().IsDir() && BlockedExtension(entry.Name) && !printerSettingsPart.MatchString(entry.Name) {
 			return "", Failure("FILE_TYPE_BLOCKED")
 		}
 		if entry.UncompressedSize64 > 64<<20 || expanded > 512<<20 || entry.UncompressedSize64 > 200*max(entry.CompressedSize64, 1) {
@@ -94,11 +97,12 @@ func detectOffice(ctx context.Context, file *os.File, size int64) (string, error
 		return invalid()
 	}
 	mainPart, format := "", ""
+	partTypes, defaultTypes := map[string]string{}, map[string]string{}
 	err = inspectXML(ctx, typesEntry, "Types", "http://schemas.openxmlformats.org/package/2006/content-types", func(element xml.StartElement) error {
 		if element.Name.Local != "Override" && element.Name.Local != "Default" {
 			return nil
 		}
-		var contentType, partName string
+		var contentType, partName, extension string
 		for _, attr := range element.Attr {
 			if attr.Name.Local == "ContentType" {
 				contentType = attr.Value
@@ -106,6 +110,15 @@ func detectOffice(ctx context.Context, file *os.File, size int64) (string, error
 			if attr.Name.Local == "PartName" {
 				partName = attr.Value
 			}
+			if attr.Name.Local == "Extension" {
+				extension = attr.Value
+			}
+		}
+		if element.Name.Local == "Override" {
+			partTypes[strings.TrimPrefix(partName, "/")] = contentType
+		}
+		if element.Name.Local == "Default" {
+			defaultTypes[extension] = contentType
 		}
 		lower := strings.ToLower(contentType)
 		if strings.Contains(lower, "macroenabled") || strings.Contains(lower, "vba") || strings.Contains(lower, "activex") || strings.Contains(lower, "oleobject") {
@@ -132,6 +145,37 @@ func detectOffice(ctx context.Context, file *os.File, size int64) (string, error
 	}
 	if format == "" || part(mainPart) == nil {
 		return invalid()
+	}
+	// Office printer settings are opaque data, never opened by an extractor or
+	// handed to a printer driver. Permit only their exact path and declared type;
+	// the blanket .bin ban still applies everywhere else in the package.
+	for _, entry := range archive.File {
+		if !printerSettingsPart.MatchString(entry.Name) {
+			continue
+		}
+		expected, prefix := "application/vnd.openxmlformats-officedocument.spreadsheetml.printerSettings", "xl/"
+		if format == "docx" {
+			expected, prefix = "application/vnd.openxmlformats-officedocument.wordprocessingml.printerSettings", "word/"
+		}
+		contentType := partTypes[entry.Name]
+		if contentType == "" {
+			contentType = defaultTypes["bin"]
+		}
+		if !strings.HasPrefix(entry.Name, prefix) || contentType != expected {
+			return "", Failure("FILE_TYPE_BLOCKED")
+		}
+		stream, err := entry.Open()
+		if err != nil {
+			return invalid()
+		}
+		header, err := io.ReadAll(io.LimitReader(stream, 65536))
+		stream.Close()
+		if err != nil {
+			return invalid()
+		}
+		if blockedHeader(header) {
+			return "", Failure("FILE_TYPE_BLOCKED")
+		}
 	}
 	related := 0
 	err = inspectXML(ctx, part("_rels/.rels"), "Relationships", "http://schemas.openxmlformats.org/package/2006/relationships", func(element xml.StartElement) error {
@@ -175,6 +219,52 @@ func detectOffice(ctx context.Context, file *os.File, size int64) (string, error
 }
 
 func inspectXML(ctx context.Context, entry *zip.File, root, namespace string, visit func(xml.StartElement) error) error {
+	return walkXML(ctx, entry, root, namespace, func(token xml.Token) error {
+		if element, ok := token.(xml.StartElement); ok && visit != nil {
+			return visit(element)
+		}
+		return nil
+	})
+}
+
+// OfficePackage exposes only validated, bounded parts. It never resolves an
+// external URI or writes ZIP contents to disk.
+type OfficePackage struct{ entries map[string]*zip.File }
+
+func OpenOffice(ctx context.Context, file *os.File, expected string) (*OfficePackage, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	format, err := detectOffice(ctx, file, info.Size())
+	if err != nil {
+		return nil, err
+	}
+	if format != expected {
+		return nil, Failure("FILE_TYPE_MISMATCH")
+	}
+	archive, err := zip.NewReader(file, info.Size())
+	if err != nil {
+		return nil, Failure("INVALID_OFFICE_DOCUMENT")
+	}
+	result := &OfficePackage{entries: map[string]*zip.File{}}
+	for _, entry := range archive.File {
+		result.entries[entry.Name] = entry
+	}
+	return result, nil
+}
+
+func (p *OfficePackage) Has(name string) bool { return p.entries[name] != nil }
+
+func (p *OfficePackage) XML(ctx context.Context, name, root, namespace string, visit func(xml.Token) error) error {
+	entry := p.entries[name]
+	if entry == nil {
+		return Failure("INVALID_OFFICE_DOCUMENT")
+	}
+	return walkXML(ctx, entry, root, namespace, visit)
+}
+
+func walkXML(ctx context.Context, entry *zip.File, root, namespace string, visit func(xml.Token) error) error {
 	if entry.UncompressedSize64 > 32<<20 {
 		return Failure("DOCUMENT_COMPLEXITY_LIMIT")
 	}
@@ -210,11 +300,6 @@ func inspectXML(ctx context.Context, entry *zip.File, root, namespace string, vi
 			if depth > 128 {
 				return Failure("DOCUMENT_COMPLEXITY_LIMIT")
 			}
-			if visit != nil {
-				if err := visit(element); err != nil {
-					return err
-				}
-			}
 		case xml.EndElement:
 			depth--
 		case xml.Directive:
@@ -222,6 +307,11 @@ func inspectXML(ctx context.Context, entry *zip.File, root, namespace string, vi
 		case xml.CharData:
 			if depth == 0 && len(bytes.TrimSpace(element)) > 0 {
 				return Failure("INVALID_OFFICE_DOCUMENT")
+			}
+		}
+		if visit != nil {
+			if err := visit(token); err != nil {
+				return err
 			}
 		}
 	}

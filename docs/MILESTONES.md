@@ -281,3 +281,25 @@ por campo, admisión segura, omisiones vinculadas y descarga del original. Migra
 con instantánea SQLite previa. Conserva PDF/OCR, usuarios, licencias y expedientes.
 [Archivos, decisiones, validación, límites y pruebas manuales](AIBID-2.0-FASE-1.md).
 La fase 2 y sus extractores quedan pendientes de autorización expresa.
+
+## AIBID 2.0 — fase 2 (2026-10-03)
+
+Autorizada por el propietario. Registro central de extractores y extracción estática
+DOCX/XLSX/TXT/CSV, conservando las etapas PDF/OCR existentes y sus grupos de workers.
+Los resultados incluyen contexto, versión, fecha, formato, advertencias y contadores.
+Migración aditiva 10 con respaldo previo; no reconstruye índices ni modifica originales.
+Las reglas actuales se conservan y los documentos sin primera extracción se encolan
+cuando su configuración permite indexarlos.
+[Archivos, decisiones, validación, límites y pruebas manuales](AIBID-2.0-FASE-2.md).
+La fase 3 queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 3 (2026-10-04)
+
+Autorizada junto con las correcciones de Word, Excel e iconos de la fase 2.
+Pausa persistente de nuevas tareas, presupuestos por trabajo, espera creciente,
+tiempo por documento, aislamiento y diagnósticos claros sobre las colas existentes.
+Migración aditiva 11 con respaldo previo. Word abre su primera unidad con texto;
+Excel admite las partes válidas de impresión sin habilitar binarios arbitrarios.
+Tres documentos reales comprobados; fixtures sintéticos para la regresión.
+[Archivos, decisiones, validación y pruebas manuales](AIBID-2.0-FASE-3.md).
+La fase 4 (previews y caché) queda pendiente de autorización expresa.

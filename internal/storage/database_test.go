@@ -215,7 +215,7 @@ func TestUpgradePreservesPopulatedH2AndRefusesDestructiveRollback(t *testing.T) 
 		t.Fatal("rollback destroyed populated H2")
 	}
 	var migrations, evidence int
-	if err = database.Reader.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 9 {
+	if err = database.Reader.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 11 {
 		t.Fatal("partial down migration", err)
 	}
 	if err = database.Reader.QueryRow("SELECT count(*) FROM audit_events WHERE id='old-audit'").Scan(&evidence); err != nil || evidence != 1 {

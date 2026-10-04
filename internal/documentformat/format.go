@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/csv"
 	"io"
 	"net/http"
 	"os"
@@ -24,15 +23,15 @@ type Format struct {
 	ExtractorAvailable bool   `json:"extractor_available"`
 }
 
-// Only PDF has a content extractor in phase 1. Admission is independent of that
-// capability, so adding an extractor later will not change stored originals.
+// The catalog declares extraction capability, independently of admission policy.
+// The extractor registry tests ensure every declared capability has an engine.
 func Formats() []Format {
 	return []Format{
 		{"pdf", "application/pdf", true},
-		{"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", false},
-		{"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", false},
-		{"txt", "text/plain", false},
-		{"csv", "text/csv", false},
+		{"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", true},
+		{"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", true},
+		{"txt", "text/plain", true},
+		{"csv", "text/csv", true},
 	}
 }
 
@@ -59,7 +58,7 @@ func Failure(code string) error {
 		"FILE_TYPE_MISMATCH":        "La extensión no coincide con el contenido detectado. Corrige el nombre del archivo antes de incorporarlo.",
 		"INVALID_PDF":               "La extensión PDF no coincide con el contenido del archivo.",
 		"INVALID_OFFICE_DOCUMENT":   "El documento Office no tiene una estructura DOCX/XLSX válida y segura.",
-		"DOCUMENT_COMPLEXITY_LIMIT": "El contenedor Office supera los límites de tamaño o complejidad admitidos.",
+		"DOCUMENT_COMPLEXITY_LIMIT": "El documento supera los límites de tamaño o complejidad admitidos.",
 		"FILE_FORMAT_DISABLED":      "La biblioteca no permite almacenar este formato.",
 		"FILE_SIZE_LIMIT":           "El archivo supera el tamaño máximo permitido por la biblioteca.",
 		"FILE_NOT_INDEXABLE":        "La biblioteca rechaza documentos que no pueden indexarse con su configuración actual.",
@@ -108,7 +107,16 @@ func Detect(ctx context.Context, file *os.File, filename string) (Detection, err
 			return result, err
 		}
 	default:
-		if err = validateText(ctx, io.NewSectionReader(file, 0, info.Size())); err != nil {
+		reader, _, openError := TextReader(ctx, file, info.Size())
+		if openError != nil {
+			return result, openError
+		}
+		prefix := bufio.NewReaderSize(reader, 65536)
+		decodedHeader, _ := prefix.Peek(65536)
+		if blockedHeader(decodedHeader) {
+			return result, Failure("FILE_TYPE_BLOCKED")
+		}
+		if err = validateText(ctx, prefix); err != nil {
 			return result, err
 		}
 		format = "txt"
@@ -176,31 +184,8 @@ func validateText(ctx context.Context, input io.Reader) error {
 }
 
 func validCSV(ctx context.Context, file *os.File, size int64) bool {
-	for _, delimiter := range []rune{',', ';', '\t', '|'} {
-		budget := &recordReader{reader: cancellableReader{ctx, io.NewSectionReader(file, 0, size)}}
-		reader := csv.NewReader(budget)
-		reader.Comma = delimiter
-		rows, columns := 0, 0
-		for {
-			if ctx.Err() != nil {
-				return false
-			}
-			budget.remaining = 8 << 20
-			record, err := reader.Read()
-			if err == io.EOF {
-				if rows > 0 && columns > 1 {
-					return true
-				}
-				break
-			}
-			if err != nil {
-				break
-			}
-			rows++
-			columns = len(record)
-		}
-	}
-	return false
+	_, err := OpenCSV(ctx, file, size)
+	return err == nil
 }
 
 // encoding/csv may buffer a whole quoted record. Bound each read independently

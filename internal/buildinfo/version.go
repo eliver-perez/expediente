@@ -1,7 +1,7 @@
 // Package buildinfo identifies a distributable without relying on its filename.
 package buildinfo
 
-const Version = "2.0.0-alpha.1"
+const Version = "2.0.0-alpha.3"
 
 // Set only by the installer build. Ordinary developer binaries keep their paths.
 var Channel = "source"

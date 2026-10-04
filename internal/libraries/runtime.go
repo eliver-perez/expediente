@@ -17,28 +17,34 @@ import (
 )
 
 type Job struct {
-	LibraryName    string `json:"library_name"`
-	Filename       string `json:"filename"`
-	Relative       string `json:"relative_path"`
-	RootPath       string `json:"root_path"`
-	RootID         string `json:"root_id"`
-	Operation      string `json:"operation"`
-	CompletedUnits int    `json:"completed_units"`
-	TotalUnits     *int   `json:"total_units"`
-	Started        string `json:"started_at"`
-	Finished       string `json:"finished_at"`
-	Updated        string `json:"updated_at"`
-	Cancelling     bool   `json:"cancelling"`
-	ID             string `json:"id"`
-	LibraryID      string `json:"library_id"`
-	FileID         string `json:"physical_file_id,omitempty"`
-	Kind           string `json:"job_type"`
-	Version        string `json:"-"`
-	Status         string `json:"status"`
-	Attempts       int    `json:"attempt_count"`
-	Error          string `json:"last_error_code"`
-	Created        string `json:"created_at"`
-	Fence          int64  `json:"-"`
+	LibraryName       string `json:"library_name"`
+	Filename          string `json:"filename"`
+	Relative          string `json:"relative_path"`
+	RootPath          string `json:"root_path"`
+	RootID            string `json:"root_id"`
+	Operation         string `json:"operation"`
+	CompletedUnits    int    `json:"completed_units"`
+	TotalUnits        *int   `json:"total_units"`
+	Started           string `json:"started_at"`
+	Finished          string `json:"finished_at"`
+	Updated           string `json:"updated_at"`
+	Cancelling        bool   `json:"cancelling"`
+	ID                string `json:"id"`
+	LibraryID         string `json:"library_id"`
+	FileID            string `json:"physical_file_id,omitempty"`
+	Kind              string `json:"job_type"`
+	Version           string `json:"-"`
+	Status            string `json:"status"`
+	Attempts          int    `json:"attempt_count"`
+	MaximumAttempts   int    `json:"maximum_attempts"`
+	RetryDelaySeconds int    `json:"retry_delay_seconds"`
+	TimeoutSeconds    int    `json:"timeout_seconds"`
+	AvailableAt       string `json:"available_at"`
+	ErrorClass        string `json:"error_class"`
+	ProcessingState   string `json:"processing_state"`
+	Error             string `json:"last_error_code"`
+	Created           string `json:"created_at"`
+	Fence             int64  `json:"-"`
 }
 type Runtime struct {
 	Service                 *Service
@@ -81,6 +87,9 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 		return nil, err
 	}
 	if err := service.recoverJobs(ctx); err != nil {
+		return nil, err
+	}
+	if err := service.Database.Write(ctx, func(tx *sql.Tx) error { return service.queueNewlyIndexable(ctx, tx, "") }); err != nil {
 		return nil, err
 	}
 	workerContext, cancel := context.WithCancel(ctx)
@@ -287,14 +296,21 @@ func (service *Service) claim(ctx context.Context) (Job, error) { return service
 func (service *Service) claimLane(ctx context.Context, lane string) (Job, error) {
 	var job Job
 	err := service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 64", lane, lane, lane, now())
+		var policy ProcessingPolicy
+		if err := transaction.QueryRowContext(ctx, "SELECT paused,maximum_attempts,retry_delay_seconds,timeout_seconds FROM processing_policy WHERE singleton=1").Scan(&policy.Paused, &policy.MaximumAttempts, &policy.RetryDelaySeconds, &policy.TimeoutSeconds); err != nil {
+			return err
+		}
+		if policy.Paused {
+			return nil
+		}
+		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token,max_attempts,retry_delay_seconds,timeout_seconds FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 64", lane, lane, lane, now())
 		if err != nil {
 			return err
 		}
 		candidates := []Job{}
 		for rows.Next() {
 			var candidate Job
-			if err = rows.Scan(&candidate.ID, &candidate.LibraryID, &candidate.FileID, &candidate.Kind, &candidate.Version, &candidate.Attempts, &candidate.Fence); err != nil {
+			if err = rows.Scan(&candidate.ID, &candidate.LibraryID, &candidate.FileID, &candidate.Kind, &candidate.Version, &candidate.Attempts, &candidate.Fence, &candidate.MaximumAttempts, &candidate.RetryDelaySeconds, &candidate.TimeoutSeconds); err != nil {
 				rows.Close()
 				return err
 			}
@@ -323,9 +339,15 @@ func (service *Service) claimLane(ctx context.Context, lane string) (Job, error)
 			return nil
 		}
 
+		if job.Attempts == 0 {
+			job.MaximumAttempts, job.RetryDelaySeconds, job.TimeoutSeconds = policy.MaximumAttempts, policy.RetryDelaySeconds, policy.TimeoutSeconds
+			if _, err = transaction.ExecContext(ctx, "UPDATE jobs SET max_attempts=?,retry_delay_seconds=?,timeout_seconds=? WHERE id=?", job.MaximumAttempts, job.RetryDelaySeconds, job.TimeoutSeconds, job.ID); err != nil {
+				return err
+			}
+		}
 		job.Attempts++
 		job.Fence++
-		if _, err = transaction.ExecContext(ctx, "UPDATE jobs SET status='running',attempt_count=?,fencing_token=?,lease_owner='local',lease_expires_at=? WHERE id=?", job.Attempts, job.Fence, domain.Timestamp(time.Now().Add(time.Hour)), job.ID); err != nil {
+		if _, err = transaction.ExecContext(ctx, "UPDATE jobs SET status='running',attempt_count=?,fencing_token=?,lease_owner='local',lease_expires_at=? WHERE id=?", job.Attempts, job.Fence, domain.Timestamp(time.Now().Add(jobTimeout(job))), job.ID); err != nil {
 			return err
 		}
 		_, err = transaction.ExecContext(ctx, "INSERT INTO job_attempts(id,job_id,attempt_number,fencing_token,started_at) VALUES(?,?,?,?,?)", domain.NewID(), job.ID, job.Attempts, job.Fence, now())
@@ -357,9 +379,9 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 			continue
 		}
 		operationContext, cancel := context.WithCancel(ctx)
-		if job.Kind != "scan" && job.Kind != "extract" {
+		if job.Kind != "scan" {
 			cancel()
-			operationContext, cancel = context.WithTimeout(ctx, time.Hour)
+			operationContext, cancel = context.WithTimeout(ctx, jobTimeout(job))
 		}
 		done := make(chan struct{})
 		go runtime.Service.monitorCancellation(operationContext, job, cancel, done)
@@ -381,25 +403,31 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 			}
 			runtime.mutex.Unlock()
 			watchFailed := false
-			err = runtime.Service.Scan(operationContext, job.Version, 0, func(path string) error {
-				watchError := runtime.register(job.Version, path)
-				if watchError != nil {
-					watchFailed = true
-					_, _ = runtime.Service.Database.Writer.ExecContext(operationContext, "UPDATE storage_roots SET watch_mode='polling',last_error_code='WATCH_LIMIT' WHERE id=?", job.Version)
-				}
-				return watchError
+			err = isolatedOperation(func() error {
+				return runtime.Service.Scan(operationContext, job.Version, 0, func(path string) error {
+					watchError := runtime.register(job.Version, path)
+					if watchError != nil {
+						watchFailed = true
+						_, _ = runtime.Service.Database.Writer.ExecContext(operationContext, "UPDATE storage_roots SET watch_mode='polling',last_error_code='WATCH_LIMIT' WHERE id=?", job.Version)
+					}
+					return watchError
+				})
 			})
 			if err == nil && !watchFailed && len(paths) == 0 {
 				_, _ = runtime.Service.Database.Writer.ExecContext(operationContext, "UPDATE storage_roots SET last_error_code=CASE WHEN last_error_code='WATCH_LIMIT' THEN '' ELSE last_error_code END,watch_mode=CASE WHEN EXISTS(SELECT 1 FROM root_watch_recovery w WHERE w.root_id=storage_roots.id AND w.loss_generation>w.recovered_generation) THEN 'polling' ELSE 'native' END WHERE id=? AND EXISTS(SELECT 1 FROM root_scans s WHERE s.root_id=storage_roots.id AND s.status='complete' AND s.can_confirm_absence=1 AND s.id=(SELECT id FROM root_scans WHERE root_id=storage_roots.id ORDER BY started_at DESC,id DESC LIMIT 1))", job.Version)
 			}
 
 		} else if job.Kind == "materialize" {
-			err = runtime.Service.Materialize(operationContext, job)
+			err = isolatedOperation(func() error { return runtime.Service.Materialize(operationContext, job) })
 		} else if job.Kind == "verify_managed" {
-			err = runtime.Service.VerifyManagedRoot(operationContext, job.Version)
+			err = isolatedOperation(func() error { return runtime.Service.VerifyManagedRoot(operationContext, job.Version) })
 		} else if job.Kind == "extract" {
 			var prepared *preparedExtraction
-			prepared, err = runtime.Service.prepareExtraction(operationContext, job, runtime.Service.Identity.Config.Indexing)
+			err = isolatedOperation(func() error {
+				var prepareError error
+				prepared, prepareError = runtime.Service.prepareExtraction(operationContext, job, runtime.Service.Identity.Config.Indexing)
+				return prepareError
+			})
 			if err == nil {
 				if extraction.NeedsOCR(prepared.pages) {
 					_ = runtime.Service.reportProgress(operationContext, job, "waiting_ocr", "", 0, len(prepared.pages))
@@ -412,7 +440,7 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 					}
 					continue
 				}
-				err = prepared.complete(operationContext)
+				err = isolatedOperation(func() error { return prepared.complete(operationContext) })
 				prepared.cleanup()
 			}
 		} else {
@@ -454,21 +482,25 @@ func (service *Service) finish(ctx context.Context, job Job, cause error) error 
 				return nil
 			}
 			successor := domain.NewID()
-			if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,attempt_count,max_attempts,available_at,last_error_code,retry_of_job_id,created_at) SELECT ?,library_id,physical_file_id,job_type,target_version,?,payload_json,'paused',attempt_count-1,max_attempts,?,?,id,? FROM jobs WHERE id=?", successor, successor, now(), code, now(), job.ID); err != nil {
+			if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,attempt_count,max_attempts,available_at,last_error_code,retry_of_job_id,created_at,retry_delay_seconds,timeout_seconds) SELECT ?,library_id,physical_file_id,job_type,target_version,?,payload_json,'paused',attempt_count-1,max_attempts,?,?,id,?,retry_delay_seconds,timeout_seconds FROM jobs WHERE id=?", successor, successor, now(), code, now(), job.ID); err != nil {
 				return err
 			}
 			return record(ctx, transaction, domain.Principal{}, domain.RequestMetadata{RequestID: domain.NewID()}, "indexing.license_paused", job.LibraryID, "", map[string]any{"job_id": job.ID, "resumes_as": successor, "error_code": code})
 		}
 
+		var maximum, delay int
+		if err := transaction.QueryRowContext(ctx, "SELECT max_attempts,retry_delay_seconds FROM jobs WHERE id=?", job.ID).Scan(&maximum, &delay); err != nil {
+			return err
+		}
 		status, code := "succeeded", ""
 		available := now()
 		if cause != nil {
 			code = failureCode(cause)
 			status = "failed"
 			transient := code == "FILE_UNSTABLE" || code == "ROOT_UNAVAILABLE" || code == "SOURCE_UNAVAILABLE" || code == "PROCESS_TIMEOUT" || code == "DOCUMENT_UNAVAILABLE" || code == "DIRECTORY_CHANGED" || code == "STORAGE_UNAVAILABLE" || code == "STORAGE_SPACE" || code == "STORAGE_PUBLICATION_FAILED"
-			if transient && job.Attempts < 5 {
+			if transient && job.Attempts < maximum {
 				status = "retry_wait"
-				available = domain.Timestamp(time.Now().Add(time.Duration(1<<job.Attempts) * time.Second))
+				available = domain.Timestamp(time.Now().Add(time.Duration(min(delay*(1<<max(job.Attempts-1, 0)), 3600)) * time.Second))
 			}
 			if code == "USER_CANCELLED" || code == "ROOT_DISABLED" || code == "VERSION_SUPERSEDED" || code == "ROOT_PLAN_STALE" || code == "FILE_INDEX_DISABLED" {
 				status = "cancelled"

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"gestor-documental/internal/audit"
-	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/extraction"
 	"gestor-documental/internal/storage"
@@ -38,32 +37,42 @@ type preparedExtraction struct {
 	relative                   string
 	options                    extraction.Options
 	pages                      []extraction.Page
+	result                     extraction.Result
+	started                    string
 }
 
 func (p *preparedExtraction) cleanup() { p.file.Close(); os.RemoveAll(p.temporary) }
-func (p *preparedExtraction) complete(ctx context.Context) error {
+func (p *preparedExtraction) complete(ctx context.Context) (resultError error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Hour)
 	defer cancel()
+	defer func() {
+		if recover() != nil {
+			resultError = scanFailure("PROCESSING_INTERNAL_ERROR")
+		}
+		if resultError != nil {
+			resultError = p.service.extractionFailure(ctx, p.job, p.languages, p.started, p.result, resultError)
+		}
+	}()
 	p.options.Progress = func(operation string, completed, total int) {
 		_ = p.service.reportProgress(ctx, p.job, operation, p.relative, completed, total)
 	}
-	pages, err := p.options.Recognize(ctx, p.path, p.languages, p.pages)
-	if err != nil {
-		return p.service.extractionFailure(ctx, p.job, p.languages, err)
+	if err := extraction.CompleteDocument(ctx, p.path, p.languages, p.options, &p.result); err != nil {
+		return err
 	}
 	after, err := p.file.Stat()
 	if err != nil || after.Size() != p.before.Size() || !after.ModTime().Equal(p.before.ModTime()) {
 		return scanFailure("FILE_UNSTABLE")
 	}
-	_ = p.service.reportProgress(ctx, p.job, "publishing", "", len(pages), len(pages))
-	return p.service.publish(ctx, p.job, p.root, pages, p.languages)
+	_ = p.service.reportProgress(ctx, p.job, "publishing", "", len(p.result.Units), len(p.result.Units))
+	return p.service.publish(ctx, p.job, p.root, p.result, p.languages, p.started)
 }
-func (service *Service) extractionFailure(ctx context.Context, job Job, languages string, cause error) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	err := service.Database.Write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,error_code) VALUES(?,?,?,'poppler-tesseract-v2',?,'failed',?)", domain.NewID(), job.FileID, job.Version, languages, failureCode(cause))
+func (service *Service) extractionFailure(ctx context.Context, job Job, languages, started string, result extraction.Result, cause error) error {
+	// Persist the attempt's outcome even when its worker was cancelled. The short
+	// independent deadline prevents journal writes delaying shutdown indefinitely.
+	journalContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err := service.Database.Write(journalContext, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(journalContext, `INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,error_code,extractor_id,extractor_version,document_format,started_at,completed_at,result_code,summary_json,warnings_json) VALUES(?,?,?,?,?,'failed',?,?,?,?,?,?,'failed',?,?)`, domain.NewID(), job.FileID, job.Version, result.Extractor.ID+"-v"+result.Extractor.Version, languages, failureCode(cause), result.Extractor.ID, result.Extractor.Version, result.Extractor.Format, started, now(), encode(result.Summary), encode(result.Warnings))
 		return err
 	})
 	if err != nil {
@@ -72,6 +81,8 @@ func (service *Service) extractionFailure(ctx context.Context, job Job, language
 	return cause
 }
 func (service *Service) Extract(ctx context.Context, job Job, options extraction.Options) error {
+	ctx, cancel := context.WithTimeout(ctx, jobTimeout(job))
+	defer cancel()
 	prepared, err := service.prepareExtraction(ctx, job, options)
 	if err != nil {
 		return err
@@ -96,15 +107,29 @@ func (service *Service) prepareExtraction(ctx context.Context, job Job, options 
 		_, _ = service.Database.Writer.ExecContext(ctx, "UPDATE content_versions SET index_block_reason=? WHERE id=?", reason, job.Version)
 		return nil, scanFailure("FILE_INDEX_DISABLED")
 	}
-	var rootID, relative, expectedHash, identity, languages, availability, libraryID string
+	var rootID, relative, expectedHash, identity, languages, availability, libraryID, format string
 	var size int64
-	err = service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce(l.root_id,''),coalesce(l.relative_path,''),v.sha256,v.size_bytes,f.os_identity_key,b.ocr_languages,f.availability,f.library_id FROM physical_files f LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN content_versions v ON v.id=f.current_content_version_id JOIN libraries b ON b.id=f.library_id JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND v.id=? AND d.deleted_at IS NULL", job.FileID, job.Version).Scan(&rootID, &relative, &expectedHash, &size, &identity, &languages, &availability, &libraryID)
+	err = service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce(l.root_id,''),coalesce(l.relative_path,''),v.sha256,v.size_bytes,f.os_identity_key,b.ocr_languages,f.availability,f.library_id,v.document_format FROM physical_files f LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN content_versions v ON v.id=f.current_content_version_id JOIN libraries b ON b.id=f.library_id JOIN documents d ON d.physical_file_id=f.id WHERE f.id=? AND v.id=? AND d.deleted_at IS NULL", job.FileID, job.Version).Scan(&rootID, &relative, &expectedHash, &size, &identity, &languages, &availability, &libraryID, &format)
 	if err == sql.ErrNoRows {
 		return nil, scanFailure("VERSION_SUPERSEDED")
 	}
 	if err != nil {
 		return nil, err
 	}
+	descriptor, available := extraction.ExtractorFor(format)
+	if !available {
+		return nil, scanFailure("EXTRACTOR_UNAVAILABLE")
+	}
+	started := now()
+	result := extraction.Result{Extractor: descriptor, Summary: map[string]any{}, Warnings: []string{}}
+	defer func() {
+		if recover() != nil {
+			resultError = scanFailure("PROCESSING_INTERNAL_ERROR")
+		}
+		if resultError != nil {
+			resultError = service.extractionFailure(ctx, job, languages, started, result, resultError)
+		}
+	}()
 	root := Root{LibraryID: libraryID}
 	var file *os.File
 	if availability == "staged" {
@@ -123,7 +148,7 @@ func (service *Service) prepareExtraction(ctx context.Context, job Job, options 
 		return nil, scanFailure("DOCUMENT_UNAVAILABLE")
 	}
 	defer func() {
-		if resultError != nil {
+		if prepared == nil {
 			file.Close()
 		}
 	}()
@@ -140,14 +165,14 @@ func (service *Service) prepareExtraction(ctx context.Context, job Job, options 
 		return nil, err
 	}
 	defer func() {
-		if resultError != nil {
+		if prepared == nil {
 			os.RemoveAll(temporary)
 		}
 	}()
 	if err = storage.ProtectPrivatePath(temporary, true); err != nil {
 		return nil, err
 	}
-	documentPath := filepath.Join(temporary, "source.pdf")
+	documentPath := filepath.Join(temporary, "source."+format)
 	snapshot, err := os.OpenFile(documentPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
@@ -167,29 +192,23 @@ func (service *Service) prepareExtraction(ctx context.Context, job Job, options 
 	if closeError != nil {
 		return nil, closeError
 	}
+	if written > int64(options.MaximumFileMB)<<20 {
+		return nil, scanFailure("FILE_SIZE_LIMIT")
+	}
 	if written != size || fmt.Sprintf("%x", hash.Sum(nil)) != expectedHash {
 		return nil, scanFailure("FILE_UNSTABLE")
-	}
-	probe, err := os.Open(documentPath)
-	if err != nil {
-		return nil, err
-	}
-	_, err = documentformat.Detect(ctx, probe, "source.pdf")
-	probe.Close()
-	if err != nil {
-		return nil, err
 	}
 	options.Progress = func(operation string, completed, total int) {
 		_ = service.reportProgress(ctx, job, operation, relative, completed, total)
 	}
-	pages, err := options.Prepare(ctx, documentPath)
+	result, err = extraction.PrepareDocument(ctx, documentPath, format, options)
 	if err != nil {
-		return nil, service.extractionFailure(ctx, job, languages, err)
+		return nil, err
 	}
-	prepared = &preparedExtraction{service: service, job: job, root: root, file: file, before: before, path: documentPath, temporary: temporary, languages: languages, relative: relative, options: options, pages: pages}
+	prepared = &preparedExtraction{service: service, job: job, root: root, file: file, before: before, path: documentPath, temporary: temporary, languages: languages, relative: relative, options: options, pages: result.Units, result: result, started: started}
 	return prepared, nil
 }
-func (service *Service) publish(ctx context.Context, job Job, root Root, pages []extraction.Page, languages string) error {
+func (service *Service) publish(ctx context.Context, job Job, root Root, result extraction.Result, languages, started string) error {
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
 		if reason, err := service.versionIndexReason(ctx, transaction, root.LibraryID, job.Version); err != nil {
 			return err
@@ -208,7 +227,7 @@ func (service *Service) publish(ctx context.Context, job Job, root Root, pages [
 		if err := transaction.QueryRowContext(ctx, "SELECT ocr_languages FROM libraries WHERE id=?", root.LibraryID).Scan(&currentLanguages); err != nil {
 			return err
 		}
-		if currentLanguages != languages {
+		if result.Extractor.Format == "pdf" && currentLanguages != languages {
 			return scanFailure("VERSION_SUPERSEDED")
 		}
 		var permitted int
@@ -219,19 +238,30 @@ func (service *Service) publish(ctx context.Context, job Job, root Root, pages [
 			return scanFailure("VERSION_SUPERSEDED")
 		}
 		extractionID := domain.NewID()
-		if _, err := transaction.ExecContext(ctx, "INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,page_count,completed_at) VALUES(?,?,?,'poppler-tesseract-v2',?,'complete',?,?)", extractionID, job.FileID, job.Version, languages, len(pages), now()); err != nil {
+		var pageCount any
+		if result.Extractor.Format == "pdf" {
+			pageCount = len(result.Units)
+		}
+		outcome := "complete"
+		if len(result.Warnings) > 0 {
+			outcome = "complete_with_warnings"
+		}
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,page_count,completed_at,extractor_id,extractor_version,document_format,started_at,result_code,unit_count,summary_json,warnings_json) VALUES(?,?,?,?,?,'complete',?,?,?,?,?,?,?,?,?,?)`, extractionID, job.FileID, job.Version, result.Extractor.ID+"-v"+result.Extractor.Version, languages, pageCount, now(), result.Extractor.ID, result.Extractor.Version, result.Extractor.Format, started, outcome, len(result.Units), encode(result.Summary), encode(result.Warnings)); err != nil {
 			return err
 		}
 		if _, err := transaction.ExecContext(ctx, "DELETE FROM indexed_pages WHERE physical_file_id=?", job.FileID); err != nil {
 			return err
 		}
-		for _, page := range pages {
-			if _, err := transaction.ExecContext(ctx, "INSERT INTO extraction_pages(extraction_id,page_number,extraction_method,page_text) VALUES(?,?,?,?)", extractionID, page.Number, page.Method, page.Text); err != nil {
+		for _, page := range result.Units {
+			if _, err := transaction.ExecContext(ctx, "INSERT INTO extraction_pages(extraction_id,page_number,extraction_method,page_text,unit_kind,context_label,context_json) VALUES(?,?,?,?,?,?,?)", extractionID, page.Number, page.Method, page.Text, page.Kind, page.Label, encode(page.Context)); err != nil {
 				return err
 			}
 			if _, err := transaction.ExecContext(ctx, "INSERT INTO indexed_pages(physical_file_id,extraction_id,page_number,page_text) VALUES(?,?,?,?)", job.FileID, extractionID, page.Number, page.Text); err != nil {
 				return err
 			}
+		}
+		if _, err := transaction.ExecContext(ctx, "UPDATE content_versions SET index_block_reason='' WHERE id=?", job.Version); err != nil {
+			return err
 		}
 		_, err := transaction.ExecContext(ctx, "UPDATE physical_files SET indexed_extraction_id=?,indexed_at=?,extraction_freshness='current' WHERE id=?", extractionID, now(), job.FileID)
 		return err

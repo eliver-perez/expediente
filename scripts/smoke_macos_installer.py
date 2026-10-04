@@ -66,7 +66,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
     parser.add_argument("--previous-package", type=Path,
-                        help="Also migrate disposable administrator data created by the schema-8 package")
+                        help="Also migrate disposable administrator data created by the schema-8/9/10 package")
     args = parser.parse_args()
     package = args.package.resolve()
     with tempfile.TemporaryDirectory(prefix="aibid-native-smoke-", dir="/private/tmp") as temporary:
@@ -106,21 +106,22 @@ def main():
         if args.previous_package:
             state_directory = configuration.parent / "state"
             with sqlite3.connect(str(state_directory / "documental.db")) as database:
-                assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 8
+                previous_schema = database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
+                assert previous_schema in (8, 9, 10)
                 original_users = database.execute("SELECT * FROM users ORDER BY id").fetchall()
                 original_audit = database.execute("SELECT * FROM audit_events ORDER BY id").fetchall()
             database.close()
             command([binary, "migrate", "--config", configuration])
             assert configuration.read_bytes() == previous
             with sqlite3.connect(str(state_directory / "documental.db")) as database:
-                assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 9
+                assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 11
                 assert database.execute("SELECT * FROM users ORDER BY id").fetchall() == original_users
                 assert database.execute("SELECT * FROM audit_events ORDER BY id").fetchall() == original_audit
             database.close()
             snapshots = list((state_directory / "upgrade-backups").glob("*.db"))
             assert len(snapshots) == 1
             with sqlite3.connect(str(snapshots[0])) as database:
-                assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 8
+                assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == previous_schema
                 assert database.execute("SELECT * FROM users ORDER BY id").fetchall() == original_users
                 assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
             database.close()
@@ -196,7 +197,7 @@ def main():
         with sqlite3.connect(str(state / "documental.db")) as database:
             assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
             assert not database.execute("PRAGMA foreign_key_check").fetchall()
-            assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 9
+            assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 11
             assert database.execute("SELECT count(*) FROM bootstrap_state").fetchone()[0] == 1
         database.close()
         original = state / "uploads/keep.pdf"

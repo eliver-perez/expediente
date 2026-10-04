@@ -19,9 +19,9 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.0.0-alpha.1"
-PACKAGE_REVISION = "f1"
-DEB_VERSION = "2.0.0~alpha.1"
+VERSION = "2.0.0-alpha.3"
+PACKAGE_REVISION = "f3"
+DEB_VERSION = "2.0.0~alpha.3"
 EPOCH = 1790294400  # Fixed packaging timestamp, 2026-09-25 UTC.
 
 
@@ -49,10 +49,11 @@ def binary(destination, system, architecture):
 
 
 def documents(destination):
-    copy(ROOT / "docs/AIBID-2.0-FASE-1.md", destination / "FASE-1.md")
+    copy(ROOT / "docs/AIBID-2.0-FASE-3.md", destination / "FASE-3.md")
+    copy(ROOT / "docs/AIBID-2.0-FASE-2.md", destination / "AIBID-2.0-FASE-2.md")
     copy(ROOT / "docs/H7.md", destination / "LEEME.md")
     readme = destination / "LEEME.md"
-    readme.write_text("# AIBID 2.0 — fase 1 (alpha de pruebas)\n\nConsulta [FASE-1.md](FASE-1.md) para formatos, reglas, migración y límites de esta entrega. Los nombres de versión de la guía H7 siguiente son históricos.\n\n" + readme.read_text().replace("../packaging/TEST-PLAN.md", "PRUEBAS.md").replace("H7-WINDOWS-R2.md", "WINDOWS-R2.md"))
+    readme.write_text("# AIBID 2.0 — fase 3 (alpha de pruebas)\n\nConsulta [FASE-3.md](FASE-3.md) para formatos, reglas, migración y límites de esta entrega. Los nombres de versión de la guía H7 siguiente son históricos.\n\n" + readme.read_text().replace("../packaging/TEST-PLAN.md", "PRUEBAS.md").replace("H7-WINDOWS-R2.md", "WINDOWS-R2.md"))
     copy(ROOT / "LICENSE_CONTRACT.md", destination / "LICENSE_CONTRACT.md")
     copy(ROOT / "packaging/TEST-PLAN.md", destination / "PRUEBAS.md")
     copy(ROOT / "packaging/THIRD-PARTY.md", destination / "THIRD-PARTY.md")
@@ -66,6 +67,8 @@ def documents(destination):
         copy(path, destination / "pdf" / path.name)
     for extension in ["docx", "xlsx", "txt", "csv"]:
         copy(ROOT / "testdata/documents" / ("sample." + extension), destination / "formatos" / ("sample." + extension))
+    for name in ["blank-leading.docx", "printer-settings.xlsx"]:
+        copy(ROOT / "testdata/documents" / name, destination / "formatos" / name)
 
 
 def macos(output, work):
@@ -99,7 +102,7 @@ def macos(output, work):
         copy(ROOT / "packaging/macos" / name, scripts / name, 0o755, template=True)
     component = work / "component.pkg"
     run(["pkgbuild", "--root", payload, "--scripts", scripts, "--identifier", "app.aibid.test",
-         "--version", "2.0.0.1", "--install-location", "/", "--ownership", "recommended", component])
+         "--version", "2.0.0.3", "--install-location", "/", "--ownership", "recommended", component])
     distribution = work / "distribution.xml"
     distribution.write_text('''<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
@@ -109,7 +112,7 @@ def macos(output, work):
   <allowed-os-versions><os-version min="13.0"/></allowed-os-versions>
   <choices-outline><line choice="app.aibid.test"/></choices-outline>
   <choice id="app.aibid.test" visible="false"><pkg-ref id="app.aibid.test"/></choice>
-  <pkg-ref id="app.aibid.test" version="2.0.0.1">component.pkg</pkg-ref>
+  <pkg-ref id="app.aibid.test" version="2.0.0.3">component.pkg</pkg-ref>
 </installer-gui-script>
 ''')
     run(["productbuild", "--distribution", distribution, "--package-path", work,
@@ -338,7 +341,7 @@ def windows(output, work, prefix, makensis):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=["macos", "windows", "ubuntu", "all"], required=True)
-    parser.add_argument("--output", type=Path, default=ROOT / "dist/aibid-2.0-fase-1")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist/aibid-2.0-fase-3")
     parser.add_argument("--windows-tools", type=Path)
     parser.add_argument("--makensis")
     parser.add_argument("--ubuntu-arch", choices=["amd64", "arm64", "all"], default="all",

@@ -288,3 +288,7 @@ fieldset { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; m
 
 .duplicate-groups .text-button { white-space: nowrap; font-family: ui-monospace, monospace; font-size: .85rem; }
 .group-library-count { display: block; white-space: nowrap; font-size: .75rem; color: #425e59; }
+
+.file-icon { display: block; width: 40px; height: 48px; flex: 0 0 40px; }
+.explorer-name .file-icon { width: 32px; height: 40px; flex-basis: 32px; }
+.file-tile .file-icon { flex-basis: auto; }

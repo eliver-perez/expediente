@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -38,7 +39,13 @@ func (service *Service) Document(ctx context.Context, principal domain.Principal
 	if document.Availability == "staged" || service.require(ctx, service.Database.Reader, principal, document.LibraryID, "storage.view_paths") != nil {
 		document.OriginalPath = ""
 	}
-	return document, nil
+	document.Processing, err = service.latestProcessing(ctx, document.FileID)
+	if err == nil && document.Format != "pdf" {
+		// Older DOCX runs retain blank paragraphs. Open useful content without
+		// changing those historical runs or forcing a new extraction.
+		err = service.Database.Reader.QueryRowContext(ctx, `SELECT coalesce(min(p.page_number),1) FROM extraction_pages p JOIN physical_files f ON f.indexed_extraction_id=p.extraction_id WHERE f.id=? AND length(trim(p.page_text,char(9)||char(10)||char(13)||' '))>0`, document.FileID).Scan(&document.FirstTextUnit)
+	}
+	return document, err
 }
 func (service *Service) OpenDocument(ctx context.Context, principal domain.Principal, documentID string, download bool, metadata domain.RequestMetadata) (*os.File, Document, error) {
 	document, err := service.Document(ctx, principal, documentID)
@@ -108,13 +115,17 @@ func (service *Service) OpenDocument(ctx context.Context, principal domain.Princ
 }
 func (service *Service) Page(ctx context.Context, principal domain.Principal, documentID string, number int) (extraction.Page, error) {
 	var page extraction.Page
+	var details string
 	document, err := service.Document(ctx, principal, documentID)
 	if err != nil {
 		return page, err
 	}
-	err = service.Database.Reader.QueryRowContext(ctx, "SELECT p.page_number,p.extraction_method,p.page_text FROM extraction_pages p JOIN physical_files f ON f.indexed_extraction_id=p.extraction_id WHERE f.id=? AND p.page_number=?", document.FileID, number).Scan(&page.Number, &page.Method, &page.Text)
+	err = service.Database.Reader.QueryRowContext(ctx, "SELECT p.page_number,p.extraction_method,p.page_text,p.unit_kind,p.context_label,p.context_json FROM extraction_pages p JOIN physical_files f ON f.indexed_extraction_id=p.extraction_id WHERE f.id=? AND p.page_number=?", document.FileID, number).Scan(&page.Number, &page.Method, &page.Text, &page.Kind, &page.Label, &details)
 	if err == sql.ErrNoRows {
 		return page, notFound()
+	}
+	if err == nil {
+		err = json.Unmarshal([]byte(details), &page.Context)
 	}
 	return page, err
 }

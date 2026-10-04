@@ -61,7 +61,7 @@ export function FileSettings({ libraryID }: { libraryID?: string }) {
     <section className="card"><div className="section-heading"><h2>{libraryID ? 'Archivos y procesamiento' : 'Reglas de archivos'}</h2><button className="secondary" disabled={busy} onClick={() => { setError(''); setSuccess(''); setRefresh(refresh + 1); }}>Actualizar reglas</button></div>
       <Notice text={error} /><Notice text={success} kind="success" />
       {libraryID && <p>Hereda cada regla de la instalación o define una excepción para esta biblioteca. Los formatos bloqueados por seguridad no pueden habilitarse.</p>}
-      <p>Almacenar permite registrar, clasificar y descargar el original. Indexar permite extraer su contenido para buscarlo. En esta fase solo PDF tiene extracción de texto y OCR; los demás formatos se conservan sin extracción.</p>
+      <p>Almacenar permite registrar, clasificar y descargar el original. Indexar permite extraer su contenido para buscarlo. PDF dispone de extracción de texto y OCR. DOCX, XLSX, TXT y CSV disponen de extracción de contenido estático al habilitar su indexación.</p>
       {policy && saved && <form className="form-grid" onSubmit={async event => {
         event.preventDefault(); setBusy(true); setError(''); setSuccess('');
         try {
@@ -74,7 +74,7 @@ export function FileSettings({ libraryID }: { libraryID?: string }) {
           <div className="table-wrap"><table><thead><tr><th>Formato</th><th>Almacenar</th><th>Indexar contenido</th><th>Extracción disponible</th></tr></thead><tbody>
             {saved.formats.map(format => <tr key={format.id}><th scope="row">{format.id.toUpperCase()}</th>
               {(['store_formats', 'index_formats'] as const).map(key => <td key={key}><input type="checkbox" aria-label={`${key === 'store_formats' ? 'Almacenar' : 'Indexar'} ${format.id.toUpperCase()}`} checked={policy[key].includes(format.id)} disabled={busy || inherited(key) || key === 'index_formats' && !policy.store_formats.includes(format.id)} onChange={event => change(key, event.target.checked ? [...policy[key], format.id] : policy[key].filter(id => id !== format.id))} /></td>)}
-              <td>{format.extractor_available ? 'Texto y OCR de PDF' : 'No disponible todavía'}</td></tr>)}
+              <td>{format.extractor_available ? format.id === 'pdf' ? 'Texto y OCR de PDF' : 'Texto estructurado' : 'No disponible todavía'}</td></tr>)}
           </tbody></table></div><p className="muted">La lista de indexación heredada se limita a los formatos que esta biblioteca permite almacenar.</p>
         </fieldset>
         <fieldset className="settings-section"><legend>Tamaños máximos</legend>
@@ -86,7 +86,7 @@ export function FileSettings({ libraryID }: { libraryID?: string }) {
         </fieldset>
         <fieldset className="settings-section"><legend>Documentos sin indexación</legend>
           {inheritance('unknown_policy', 'política de extensiones desconocidas')}
-          <label>Extensión no reconocida<select disabled={busy || inherited('unknown_policy')} value={policy.unknown_policy} onChange={event => change('unknown_policy', event.target.value)}><option value="reject">Rechazar (recomendado)</option><option value="store_text">Conservar solo si es texto UTF-8 validado, sin indexarlo</option></select></label>
+          <label>Extensión no reconocida<select disabled={busy || inherited('unknown_policy')} value={policy.unknown_policy} onChange={event => change('unknown_policy', event.target.value)}><option value="reject">Rechazar (recomendado)</option><option value="store_text">Conservar solo si es texto Unicode validado, sin indexarlo</option></select></label>
           <p className="muted">Los binarios desconocidos y los archivos prohibidos siempre se rechazan. La excepción de texto requiere permitir TXT. Una extensión conocida con contenido distinto se rechaza.</p>
           {inheritance('non_indexable_policy', 'comportamiento sin indexación')}
           <label>Archivo almacenable que no puede indexarse<select disabled={busy || inherited('non_indexable_policy')} value={policy.non_indexable_policy} onChange={event => change('non_indexable_policy', event.target.value)}><option value="store">Conservar original y metadatos (recomendado)</option><option value="reject">Rechazar su incorporación</option></select></label>

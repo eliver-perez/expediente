@@ -1,3 +1,4 @@
+import { ProcessingPolicy } from './ProcessingPolicy';
 import { useEffect, useState } from 'react';
 import { api, message } from './api';
 import { Notice } from './components';
@@ -8,6 +9,7 @@ export function ProcessingSettings() {
  useEffect(()=>{const abort=new AbortController();api<Settings>('/system/processing',{signal:abort.signal}).then(value=>{setSettings(value);setConfiguration({...value.effective,mode:value.configuration.mode});}).catch(cause=>{if(!abort.signal.aborted)setError(message(cause));});return()=>abort.abort();},[]);
  const gb=(n:number)=>n?`${(n/2**30).toFixed(1)} GB`:'No disponible';
  return <><header className="page-heading"><p className="eyebrow">CONFIGURACIÓN DE AIBID</p><h1>Procesamiento del equipo</h1><p>Comparte los recursos entre las bibliotecas y las demás aplicaciones del equipo.</p></header><Notice text={error}/><Notice text={success} kind="success"/>
+ <ProcessingPolicy/>
  {settings&&<><section className="card"><h2>Recursos detectados al iniciar</h2><div className="metrics"><div className="metric"><strong>{settings.resources.physical_cores||'—'}</strong><span>Núcleos físicos</span></div><div className="metric"><strong>{settings.resources.logical_cpus}</strong><span>Procesadores lógicos</span></div><div className="metric"><strong>{settings.resources.available_cpus}</strong><span>CPU disponibles para AIBID</span></div><div className="metric"><strong>{gb(settings.resources.available_memory_bytes)}</strong><span>Memoria disponible de {gb(settings.resources.memory_bytes)}</span></div></div>{settings.resources.notes.map(note=><p className="muted" key={note}>{note}</p>)}</section>
  <section className="card"><h2>Procesos simultáneos</h2><form onSubmit={async event=>{event.preventDefault();setBusy(true);setError('');setSuccess('');try{const result=await api<Settings>('/system/processing',{method:'PUT',body:{configuration,revision:settings.revision}});setSettings(result);setConfiguration({...result.effective,mode:result.configuration.mode});setSuccess('Configuración guardada. Se aplicará a nuevos trabajos en unos segundos; los trabajos activos terminan normalmente.');}catch(cause){setError(message(cause));}finally{setBusy(false);}}}>
  <label>Modo de procesamiento<select value={configuration.mode} onChange={event=>setConfiguration({...configuration,mode:event.target.value})}><option value="auto">Automático (recomendado)</option><option value="manual">Manual</option></select></label><p>El modo automático reserva capacidad para otras aplicaciones. La revisión de carpetas avanza por separado.</p>

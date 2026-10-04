@@ -163,8 +163,8 @@ func TestPolicyHierarchyAndIndexingCapability(t *testing.T) {
 		t.Fatal("unknown extension indexed")
 	}
 	base.Index = append(base.Index, "docx")
-	if base.IndexReason(Detection{Format: "docx"}, 100) != "extractor_pending" {
-		t.Fatal("unimplemented extractor claimed")
+	if base.IndexReason(Detection{Format: "docx"}, 100) != "" {
+		t.Fatal("available extractor not enabled")
 	}
 	base.NonIndexable = "reject"
 	if base.Admit(Detection{Format: "txt"}, 100) == nil {

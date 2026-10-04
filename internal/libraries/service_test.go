@@ -14,6 +14,7 @@ import (
 
 	"gestor-documental/internal/config"
 	"gestor-documental/internal/domain"
+	"gestor-documental/internal/extraction"
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/storage"
 )
@@ -445,7 +446,7 @@ func TestQueueRetryLimitRestartAndPublicationFence(t *testing.T) {
 	}
 	stale := job
 	stale.Fence++
-	if err = service.publish(context.Background(), stale, registered, nil, "spa"); err == nil {
+	if err = service.publish(context.Background(), stale, registered, extraction.Result{}, "spa", now()); err == nil {
 		t.Fatal("stale fencing token published")
 	}
 	runtime, err := service.Start(context.Background())

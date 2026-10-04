@@ -27,3 +27,18 @@ for extension, main, content_type, parts in [
 
 (destination / "sample.txt").write_text("Documento sintético AIBID.\nEl original debe conservarse sin cambios.\n", encoding="utf-8")
 (destination / "sample.csv").write_text("Material,Cantidad\nArena,12\nCemento,8\n", encoding="utf-8")
+
+# Regression documents contain synthetic text only, not the user's quotations.
+for extension, output_name in [("docx", "blank-leading.docx"), ("xlsx", "printer-settings.xlsx")]:
+    with ZipFile(destination / f"sample.{extension}") as source:
+        parts = {name: source.read(name) for name in source.namelist()}
+    if extension == "docx":
+        parts["word/document.xml"] = b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p/><w:p/><w:p><w:r><w:t>Cotizacion sintetica con texto despues del logotipo.</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Instalacion sintetica</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>'
+    else:
+        parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace(b'</Types>', b'<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.printerSettings"/></Types>')
+        parts["xl/printerSettings/printerSettings1.bin"] = b'Synthetic printer settings\x00\x01\x02'
+    with ZipFile(destination / output_name, "w") as archive:
+        for name, contents in sorted(parts.items()):
+            entry = ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+            entry.compress_type = ZIP_DEFLATED
+            archive.writestr(entry, contents)

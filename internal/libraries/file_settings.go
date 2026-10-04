@@ -108,6 +108,9 @@ func (service *Service) ConfigureFiles(ctx context.Context, principal domain.Pri
 		if _, err = tx.ExecContext(ctx, `INSERT INTO document_file_settings VALUES(?,?,?,?) ON CONFLICT(scope) DO UPDATE SET configuration_json=excluded.configuration_json,revision=excluded.revision,updated_at=excluded.updated_at`, scope, encode(value), revision+1, now()); err != nil {
 			return err
 		}
+		if err = service.queueNewlyIndexable(ctx, tx, libraryID); err != nil {
+			return err
+		}
 		return record(ctx, tx, current, metadata, "configuration.files_changed", libraryID, "", map[string]any{"scope": scope, "configuration": value, "revision": revision + 1})
 	}
 	if libraryID == "" {

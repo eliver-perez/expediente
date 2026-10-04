@@ -1,0 +1,15 @@
+CREATE TEMP TABLE extractor_rollback_guard (empty INTEGER CHECK(empty=0));
+INSERT INTO extractor_rollback_guard SELECT count(*) FROM extraction_runs;
+DROP TABLE extractor_rollback_guard;
+ALTER TABLE extraction_pages DROP COLUMN context_json;
+ALTER TABLE extraction_pages DROP COLUMN context_label;
+ALTER TABLE extraction_pages DROP COLUMN unit_kind;
+ALTER TABLE extraction_runs DROP COLUMN warnings_json;
+ALTER TABLE extraction_runs DROP COLUMN summary_json;
+ALTER TABLE extraction_runs DROP COLUMN unit_count;
+ALTER TABLE extraction_runs DROP COLUMN result_code;
+ALTER TABLE extraction_runs DROP COLUMN started_at;
+ALTER TABLE extraction_runs DROP COLUMN document_format;
+ALTER TABLE extraction_runs DROP COLUMN extractor_version;
+ALTER TABLE extraction_runs DROP COLUMN extractor_id;
+DELETE FROM schema_migrations WHERE name='0010_document_extractors.up.sql';

@@ -46,6 +46,8 @@ type Segment struct {
 }
 type Match struct {
 	Page     int       `json:"page_number"`
+	Kind     string    `json:"unit_kind"`
+	Label    string    `json:"context_label"`
 	Segments []Segment `json:"segments"`
 }
 type Document struct {
@@ -85,6 +87,9 @@ type Document struct {
 	Identity       string            `json:"-"`
 	Hash           string            `json:"sha256"`
 	Pages          int               `json:"page_count"`
+	Units          int               `json:"unit_count"`
+	FirstTextUnit  int               `json:"first_text_unit,omitempty"`
+	Processing     *ProcessingRun    `json:"processing,omitempty"`
 	Preview        bool              `json:"can_preview_original"`
 	Download       bool              `json:"can_download"`
 	Matches        []Match           `json:"matches"`
@@ -102,14 +107,14 @@ type SearchResult struct {
 	Libraries []string      `json:"consulted_library_ids"`
 }
 
-const documentColumns = "d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,coalesce(l.root_id,''),coalesce(l.relative_path,''),coalesce(l.canonical_path,''),f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0),f.storage_source,coalesce(d.case_id,''),coalesce(c.identifier,''),coalesce(d.category_id,''),coalesce(d.document_type_id,''),coalesce(d.created_by,''),d.metadata_json,coalesce(cat.name,''),coalesce(dt.name,''),f.integrity_status,v.size_bytes,d.created_at,coalesce(v.os_modified_at,''),coalesce(v.document_format,'pdf'),coalesce(v.detected_mime,'application/pdf'),coalesce(v.original_extension,'.pdf'),coalesce(v.extension_mismatch,0),coalesce(v.index_block_reason,'')"
+const documentColumns = "d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,coalesce(l.root_id,''),coalesce(l.relative_path,''),coalesce(l.canonical_path,''),f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0),f.storage_source,coalesce(d.case_id,''),coalesce(c.identifier,''),coalesce(d.category_id,''),coalesce(d.document_type_id,''),coalesce(d.created_by,''),d.metadata_json,coalesce(cat.name,''),coalesce(dt.name,''),f.integrity_status,v.size_bytes,d.created_at,coalesce(v.os_modified_at,''),coalesce(v.document_format,'pdf'),coalesce(v.detected_mime,'application/pdf'),coalesce(v.original_extension,'.pdf'),coalesce(v.extension_mismatch,0),coalesce(v.index_block_reason,''),coalesce(nullif(e.unit_count,0),e.page_count,0)"
 const documentJoins = " FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id LEFT JOIN storage_roots r ON r.id=l.root_id LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id LEFT JOIN cases c ON c.id=d.case_id LEFT JOIN categories cat ON cat.id=d.category_id LEFT JOIN document_types dt ON dt.id=d.document_type_id "
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanDocument(row rowScanner) (Document, error) {
 	var document Document
-	err := row.Scan(&document.ID, &document.LibraryID, &document.Title, &document.Filename, &document.Availability, &document.Approval, &document.Freshness, &document.Revision, &document.RootID, &document.RelativePath, &document.OriginalPath, &document.FileID, &document.Identity, &document.Hash, &document.Pages, &document.Source, &document.CaseID, &document.CaseIdentifier, &document.CategoryID, &document.TypeID, &document.CreatedBy, &document.MetadataJSON, &document.CategoryName, &document.TypeName, &document.Integrity, &document.Size, &document.Created, &document.Modified, &document.Format, &document.MIME, &document.Extension, &document.Mismatch, &document.IndexReason)
+	err := row.Scan(&document.ID, &document.LibraryID, &document.Title, &document.Filename, &document.Availability, &document.Approval, &document.Freshness, &document.Revision, &document.RootID, &document.RelativePath, &document.OriginalPath, &document.FileID, &document.Identity, &document.Hash, &document.Pages, &document.Source, &document.CaseID, &document.CaseIdentifier, &document.CategoryID, &document.TypeID, &document.CreatedBy, &document.MetadataJSON, &document.CategoryName, &document.TypeName, &document.Integrity, &document.Size, &document.Created, &document.Modified, &document.Format, &document.MIME, &document.Extension, &document.Mismatch, &document.IndexReason, &document.Units)
 	document.Matches = []Match{}
 	if err == nil {
 		err = json.Unmarshal([]byte(document.MetadataJSON), &document.Metadata)
@@ -408,28 +413,29 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 				}
 				permissionsByLibrary[document.LibraryID] = allowed
 			}
-			document.Preview = (document.Availability == "available" || document.Availability == "staged") && allowed["documents.read"]
+			available := (document.Availability == "available" || document.Availability == "staged") && document.IndexReason != "content_rejected"
+			document.Preview = available && document.Format == "pdf" && allowed["documents.read"]
 			document.CanCancel = document.Availability == "staged" && document.CreatedBy == current.User.ID && allowed["documents.cancel_own"] && (document.Approval == "draft" || document.Approval == "rejected")
 			document.CanClassify = allowed["documents.classify"]
 			document.CanAssociate = allowed["documents.associate"] && document.Source == "linked"
 			document.CanReassign = allowed["documents.reassign"]
-			document.Download = document.Preview && allowed["documents.download"]
+			document.Download = available && allowed["documents.download"]
 			if document.Availability == "staged" || !allowed["storage.view_paths"] {
 				document.OriginalPath = ""
 			}
 			if expression != "" && input.Type != "name" && input.Type != "identifier" {
-				matches, err := transaction.QueryContext(ctx, "SELECT p.page_number,snippet(pages_fts,0,char(1),char(2),' … ',24) FROM pages_fts JOIN indexed_pages p ON p.id=pages_fts.rowid WHERE pages_fts MATCH ? AND p.physical_file_id=? ORDER BY p.page_number LIMIT 5", expression, document.FileID)
+				matches, err := transaction.QueryContext(ctx, "SELECT p.page_number,snippet(pages_fts,0,char(1),char(2),' … ',24),u.unit_kind,u.context_label FROM pages_fts JOIN indexed_pages p ON p.id=pages_fts.rowid JOIN extraction_pages u ON u.extraction_id=p.extraction_id AND u.page_number=p.page_number WHERE pages_fts MATCH ? AND p.physical_file_id=? ORDER BY p.page_number LIMIT 5", expression, document.FileID)
 				if err != nil {
 					return err
 				}
 				for matches.Next() {
 					var number int
-					var snippet string
-					if err = matches.Scan(&number, &snippet); err != nil {
+					var snippet, kind, label string
+					if err = matches.Scan(&number, &snippet, &kind, &label); err != nil {
 						matches.Close()
 						return err
 					}
-					document.Matches = append(document.Matches, Match{Page: number, Segments: segments(snippet)})
+					document.Matches = append(document.Matches, Match{Page: number, Kind: kind, Label: label, Segments: segments(snippet)})
 				}
 				err = matches.Err()
 				matches.Close()
