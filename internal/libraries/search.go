@@ -18,6 +18,7 @@ import (
 )
 
 type Filters struct {
+	Format         string `json:"format"`
 	DirectChildren bool   `json:"direct_children"`
 	RootID         string `json:"root_id"`
 	ViewID         string `json:"view_id"`
@@ -61,6 +62,7 @@ type Document struct {
 	CategoryName   string            `json:"category_name"`
 	TypeName       string            `json:"document_type_name"`
 	CanCancel      bool              `json:"can_cancel"`
+	CanReindex     bool              `json:"can_reindex"`
 	Source         string            `json:"storage_source"`
 	CaseID         string            `json:"case_id"`
 	CaseIdentifier string            `json:"case_identifier"`
@@ -183,6 +185,11 @@ func compileQuery(query string) (string, []string, error) {
 }
 func (service *Service) Search(ctx context.Context, principal domain.Principal, input SearchInput, metadata domain.RequestMetadata, auditSearch bool) (SearchResult, error) {
 	result := SearchResult{Items: []Document{}, Libraries: []string{}, Groups: []SearchGroup{}}
+	switch input.Filters.Format {
+	case "", "pdf", "docx", "xlsx", "txt", "csv":
+	default:
+		return result, invalid("Selecciona un formato de archivo válido.")
+	}
 	if input.Type == "" {
 		input.Type = "general"
 	}
@@ -307,6 +314,10 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 		if input.Filters.Availability != "" {
 			conditions = append(conditions, "(CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END)=?")
 			arguments = append(arguments, input.Filters.Availability)
+		}
+		if input.Filters.Format != "" {
+			conditions = append(conditions, "coalesce(v.document_format,'pdf')=?")
+			arguments = append(arguments, input.Filters.Format)
 		}
 		for _, filter := range []struct{ column, value string }{{"d.case_id", input.Filters.CaseID}, {"d.category_id", input.Filters.CategoryID}, {"d.document_type_id", input.Filters.TypeID}, {"c.exercise", input.Filters.Exercise}, {"f.storage_source", input.Filters.Source}, {"d.approval_status", input.Filters.Approval}} {
 			if filter.value != "" {

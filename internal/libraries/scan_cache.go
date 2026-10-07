@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"gestor-documental/internal/diagnostics"
 	"gestor-documental/internal/documentformat"
 	"os"
 	"strings"
@@ -53,6 +54,11 @@ func (service *Service) scanPathError(ctx context.Context, root Root, relative s
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	_, err := service.Database.Writer.ExecContext(ctx, `INSERT INTO scan_errors VALUES(?,?,?,?) ON CONFLICT(root_id,relative_path) DO UPDATE SET error_code=excluded.error_code,occurred_at=excluded.occurred_at`, root.ID, relative, failureCode(cause), now())
-	return err
+	return service.Database.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO scan_errors VALUES(?,?,?,?) ON CONFLICT(root_id,relative_path) DO UPDATE SET error_code=excluded.error_code,occurred_at=excluded.occurred_at`, root.ID, relative, failureCode(cause), now())
+		if err != nil {
+			return err
+		}
+		return diagnostics.RecordTx(ctx, tx, "scan", failureCode(cause), diagnostics.Context{LibraryID: root.LibraryID, RootID: root.ID, Operation: "scan"})
+	})
 }

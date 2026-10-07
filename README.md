@@ -3,14 +3,11 @@
 **Aplicación de Indexación de Bibliotecas Digitales**  
 Tu biblioteca digital, ordenada y al alcance.
 
-**AIBID 2.0 · fase 3 implementada:** procesamiento con pausa y reanudación,
-intentos y tiempo por documento configurables, estados y diagnósticos claros.
-Incluye las correcciones de Word, Excel e iconos SVG de formatos.
-Se conservan las reglas globales y por biblioteca: habilita los formatos nuevos en
-**Archivos y procesamiento → Indexar contenido** para procesarlos.
-[Cambios, migración, validación y pruebas manuales](docs/AIBID-2.0-FASE-3.md).
-Paquetes de esta fase: `dist/aibid-2.0-fase-3/`; se conservan los anteriores.
-La fase 4 (previews y caché) queda pendiente de autorización.
+**AIBID 2.0 · fase 8:** Dashboard con gráficas locales y datos reales, configuración
+reunida en Ajustes y revisión de compatibilidad, seguridad, caché y regresiones.
+Conserva el esquema 14, las funciones anteriores y la corrección Windows f6r1.
+[Cambios, validación y pruebas manuales](docs/AIBID-2.0-FASE-8.md).
+Paquetes: `dist/aibid-2.0-fase-8/`; se conservan las entregas anteriores.
 
 Producto comercial genérico de instalación local, con Go + React + SQLite WAL/FTS5
 y acceso por LAN. **H6 implementado:** cliente de licencias V1.0 online/offline, con simulador HTTPS,

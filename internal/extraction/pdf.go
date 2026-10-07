@@ -21,18 +21,20 @@ import (
 )
 
 type Options struct {
-	Progress           func(operation string, completed, total int) `json:"-"`
-	Concurrency        Concurrency                                  `json:"concurrency"`
-	FontconfigFile     string                                       `json:"fontconfig_file,omitempty"`
-	TessdataDirectory  string                                       `json:"tessdata_directory,omitempty"`
-	PDFInfo            string                                       `json:"pdfinfo"`
-	PDFText            string                                       `json:"pdftotext"`
-	PDFRender          string                                       `json:"pdftoppm"`
-	Tesseract          string                                       `json:"tesseract"`
-	Workers            int                                          `json:"workers"`
-	MaximumFileMB      int                                          `json:"maximum_file_mb"`
-	MaximumPages       int                                          `json:"maximum_pages"`
-	PageTimeoutSeconds int                                          `json:"page_timeout_seconds"`
+	DisableOCR              bool                                         `json:"-"`
+	MinimumNativeCharacters int                                          `json:"-"`
+	Progress                func(operation string, completed, total int) `json:"-"`
+	Concurrency             Concurrency                                  `json:"concurrency"`
+	FontconfigFile          string                                       `json:"fontconfig_file,omitempty"`
+	TessdataDirectory       string                                       `json:"tessdata_directory,omitempty"`
+	PDFInfo                 string                                       `json:"pdfinfo"`
+	PDFText                 string                                       `json:"pdftotext"`
+	PDFRender               string                                       `json:"pdftoppm"`
+	Tesseract               string                                       `json:"tesseract"`
+	Workers                 int                                          `json:"workers"`
+	MaximumFileMB           int                                          `json:"maximum_file_mb"`
+	MaximumPages            int                                          `json:"maximum_pages"`
+	PageTimeoutSeconds      int                                          `json:"page_timeout_seconds"`
 }
 
 func Defaults() Options {
@@ -182,7 +184,11 @@ func (options Options) Prepare(ctx context.Context, documentPath string) ([]Page
 				}
 			}
 			method := "native"
-			if letters < 32 {
+			threshold := options.MinimumNativeCharacters
+			if threshold <= 0 {
+				threshold = 32
+			}
+			if letters < threshold && !options.DisableOCR {
 				method = "pending_ocr"
 			}
 			pages = append(pages, Page{Number: start + index, Method: method, Text: text})

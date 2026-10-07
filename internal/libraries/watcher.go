@@ -3,7 +3,9 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"gestor-documental/internal/diagnostics"
 	"github.com/fsnotify/fsnotify"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -61,6 +63,13 @@ func (runtime *Runtime) handleWatchEvent(ctx context.Context, event fsnotify.Eve
 			return
 		}
 	}
+	rules, e := runtime.Service.advancedConfiguration(ctx, runtime.Service.Database.Reader, root.LibraryID)
+	if e != nil || !rules.Effective.WatcherEnabled || !rules.Effective.AutomaticProcessing || rules.Effective.ignoredPath(relative) != "" {
+		return
+	}
+	if info, err := os.Lstat(event.Name); err == nil && ignoredAttributes(info, rules.Effective) != "" {
+		return
+	}
 	path := ""
 	if !event.Has(fsnotify.Remove) && !event.Has(fsnotify.Rename) && relativeSafe(relative) {
 		// Every regular file can contain a document regardless of its extension.
@@ -85,7 +94,10 @@ func (runtime *Runtime) eventsLost(ctx context.Context) {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling',last_error_code='WATCH_EVENTS_LOST' WHERE storage_source='linked' AND status IN ('active','inaccessible')")
-		return err
+		if err != nil {
+			return err
+		}
+		return diagnostics.RecordTx(ctx, tx, "watcher", "WATCH_EVENTS_LOST", diagnostics.Context{Operation: "watch"})
 	})
 	runtime.mutex.Lock()
 	defer runtime.mutex.Unlock()

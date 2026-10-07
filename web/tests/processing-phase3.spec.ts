@@ -6,7 +6,7 @@ test('fase 3: pausa persistente, límites, Word con párrafos vacíos y Excel co
   await page.getByLabel('Usuario', { exact: true }).fill('admin-e2e');
   await page.getByLabel('Contraseña', { exact: true }).fill('Browser-fixture-password-2026');
   await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await page.getByRole('link', { name: 'Procesamiento', exact: true }).click();
+  await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Procesamiento y recursos', exact: true }).click();
   await page.getByLabel('Máximo de intentos', { exact: true }).fill('2');
   await page.getByLabel('Espera inicial entre intentos (segundos)', { exact: true }).fill('3');
   await page.getByLabel('Tiempo máximo por documento (segundos)', { exact: true }).fill('30');

@@ -8,10 +8,10 @@ test('acceso local y LAN real, UUID en HTTP y vuelta a local', async ({ page }) 
     await page.getByLabel('Usuario', { exact: true }).fill('admin-e2e');
     await page.getByLabel('Contraseña', { exact: true }).fill('Browser-fixture-password-2026');
     await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-    await expect(page.getByRole('link', { name: 'Acceso y red', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Ajustes', exact: true })).toBeVisible();
   }
   await login('/login');
-  await page.getByRole('link', { name: 'Acceso y red', exact: true }).click();
+  await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Acceso y red', exact: true }).click();
   await expect(page.getByText('Correcto · puerto en escucha', { exact: true })).toBeVisible();
   await page.getByLabel('Modo de acceso').selectOption('lan');
   await page.getByRole('button', { name: 'Guardar acceso', exact: true }).click();
@@ -31,7 +31,7 @@ test('acceso local y LAN real, UUID en HTTP y vuelta a local', async ({ page }) 
     await expect(page.getByRole('heading', { name: 'Licencia de AIBID', exact: true })).toBeVisible();
     await page.getByText('Identificación para soporte', { exact: true }).click();
     await expect(page.locator('.document-accordion[open]').getByText('Clave pública de instalación', { exact: true })).toBeVisible();
-    await page.getByRole('link', { name: 'Acceso y red', exact: true }).click();
+    await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Acceso y red', exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByLabel('Modo de acceso')).toHaveValue('lan');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
@@ -41,7 +41,7 @@ test('acceso local y LAN real, UUID en HTTP y vuelta a local', async ({ page }) 
     await expect(page.getByText('Acceso local guardado.', { exact: false })).toBeVisible();
   } finally {
     await login('http://127.0.0.1:8099/login');
-    await page.getByRole('link', { name: 'Acceso y red', exact: true }).click();
+    await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Acceso y red', exact: true }).click();
     // Leave the shared browser fixture local even if a prior assertion fails.
     await expect(page.getByLabel('Modo de acceso')).toBeVisible();
     if (await page.getByLabel('Modo de acceso').inputValue() === 'lan') {

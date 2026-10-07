@@ -116,6 +116,16 @@ func (service *Service) prepareExtraction(ctx context.Context, job Job, options 
 	if err != nil {
 		return nil, err
 	}
+	rules, err := service.advancedConfiguration(ctx, service.Database.Reader, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	languages = rules.Effective.OCRLanguages
+	manual := job.Manual || ctx.Value(manualProcessingKey{}) == true
+	options.DisableOCR = !rules.Effective.OCREnabled || !rules.Effective.OCRAutomatic && !manual
+	options.MinimumNativeCharacters = rules.Effective.OCRMinimumCharacters
+	options.MaximumPages = rules.Effective.MaximumPages
+	options.PageTimeoutSeconds = rules.Effective.PageTimeoutSeconds
 	descriptor, available := extraction.ExtractorFor(format)
 	if !available {
 		return nil, scanFailure("EXTRACTOR_UNAVAILABLE")
@@ -224,9 +234,11 @@ func (service *Service) publish(ctx context.Context, job Job, root Root, result 
 			}
 		}
 		var currentLanguages string
-		if err := transaction.QueryRowContext(ctx, "SELECT ocr_languages FROM libraries WHERE id=?", root.LibraryID).Scan(&currentLanguages); err != nil {
+		rules, err := service.advancedConfiguration(ctx, transaction, root.LibraryID)
+		if err != nil {
 			return err
 		}
+		currentLanguages = rules.Effective.OCRLanguages
 		if result.Extractor.Format == "pdf" && currentLanguages != languages {
 			return scanFailure("VERSION_SUPERSEDED")
 		}
@@ -263,7 +275,7 @@ func (service *Service) publish(ctx context.Context, job Job, root Root, result 
 		if _, err := transaction.ExecContext(ctx, "UPDATE content_versions SET index_block_reason='' WHERE id=?", job.Version); err != nil {
 			return err
 		}
-		_, err := transaction.ExecContext(ctx, "UPDATE physical_files SET indexed_extraction_id=?,indexed_at=?,extraction_freshness='current' WHERE id=?", extractionID, now(), job.FileID)
+		_, err = transaction.ExecContext(ctx, "UPDATE physical_files SET indexed_extraction_id=?,indexed_at=?,extraction_freshness='current' WHERE id=?", extractionID, now(), job.FileID)
 		return err
 	})
 }

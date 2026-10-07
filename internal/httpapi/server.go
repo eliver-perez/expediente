@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"gestor-documental/internal/config"
+	"gestor-documental/internal/diagnostics"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/libraries"
@@ -65,7 +66,14 @@ func metadata(request *http.Request) domain.RequestMetadata {
 func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	server.libraryRoutes(mux)
+	server.observabilityRoutes(mux)
 	server.licenseRoutes(mux)
+	mux.HandleFunc("GET /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
+	mux.HandleFunc("PUT /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
+	mux.HandleFunc("POST /api/v1/system/previews/clear", server.protected("system.configure", true, server.clearPreviews))
+	mux.HandleFunc("GET /api/v1/documents/{document}/preview", server.protected("", true, server.documentPreview))
+	mux.HandleFunc("POST /api/v1/documents/{document}/preview", server.protected("", true, server.documentPreview))
+	mux.HandleFunc("GET /api/v1/documents/{document}/preview/content", server.protected("", true, server.previewContent))
 	mux.HandleFunc("GET /health/live", func(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, 200, map[string]string{"status": "ok"})
 	})
@@ -91,6 +99,10 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/system/processing-policy", server.protected("system.configure", true, server.processingPolicy))
 	mux.HandleFunc("PUT /api/v1/system/processing-policy", server.protected("system.configure", true, server.processingPolicy))
 	mux.HandleFunc("GET /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
+	mux.HandleFunc("GET /api/v1/system/advanced", server.protected("system.configure", true, server.advancedConfiguration))
+	mux.HandleFunc("PUT /api/v1/system/advanced", server.protected("system.configure", true, server.advancedConfiguration))
+	mux.HandleFunc("GET /api/v1/libraries/{library}/advanced-settings", server.protected("", true, server.advancedConfiguration))
+	mux.HandleFunc("PUT /api/v1/libraries/{library}/advanced-settings", server.protected("", true, server.advancedConfiguration))
 	mux.HandleFunc("GET /api/v1/system/files", server.protected("system.configure", true, server.fileConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/files", server.protected("system.configure", true, server.fileConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
@@ -149,7 +161,7 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 		defer func() {
 			if recover() != nil {
 				server.logger.Error("request panic", "request_id", requestID)
-				server.fail(writer, request, fmt.Errorf("request panic"))
+				server.fail(writer, request, domain.Failure("HTTP_PANIC", "No se pudo completar la operación.", 500))
 			}
 		}()
 		allowedHost := request.Host == server.publicHost
@@ -255,6 +267,11 @@ func (server *Server) fail(writer http.ResponseWriter, request *http.Request, er
 		server.logger.Error("request failed", "request_id", metadata(request).RequestID, "error_type", fmt.Sprintf("%T", err))
 	}
 	// An older in-flight request must not delete a cookie issued by a newer login.
+	if failure.Status >= 500 {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = diagnostics.Record(ctx, server.identity.Database, "http", failure.Code, diagnostics.Context{RequestID: metadata(request).RequestID, Operation: "http", HTTPStatus: failure.Status})
+	}
 	// Logout/password changes explicitly clear it; stale sessions are already invalid in DB.
 	if failure.Status == 429 {
 		writer.Header().Set("Retry-After", "60")
@@ -284,7 +301,7 @@ func (server *Server) frontend(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	switch request.URL.Path {
-	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing", "/admin/network", "/admin/files":
+	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing", "/admin/network", "/admin/files", "/admin/previews", "/admin/advanced", "/admin/settings", "/admin/dashboard", "/admin/errors":
 		contents, err := fs.ReadFile(assets, "index.html")
 		if err != nil {
 			http.Error(writer, "Aplicación no disponible.", 503)

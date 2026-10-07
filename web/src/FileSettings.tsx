@@ -57,7 +57,7 @@ export function FileSettings({ libraryID }: { libraryID?: string }) {
   const inherited = (key: keyof FilePolicy) => !!libraryID && overrides?.[key] === null;
   const inheritance = (key: keyof FilePolicy, label: string) => libraryID && <label className="check"><input type="checkbox" checked={inherited(key)} onChange={event => inherit(key, event.target.checked)} />Heredar {label}</label>;
   return <>
-    {!libraryID && <header className="page-heading"><p className="eyebrow">CONFIGURACIÓN GENERAL</p><h1>Archivos y procesamiento</h1><p>Define qué documentos puede incorporar AIBID y cuáles pueden aportar texto a las búsquedas.</p></header>}
+    {!libraryID && <header className="page-heading"><p className="eyebrow">CONFIGURACIÓN GENERAL</p><h2>Archivos y procesamiento</h2><p>Define qué documentos puede incorporar AIBID y cuáles pueden aportar texto a las búsquedas.</p></header>}
     <section className="card"><div className="section-heading"><h2>{libraryID ? 'Archivos y procesamiento' : 'Reglas de archivos'}</h2><button className="secondary" disabled={busy} onClick={() => { setError(''); setSuccess(''); setRefresh(refresh + 1); }}>Actualizar reglas</button></div>
       <Notice text={error} /><Notice text={success} kind="success" />
       {libraryID && <p>Hereda cada regla de la instalación o define una excepción para esta biblioteca. Los formatos bloqueados por seguridad no pueden habilitarse.</p>}

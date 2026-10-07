@@ -303,3 +303,50 @@ Excel admite las partes válidas de impresión sin habilitar binarios arbitrario
 Tres documentos reales comprobados; fixtures sintéticos para la regresión.
 [Archivos, decisiones, validación y pruebas manuales](AIBID-2.0-FASE-3.md).
 La fase 4 (previews y caché) queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 4 (2026-10-04)
+
+Autorizada por el propietario. Vistas PDF de DOCX/XLSX bajo demanda con LibreOffice
+opcional, proceso independiente, copia privada y perfil sin macros ni referencias
+externas. Caché limitada con LRU real, caducidad, uso visible, limpieza manual e
+invalidación por original/generador. No crea documentos ni modifica el índice.
+Migración aditiva 12 con respaldo previo y actualización desde fase 3.
+[Archivos, conversor, validación y pruebas manuales](AIBID-2.0-FASE-4.md).
+La fase 5 queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 5 (2026-10-05)
+
+Autorizada por el propietario, incluyendo reconciliaciones simultáneas por carpeta.
+Filtros por formato detectado, contexto estructurado en resultados, reindexación
+individual con comprobación de tipo y hash, historial y publicación atómica del
+índice. Hasta cuatro recorridos de carpetas distintas; coalescencia y exclusión
+por raíz conservadas. Mantiene el esquema 12 y los datos de la fase 4.
+[Archivos, validación y pruebas manuales](AIBID-2.0-FASE-5.md).
+La fase 6 queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 6
+
+Configuración avanzada, herencia por biblioteca, automatización, OCR y watcher.
+Unificación de seis acordeones e Historial de cargas paginado. Migración aditiva 13.
+Detalle y evidencia en [AIBID-2.0-FASE-6.md](AIBID-2.0-FASE-6.md).
+La fase 7 permanece pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 7 (2026-10-06)
+
+Autorizada por el propietario. Panel general, indicadores agregados y registro
+operacional independiente de Auditoría, con filtros, revisión y diagnóstico seguro
+para soporte. Retención acotada y configurable; migración aditiva 14 con respaldo.
+Conserva la corrección Windows f6r1 y acepta actualizar desde fase 6.
+[Decisiones, validación y pruebas manuales](AIBID-2.0-FASE-7.md).
+La fase 8 queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 8 (2026-10-06)
+
+Autorizada por el propietario. Revisión final y estabilización; Dashboard con
+gráficas locales, serie diaria de incorporaciones y tablas accesibles. Ajustes
+agrupa cinco secciones con contraste corregido y conserva rutas anteriores.
+Chart.js 4.5.1 empaquetado; dependencia de LibreOffice explícita. Se mantiene el
+esquema 14 y la actualización conserva datos. Regresión automática, conversión
+Office real, inspección de paquetes y actualización nativa de fase 7 en datos
+temporales; la ejecución de instaladores en los equipos destino sigue documentada.
+[Alcance, dependencias, validación y comprobación manual](AIBID-2.0-FASE-8.md).

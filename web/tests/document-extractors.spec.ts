@@ -26,7 +26,7 @@ test('extractores: habilitar contenido, buscar en Office y consultar contexto y 
   await expect.poll(async () => (await (await page.request.get(`/api/v1/libraries/${library.id}/processing`)).json()).stats.processed).toBe(4);
   await page.getByRole('button', { name: 'Clasificar sample.xlsx', exact: true }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.locator('iframe')).toHaveCount(0);
+  await expect(dialog.getByRole('region', { name: 'Vista previa del documento' })).toBeVisible();
   await expect(dialog.locator('.retained-text pre')).toContainText('Material sintético');
   await expect(dialog.getByText('Hoja Prueba · celda A1', { exact: true })).toBeVisible();
   await dialog.getByLabel('Unidad de texto').fill('2');

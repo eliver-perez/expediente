@@ -25,7 +25,7 @@ func (server *Server) libraryRoutes(mux *http.ServeMux) {
 		"GET /api/v1/libraries/{library}/roots": server.libraryRoots, "PATCH /api/v1/roots/{root}": server.configureRoot, "POST /api/v1/roots/{root}/retirement-plans": server.retirementPlan, "POST /api/v1/roots/{root}/retire": server.retireRoot,
 		"GET /api/v1/libraries/{library}/folder-views": server.libraryViews, "POST /api/v1/libraries/{library}/folder-views": server.addView, "POST /api/v1/libraries/{library}/verify": server.verifyLibrary,
 		"GET /api/v1/libraries/{library}/explorer": server.explorer, "POST /api/v1/search": server.search,
-		"GET /api/v1/documents/{document}": server.document, "GET /api/v1/documents/{document}/content": server.documentContent, "GET /api/v1/documents/{document}/download": server.documentContent,
+		"POST /api/v1/documents/{document}/reindex": server.reindexDocument, "GET /api/v1/documents/{document}": server.document, "GET /api/v1/documents/{document}/content": server.documentContent, "GET /api/v1/documents/{document}/download": server.documentContent,
 		"GET /api/v1/documents/{document}/pages/{page}/text": server.documentText, "GET /api/v1/documents/{document}/history": server.documentHistory, "POST /api/v1/documents/{document}/remove-index": server.removeDocumentIndex,
 		"GET /api/v1/libraries/{library}/processing":        server.processing,
 		"POST /api/v1/jobs/{job}/cancel":                    server.cancelJob,
@@ -218,7 +218,7 @@ func (server *Server) explorer(writer http.ResponseWriter, request *http.Request
 		}
 		limit = parsed
 	}
-	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
+	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{Format: query.Get("format"), DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
 	result, err := server.libraries.Search(request.Context(), principal, input, metadata(request), input.Query != "")
 	server.libraryResult(writer, request, 200, result, err)
 }
@@ -403,4 +403,9 @@ func (server *Server) duplicateDocuments(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func (server *Server) reindexDocument(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
+	identifier, err := server.libraries.ReindexDocument(request.Context(), principal, request.PathValue("document"), request.Header.Get("Idempotency-Key"), metadata(request))
+	server.libraryResult(writer, request, 202, map[string]string{"id": identifier}, err)
 }

@@ -32,7 +32,7 @@ export function NetworkSettings() {
       if (save) setNotice(value.mode === 'local' ? 'Acceso local guardado. Continúa desde el equipo donde está instalado AIBID.' : 'Acceso en red guardado. Prueba una de las direcciones indicadas desde otro equipo de tu red.');
     } catch (cause) { setError(message(cause)); } finally { setBusy(false); }
   }
-  return <><header className="page-heading"><p className="eyebrow">CONFIGURACIÓN DE AIBID</p><h1>Acceso y red</h1><p>Elige desde qué equipos se puede acceder a esta instalación.</p></header>
+  return <><header className="page-heading"><p className="eyebrow">CONFIGURACIÓN DE AIBID</p><h2>Acceso y red</h2><p>Elige desde qué equipos se puede acceder a esta instalación.</p></header>
     <Notice text={error} /><Notice text={notice} kind="success" />
     {!status ? <p role="status">Consultando el servicio y el firewall…</p> : <>
       <section className="card"><h2>Acceso a AIBID</h2>

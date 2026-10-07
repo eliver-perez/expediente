@@ -34,3 +34,13 @@ func (service *Service) skipFile(ctx context.Context, root Root, scanID, relativ
 		return err
 	})
 }
+
+// An excluded subtree is not evidence of missing files. Preserve all previously
+// observed locations underneath it, including wildcard characters in names.
+func (service *Service) skipWatchedPath(ctx context.Context, root Root, scanID, relative, reason string) error {
+	if err := service.skipFile(ctx, root, scanID, relative, documentformat.Detection{}, reason); err != nil {
+		return err
+	}
+	_, err := service.Database.Writer.ExecContext(ctx, `INSERT INTO scan_file_observations SELECT ?,id,? FROM physical_file_locations WHERE root_id=? AND substr(relative_path,1,length(?)+1)=?||'/' AND retired_at IS NULL ON CONFLICT DO NOTHING`, scanID, now(), root.ID, relative, relative)
+	return err
+}

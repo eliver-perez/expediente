@@ -5,6 +5,7 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -68,7 +69,12 @@ func TestScanCachePartialErrorsAndTargetedRetry(t *testing.T) {
 	requireNoError(t, service.RetryScanErrors(ctx, principal, root, domain.RequestMetadata{}))
 	var payload string
 	requireNoError(t, service.Database.Reader.QueryRow("SELECT payload_json FROM jobs WHERE job_type='scan' AND status='queued'").Scan(&payload))
-	if payload != "{\"paths\":[\"bad.pdf\"]}" {
+	var retry struct {
+		Paths  []string `json:"paths"`
+		Manual bool     `json:"manual"`
+	}
+	requireNoError(t, json.Unmarshal([]byte(payload), &retry))
+	if len(retry.Paths) != 1 || retry.Paths[0] != "bad.pdf" || !retry.Manual {
 		t.Fatal(payload)
 	}
 	requireNoError(t, service.Scan(context.WithValue(ctx, scanPathsKey{}, []string{"bad.pdf"}), root, 256<<20, nil))

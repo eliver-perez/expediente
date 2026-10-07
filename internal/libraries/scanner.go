@@ -77,6 +77,11 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 	if !activeRoot(root) {
 		return scanFailure("ROOT_DISABLED")
 	}
+	rules, err := service.advancedConfiguration(ctx, service.Database.Reader, root.LibraryID)
+	if err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, scanPolicyKey{}, rules.Effective)
 	directory, err := inspectDirectory(root.Path)
 	if err != nil || directory.Identity != root.Identity {
 		return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
@@ -155,6 +160,15 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 			}
 			return advance(nil)
 		}
+		if relativeDirectory != "." && rules.Effective.ignoredPath(relativeDirectory) != "" {
+			if err = service.skipWatchedPath(ctx, root, scanID, relativeDirectory, rules.Effective.ignoredPath(relativeDirectory)); err != nil {
+				return err
+			}
+			if err = advance(nil); err != nil {
+				return err
+			}
+			continue
+		}
 		info, statError := container.Lstat(relativeDirectory)
 		if statError != nil {
 			if relativeDirectory == "." {
@@ -164,6 +178,17 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 				return err
 			}
 			continue
+		}
+		if relativeDirectory != "." {
+			if reason := ignoredAttributes(info, rules.Effective); reason != "" {
+				if err = service.skipWatchedPath(ctx, root, scanID, relativeDirectory, reason); err != nil {
+					return err
+				}
+				if err = advance(nil); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		if info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular() {
 			err = service.scanOne(ctx, root, scanID, relativeDirectory, maximumBytes)
@@ -219,8 +244,23 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 					skippedLinks = true
 					continue
 				}
+				reason := rules.Effective.ignoredPath(relative)
+				if reason == "" {
+					reason = ignoredEntryAttributes(entry, rules.Effective)
+				}
+				if reason != "" && !entry.IsDir() {
+					if err = service.skipWatchedPath(ctx, root, scanID, relative, reason); err != nil {
+						folder.Close()
+						return err
+					}
+					continue
+				}
 				if entry.IsDir() {
-					if excludedDirectory(entry.Name()) {
+					if reason != "" {
+						if err = service.skipWatchedPath(ctx, root, scanID, relative, reason); err != nil {
+							folder.Close()
+							return err
+						}
 						_, err = service.Database.Writer.ExecContext(ctx, "UPDATE scan_progress SET excluded_directories=excluded_directories+1 WHERE scan_id=?", scanID)
 						if err != nil {
 							folder.Close()
@@ -366,6 +406,10 @@ func (service *Service) checkRootRevision(ctx context.Context, transaction *sql.
 	return nil
 }
 func observe(ctx context.Context, file *os.File, relative string, maximumBytes int64) (observation, error) {
+	return observeFile(ctx, file, relative, maximumBytes, true)
+}
+
+func observeFile(ctx context.Context, file *os.File, relative string, maximumBytes int64, settle bool) (observation, error) {
 	var observed observation
 	info, err := file.Stat()
 	if err != nil {
@@ -374,7 +418,7 @@ func observe(ctx context.Context, file *os.File, relative string, maximumBytes i
 	if info.Size() > maximumBytes {
 		return observed, scanFailure("FILE_SIZE_LIMIT")
 	}
-	if time.Since(info.ModTime()) < 2*time.Second {
+	if settle && time.Since(info.ModTime()) < 2*time.Second {
 		return observed, scanFailure("FILE_UNSTABLE")
 	}
 	key, strong, err := physicalIdentity(file)
@@ -540,6 +584,11 @@ func (service *Service) ingest(ctx context.Context, root Root, scanID string, ob
 		if _, err = transaction.ExecContext(ctx, "UPDATE scan_progress SET current_path=?,unchanged_files=unchanged_files+?,hashed_files=hashed_files+?,updated_at=? WHERE scan_id=?", observed.Relative, unchanged*int(observationsAdded), hashed*int(observationsAdded), now(), scanID); err != nil {
 			return err
 		}
+		if ctx.Value(manualProcessingKey{}) == true {
+			if _, err = transaction.ExecContext(ctx, `UPDATE jobs SET payload_json=json_set(payload_json,'$.manual',json('true')) WHERE physical_file_id=? AND job_type='extract' AND target_version=? AND status IN ('queued','retry_wait','paused')`, fileID, versionID); err != nil {
+				return err
+			}
+		}
 		if oldHash == observed.Hash {
 			if err = saveDetection(ctx, transaction, versionID, observed.Detection, indexReason); err != nil {
 				return err
@@ -552,7 +601,7 @@ func (service *Service) ingest(ctx context.Context, root Root, scanID string, ob
 			}
 			if resume > 0 && indexReason == "" {
 				jobID := domain.NewID()
-				if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,'{}','queued',?,?)", jobID, root.LibraryID, fileID, versionID, jobID, now(), now()); err != nil {
+				if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,?,'queued',?,?)", jobID, root.LibraryID, fileID, versionID, jobID, encode(map[string]any{"manual": ctx.Value(manualProcessingKey{}) == true}), now(), now()); err != nil {
 					return err
 				}
 			}
@@ -580,7 +629,7 @@ func (service *Service) ingest(ctx context.Context, root Root, scanID string, ob
 			return err
 		}
 		if indexReason == "" {
-			if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,'{}','queued',?,?)", jobID, root.LibraryID, fileID, versionID, "extract:"+versionID, now(), now()); err != nil {
+			if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,?,'queued',?,?)", jobID, root.LibraryID, fileID, versionID, "extract:"+versionID, encode(map[string]any{"manual": ctx.Value(manualProcessingKey{}) == true}), now(), now()); err != nil {
 				return err
 			}
 		}
@@ -606,6 +655,18 @@ func (service *Service) ingest(ctx context.Context, root Root, scanID string, ob
 type scanPathsKey struct{}
 
 func (service *Service) scanOne(ctx context.Context, root Root, scanID, relative string, maximumBytes int64) error {
+	policy, ok := ctx.Value(scanPolicyKey{}).(AdvancedPolicy)
+	if !ok {
+		rules, err := service.advancedConfiguration(ctx, service.Database.Reader, root.LibraryID)
+		if err != nil {
+			return err
+		}
+		policy = rules.Effective
+	}
+	if reason := policy.ignoredPath(relative); reason != "" {
+		return service.skipWatchedPath(ctx, root, scanID, relative, reason)
+	}
+
 	if _, err := service.Database.Writer.ExecContext(ctx, "UPDATE scan_progress SET current_path=?,updated_at=? WHERE scan_id=?", relative, now(), scanID); err != nil {
 		return err
 	}

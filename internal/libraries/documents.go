@@ -35,6 +35,7 @@ func (service *Service) Document(ctx context.Context, principal domain.Principal
 	document.CanClassify = service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.classify") == nil
 	document.CanAssociate = document.Source == "linked" && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.associate") == nil
 	document.CanReassign = service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.reassign") == nil
+	document.CanReindex = document.Approval != "materializing" && document.Approval != "cancelled" && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "indexing.run") == nil
 	document.Download = available && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.download") == nil
 	if document.Availability == "staged" || service.require(ctx, service.Database.Reader, principal, document.LibraryID, "storage.view_paths") != nil {
 		document.OriginalPath = ""
@@ -300,6 +301,9 @@ func (service *Service) Verify(ctx context.Context, principal domain.Principal, 
 				if err = enqueueVerification(ctx, transaction, root); err != nil {
 					return err
 				}
+				if err = markManualRoot(ctx, transaction, root.ID); err != nil {
+					return err
+				}
 			}
 		}
 		if !found {
@@ -353,7 +357,8 @@ func (service *Service) Retry(ctx context.Context, principal domain.Principal, j
 			err := transaction.QueryRowContext(ctx, "SELECT id FROM jobs WHERE job_type IN ('scan','verify_managed') AND target_version=(SELECT target_version FROM jobs WHERE id=?) AND status IN ('queued','running','retry_wait','paused')", jobID).Scan(&existing)
 			if err == nil {
 				identifier = existing
-				return nil
+				_, err = transaction.ExecContext(ctx, `UPDATE jobs SET payload_json=json_set(payload_json,'$.manual',json('true')) WHERE id=? AND status<>'running'`, existing)
+				return err
 			}
 			if err != sql.ErrNoRows {
 				return err
@@ -364,7 +369,7 @@ func (service *Service) Retry(ctx context.Context, principal domain.Principal, j
 				return err
 			}
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,retry_of_job_id,created_at) SELECT ?,library_id,physical_file_id,job_type,target_version,?,payload_json,'queued',?,?,? FROM jobs WHERE id=?", identifier, identifier, now(), jobID, now(), jobID); err != nil {
+		if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,retry_of_job_id,created_at) SELECT ?,library_id,physical_file_id,job_type,target_version,?,json_set(payload_json,'$.manual',json('true')),'queued',?,?,? FROM jobs WHERE id=?", identifier, identifier, now(), jobID, now(), jobID); err != nil {
 			return err
 		}
 		return record(ctx, transaction, current, metadata, "indexing.retry_requested", libraryID, "", map[string]any{"job_id": identifier, "retry_of": jobID, "reason": reason})

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor')][string]$Action,
       [string]$InstallRoot = "$env:ProgramFiles\AIBID-Test",
       [string]$PreflightBinary = '',
@@ -79,7 +79,7 @@ try {
             $Marker = Join-Path $DataRoot 'package-version'
             # Only this phase and the existing preview have a tested additive
             # migration. Configure snapshots/migrates before updating the marker.
-            if ((Test-Path $Marker) -and ((Get-Content $Marker -Raw).Trim() -notin @('0.7.0-test.1', '2.0.0-alpha.1', '2.0.0-alpha.2', $Version))) {
+            if ((Test-Path $Marker) -and ((Get-Content $Marker -Raw).Trim() -notin @('0.7.0-test.1', '2.0.0-alpha.1', '2.0.0-alpha.2', '2.0.0-alpha.3', '2.0.0-alpha.4', '2.0.0-alpha.5', '2.0.0-alpha.6', '2.0.0-alpha.7', $Version))) {
                 throw 'Versión de datos no compatible con esta fase. Se conservan los datos.'
             }
             if ((Test-Path $Config) -and !(Test-Path $Marker)) { throw 'Configuración existente sin versión de paquete. Requiere revisión antes de instalar.' }

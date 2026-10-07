@@ -4,6 +4,7 @@ package libraries
 
 import (
 	"context"
+	"fmt"
 	"gestor-documental/internal/domain"
 	"github.com/fsnotify/fsnotify"
 	"os"
@@ -236,4 +237,67 @@ func TestRootWatchRegistrationDoesNotHideIncompleteCoverage(t *testing.T) {
 	if saved.WatchMode != "polling" || saved.LastError != "WATCH_LIMIT" {
 		t.Fatal("registering only the root hid incomplete coverage", saved)
 	}
+}
+
+// Hold the watcher coordinator to keep claimed scans alive without slow disks,
+// large fixtures or test-only hooks. This exercises the production Start pool.
+func TestRuntimeReconcilesDifferentRootsConcurrentlyWithPerRootExclusion(t *testing.T) {
+	service, admin, directory := fixture(t)
+	ctx := context.Background()
+	library := addLibrary(t, service, admin, "Concurrent roots")
+	allowContentFormats(t, service, admin)
+	path := filepath.Join(directory, "first")
+	copyFixture(t, filepath.Join(path, "first.txt"), "sample.txt")
+	first := addRoot(t, service, admin, library, path)
+	policy, err := service.ProcessingPolicy(ctx)
+	requireNoError(t, err)
+	policy.Paused = true
+	requireNoError(t, service.ConfigureProcessingPolicy(ctx, admin, policy, domain.RequestMetadata{}))
+	runtime, err := service.Start(ctx)
+	requireNoError(t, err)
+	defer runtime.Close()
+	runtime.mutex.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			runtime.mutex.Unlock()
+		}
+	}()
+	policy, err = service.ProcessingPolicy(ctx)
+	requireNoError(t, err)
+	policy.Paused = false
+	requireNoError(t, service.ConfigureProcessingPolicy(ctx, admin, policy, domain.RequestMetadata{}))
+	awaitCount := func(query string, expected int) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			var count int
+			requireNoError(t, service.Database.Reader.QueryRow(query).Scan(&count))
+			if count == expected {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("count %d, want %d: %s", count, expected, query)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	awaitCount("SELECT count(*) FROM jobs WHERE job_type='scan' AND status='running'", 1)
+	for i := 0; i < 4; i++ {
+		folder := filepath.Join(directory, fmt.Sprintf("added-%d", i))
+		copyFixture(t, filepath.Join(folder, "added.txt"), "sample.txt")
+		addRoot(t, service, admin, library, folder)
+		requireNoError(t, service.Verify(ctx, admin, library, first, domain.RequestMetadata{}))
+	}
+	awaitCount("SELECT count(*) FROM jobs WHERE job_type='scan' AND status='running'", 4)
+	awaitCount("SELECT count(*) FROM jobs WHERE job_type='scan' AND status='queued'", 1)
+	var firstJobs int
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT count(*) FROM jobs WHERE job_type='scan' AND target_version=?", first).Scan(&firstJobs))
+	if firstJobs != 1 {
+		t.Fatal("same root scheduled twice", firstJobs)
+	}
+	runtime.mutex.Unlock()
+	locked = false
+	awaitCount("SELECT count(DISTINCT root_id) FROM root_scans WHERE status='complete'", 5)
+	awaitCount("SELECT count(*) FROM physical_files WHERE extraction_freshness='current'", 5)
 }

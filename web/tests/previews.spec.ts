@@ -1,0 +1,77 @@
+import { test, expect } from '@playwright/test';
+import { resolve } from 'node:path';
+
+test('vistas previas: configuración, error aislado, generación, reutilización y limpieza', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/login');
+  await page.getByLabel('Usuario', { exact: true }).fill('admin-e2e');
+  await page.getByLabel('Contraseña', { exact: true }).fill('Browser-fixture-password-2026');
+  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Vistas previas y caché', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Vistas previas', exact: true })).toBeVisible();
+  await page.getByLabel('Ruta de LibreOffice (opcional)').fill(resolve('../missing-preview-converter'));
+  await page.getByRole('button', { name: 'Guardar vistas previas', exact: true }).click();
+  await expect(page.getByText('Configuración de vistas previas guardada.', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click();
+  await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
+  await page.getByLabel('Nombre de la biblioteca').fill('Previews fase 4');
+  await page.getByLabel('Modalidad de biblioteca').selectOption('managed');
+  await page.getByLabel('Asignarme como gestor de esta biblioteca').check();
+  await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Cargas', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Configuración', exact: true }).click();
+  await page.getByLabel('Heredar formatos de indexación', { exact: true }).uncheck();
+  for (const format of ['DOCX', 'XLSX']) await page.getByLabel(`Indexar ${format}`, { exact: true }).check();
+  await page.getByRole('button', { name: 'Guardar reglas de archivos' }).click();
+  await expect(page.getByText(/^Reglas guardadas\./)).toBeVisible();
+  await page.getByRole('tab', { name: 'Cargas', exact: true }).click();
+  await page.getByLabel('Archivos', { exact: true }).setInputFiles(['docx', 'xlsx'].map(format => resolve(`../testdata/documents/sample.${format}`)));
+  await page.getByRole('button', { name: 'Guardar borradores', exact: true }).click();
+  await expect(page.getByText('Borrador guardado', { exact: false })).toHaveCount(2);
+  const libraries = await (await page.request.get('/api/v1/libraries')).json();
+  const library = libraries.items.find((item: { name: string }) => item.name === 'Previews fase 4');
+  await expect.poll(async () => (await (await page.request.get(`/api/v1/libraries/${library.id}/processing`)).json()).stats.processed).toBe(2);
+  await page.getByRole('button', { name: 'Clasificar sample.docx', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Falta LibreOffice', { exact: false })).toBeVisible({ timeout: 15000 });
+  await expect(dialog.locator('.retained-text pre')).toContainText('Documento sintético');
+  await page.screenshot({ path: 'test-results/v2-phase4-missing-converter.png', fullPage: true });
+  await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
+  await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Vistas previas y caché', exact: true }).click();
+  const program = process.env.AIBID_TEST_LIBREOFFICE || '';
+  await page.getByLabel('Ruta de LibreOffice (opcional)').fill(program);
+  await page.getByRole('button', { name: 'Guardar vistas previas', exact: true }).click();
+  await expect(page.getByText('Configuración de vistas previas guardada.', { exact: true })).toBeVisible();
+  if (program) {
+    await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click();
+    await page.getByRole('button', { name: /Previews fase 4.*Abrir biblioteca/ }).click();
+    await page.getByRole('tab', { name: 'Cargas', exact: true }).click();
+    await page.getByRole('table', { name: 'Historial de cargas' }).getByRole('button').first().click();
+    for (const format of ['docx', 'xlsx']) {
+      await page.getByRole('button', { name: `Ver detalles de sample.${format}`, exact: true }).click();
+      const preview = dialog.getByRole('region', { name: 'Vista previa del documento' });
+      const frame = preview.locator('iframe');
+      await expect(frame).toBeVisible({ timeout: 30000 });
+      const url = await frame.getAttribute('src');
+      const response = await page.request.get(url!);
+      expect(response.status()).toBe(200);
+      expect((await response.body()).subarray(0,5).toString()).toBe('%PDF-');
+      await preview.getByRole('button', { name: 'Ampliar vista previa' }).click();
+      await expect(preview).toHaveClass(/generated-preview-expanded/);
+      await page.screenshot({ path: `test-results/v2-phase4-${format}.png`, fullPage: true });
+      await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
+      await page.getByRole('button', { name: `Ver detalles de sample.${format}`, exact: true }).click();
+      await expect(frame).toHaveAttribute('src',url!);
+      await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
+    }
+    await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Vistas previas y caché', exact: true }).click();
+    await expect(page.getByText('2 vistas disponibles', { exact: false })).toBeVisible();
+  }
+  await page.getByLabel('Confirmo que deseo vaciar la caché de vistas previas').check();
+  await page.getByRole('button', { name: 'Vaciar caché de vistas previas', exact: true }).click();
+  await expect(page.getByText('Caché vaciada.', { exact: false })).toBeVisible();
+  await expect(page.getByText('0 vistas disponibles', { exact: false })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.screenshot({ path: 'test-results/v2-phase4-settings-mobile.png', fullPage: true });
+});

@@ -15,7 +15,7 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 BrandingText "AIBID — Tu biblioteca digital, ordenada y al alcance."
 !define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TEXT "Instalación de pruebas independiente. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIBID Pruebas para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIBID.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
+!define MUI_WELCOMEPAGE_TEXT "Instalación de pruebas independiente. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIBID Pruebas para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIBID.$\r$\n$\r$\nPara previsualizar Word y Excel instala LibreOffice en este equipo y revisa Ajustes > Vistas previas y caché. La extracción y búsqueda funcionan sin LibreOffice.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIBID Pruebas desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIBID Pruebas en el Escritorio o Abrir AIBID en Inicio: abre el navegador sin pedir permisos de administrador."

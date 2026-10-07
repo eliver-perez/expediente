@@ -20,7 +20,7 @@ func (server *Server) organizationRoutes(mux *http.ServeMux) {
 		"GET /api/v1/cases/{case}/requirements": server.caseRequirements, "POST /api/v1/cases/{case}/initialize-requirements": server.initializeCase, "PATCH /api/v1/cases/{case}/requirements/{requirement}": server.updateRequirement,
 		"PATCH /api/v1/documents/{document}/classification": server.classifyDocument, "POST /api/v1/documents/{document}/associate": server.classifyDocument, "POST /api/v1/documents/{document}/reassign": server.classifyDocument, "POST /api/v1/documents/{document}/cancel": server.cancelUpload,
 		"POST /api/v1/libraries/{library}/naming-preview": server.namingPreview,
-		"GET /api/v1/libraries/{library}/upload-batches":  server.uploadBatches, "POST /api/v1/libraries/{library}/upload-batches": server.createBatch, "GET /api/v1/upload-batches/{batch}": server.getBatch, "POST /api/v1/upload-batches/{batch}/files": server.uploadFile,
+		"GET /api/v1/libraries/{library}/upload-batches":  server.uploadBatches, "POST /api/v1/libraries/{library}/upload-batches": server.createBatch, "GET /api/v1/upload-batches/{batch}/items": server.batchItems, "GET /api/v1/upload-batches/{batch}": server.getBatch, "POST /api/v1/upload-batches/{batch}/files": server.uploadFile,
 	}
 	for route, handler := range routes {
 		mux.HandleFunc(route, server.protected("", true, handler))
@@ -291,4 +291,9 @@ func (server *Server) uploadFile(writer http.ResponseWriter, request *http.Reque
 	}
 	result, err := server.libraries.Upload(request.Context(), principal, request.PathValue("batch"), string(keyBytes), file.FileName(), file, finish, metadata(request))
 	server.libraryResult(writer, request, 201, result, err)
+}
+
+func (server *Server) batchItems(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	result, err := server.libraries.BatchItems(r.Context(), p, r.PathValue("batch"), r.URL.Query().Get("cursor"))
+	server.libraryResult(w, r, 200, result, err)
 }

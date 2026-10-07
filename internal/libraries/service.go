@@ -27,6 +27,7 @@ type Service struct {
 	processingCached     ProcessingConfiguration
 	processingCachedAt   time.Time
 	resources            extraction.Resources
+	previewConvert       func(context.Context, string, string, string, string) error
 }
 
 func New(identityService *identity.Service) *Service {
@@ -196,6 +197,13 @@ func (service *Service) Create(ctx context.Context, principal domain.Principal, 
 		if _, err = transaction.ExecContext(ctx, "INSERT INTO idempotency_requests VALUES(?,'library.create',?,?,?,'complete',?)", current.User.ID, requestID, digest, identifier, now()); err != nil {
 			return err
 		}
+		rules, e := service.advancedConfiguration(ctx, transaction, identifier)
+		if e != nil {
+			return e
+		}
+		if _, err = transaction.ExecContext(ctx, "UPDATE libraries SET ocr_languages=? WHERE id=?", rules.Effective.OCRLanguages, identifier); err != nil {
+			return err
+		}
 		if err = configurationSnapshot(ctx, transaction, identifier, current.User.ID); err != nil {
 			return err
 		}
@@ -228,6 +236,10 @@ func (service *Service) UpdateConfiguration(ctx context.Context, principal domai
 			return domain.Failure("VERSION_CONFLICT", "La biblioteca cambió. Recarga la página.", 412)
 		}
 		if previousLanguages != languages {
+			if _, err = transaction.ExecContext(ctx, `INSERT INTO advanced_settings VALUES(?,json_object('ocr_languages',?),1,?) ON CONFLICT(scope) DO UPDATE SET configuration_json=json_set(configuration_json,'$.ocr_languages',?),revision=revision+1,updated_at=excluded.updated_at`, "library:"+libraryID, languages, now(), languages); err != nil {
+				return err
+			}
+
 			rows, err := transaction.QueryContext(ctx, "SELECT f.id,f.current_content_version_id FROM physical_files f JOIN documents d ON d.physical_file_id=f.id WHERE f.library_id=? AND f.current_content_version_id IS NOT NULL AND d.deleted_at IS NULL", libraryID)
 			if err != nil {
 				return err

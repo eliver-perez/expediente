@@ -108,7 +108,7 @@ func (service *Service) RetryScanErrors(ctx context.Context, principal domain.Pr
 			return err
 		}
 		id := domain.NewID()
-		if _, err = tx.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'scan',?, ?,?,'queued',?,?)", id, root.LibraryID, rootID, id, encode(map[string]any{"paths": paths}), now(), now()); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'scan',?, ?,?,'queued',?,?)", id, root.LibraryID, rootID, id, encode(map[string]any{"paths": paths, "manual": true}), now(), now()); err != nil {
 			return err
 		}
 		return record(ctx, tx, current, metadata, "indexing.errors_retry_requested", root.LibraryID, "", map[string]any{"root_id": rootID, "paths_count": len(paths)})

@@ -13,6 +13,7 @@ const summaries: Record<string, string> = {
   delimiter: 'Delimitador', records: 'Registros (incluida la primera fila)', columns: 'Columnas', nonempty_cells: 'Celdas con contenido', header: 'Encabezado',
 };
 const warnings: Record<string, string> = {
+ OCR_DISABLED: 'El OCR no se ejecutó por las reglas configuradas; se conservó el texto nativo disponible.',
   CSV_HEADER_INFERRED: 'La primera fila parece un encabezado. Se utilizó como referencia y también se conservó íntegra en el índice.',
   EXTERNAL_REFERENCES_IGNORED: 'Las referencias externas no se consultaron.',
   TRACKED_DELETIONS_IGNORED: 'Se omitió el texto marcado como eliminado en el control de cambios.',

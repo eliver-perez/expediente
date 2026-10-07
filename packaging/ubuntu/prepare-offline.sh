@@ -15,7 +15,7 @@ command -v python3 >/dev/null
 mkdir -m 755 -p "$destination/repository/partial"
 apt-get update
 apt-get -o Dir::State::status=/dev/null -o Dir::Cache::archives="$destination/repository" \
-    --download-only --yes --no-install-recommends install "$package"
+    --download-only --yes --install-recommends install "$package"
 cp "$package" "$destination/repository/"
 cp "$(dirname "$0")/install-offline.sh" "$destination/install.sh"
 chmod 755 "$destination/install.sh"

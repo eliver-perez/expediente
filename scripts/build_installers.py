@@ -19,9 +19,9 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.0.0-alpha.3"
-PACKAGE_REVISION = "f3"
-DEB_VERSION = "2.0.0~alpha.3"
+VERSION = "2.0.0-alpha.8"
+PACKAGE_REVISION = "f8"
+DEB_VERSION = "2.0.0~alpha.8"
 EPOCH = 1790294400  # Fixed packaging timestamp, 2026-09-25 UTC.
 
 
@@ -32,7 +32,9 @@ def run(arguments, **kwargs):
 def copy(source, target, mode=0o644, template=False):
     target.parent.mkdir(parents=True, exist_ok=True)
     if template:
-        target.write_text(Path(source).read_text().replace("@VERSION@", VERSION), encoding="utf-8-sig" if target.suffix == ".ps1" else "utf-8")
+        # Decode a possible source BOM before adding the single BOM required by
+        # Windows PowerShell 5.1 for accented UTF-8 text. Two BOMs break param().
+        target.write_text(Path(source).read_text(encoding="utf-8-sig").replace("@VERSION@", VERSION), encoding="utf-8-sig" if target.suffix == ".ps1" else "utf-8")
     else:
         shutil.copyfile(source, target)
     target.chmod(mode)
@@ -49,11 +51,18 @@ def binary(destination, system, architecture):
 
 
 def documents(destination):
-    copy(ROOT / "docs/AIBID-2.0-FASE-3.md", destination / "FASE-3.md")
+    copy(ROOT / "docs/AIBID-2.0-FASE-8.md", destination / "FASE-8.md")
+    copy(ROOT / "web/node_modules/chart.js/LICENSE.md", destination / "third-party/frontend/chartjs-MIT.txt")
+    copy(ROOT / "web/node_modules/@kurkle/color/LICENSE.md", destination / "third-party/frontend/kurkle-color-MIT.txt")
+    copy(ROOT / "docs/AIBID-2.0-FASE-7.md", destination / "FASE-7.md")
+    copy(ROOT / "docs/WINDOWS-FASE-6-R1.md", destination / "WINDOWS-FASE-6-R1.md")
+    copy(ROOT / "docs/AIBID-2.0-FASE-6.md", destination / "FASE-6.md")
+    copy(ROOT / "docs/AIBID-2.0-FASE-4.md", destination / "AIBID-2.0-FASE-4.md")
+    copy(ROOT / "docs/AIBID-2.0-FASE-3.md", destination / "AIBID-2.0-FASE-3.md")
     copy(ROOT / "docs/AIBID-2.0-FASE-2.md", destination / "AIBID-2.0-FASE-2.md")
     copy(ROOT / "docs/H7.md", destination / "LEEME.md")
     readme = destination / "LEEME.md"
-    readme.write_text("# AIBID 2.0 — fase 3 (alpha de pruebas)\n\nConsulta [FASE-3.md](FASE-3.md) para formatos, reglas, migración y límites de esta entrega. Los nombres de versión de la guía H7 siguiente son históricos.\n\n" + readme.read_text().replace("../packaging/TEST-PLAN.md", "PRUEBAS.md").replace("H7-WINDOWS-R2.md", "WINDOWS-R2.md"))
+    readme.write_text("# AIBID 2.0 — fase 8 (alpha de pruebas)\n\nConsulta [FASE-8.md](FASE-8.md) para Dashboard con gráficas, Ajustes y la revisión completa. Las gráficas funcionan sin Internet. Para previsualizar Word y Excel se necesita LibreOffice en el servidor; sin él se conservan extracción, búsqueda y descarga. En Ubuntu se instala como paquete recomendado con apt; en Windows/macOS se indica durante la instalación y en Ajustes → Vistas previas y caché. Incluye la corrección del instalador Windows f6r1. Los nombres de versión de la guía H7 siguiente son históricos.\n\n" + readme.read_text().replace("../packaging/TEST-PLAN.md", "PRUEBAS.md").replace("H7-WINDOWS-R2.md", "WINDOWS-R2.md"))
     copy(ROOT / "LICENSE_CONTRACT.md", destination / "LICENSE_CONTRACT.md")
     copy(ROOT / "packaging/TEST-PLAN.md", destination / "PRUEBAS.md")
     copy(ROOT / "packaging/THIRD-PARTY.md", destination / "THIRD-PARTY.md")
@@ -102,20 +111,25 @@ def macos(output, work):
         copy(ROOT / "packaging/macos" / name, scripts / name, 0o755, template=True)
     component = work / "component.pkg"
     run(["pkgbuild", "--root", payload, "--scripts", scripts, "--identifier", "app.aibid.test",
-         "--version", "2.0.0.3", "--install-location", "/", "--ownership", "recommended", component])
+         "--version", "2.0.0.8", "--install-location", "/", "--ownership", "recommended", component])
+    resources = work / "resources"
+    resources.mkdir()
+    welcome = resources / "welcome.html"
+    welcome.write_text("<html><body><h1>AIBID Pruebas " + VERSION + "</h1><p>Dashboard con gráficas locales y configuración reunida en Ajustes.</p><p>PDF/OCR necesita las herramientas indicadas en Configurar AIBID. Las vistas previas de Word y Excel necesitan LibreOffice instalado en este equipo. Sin LibreOffice continúan la extracción, búsqueda y descarga de esos formatos.</p><p>Instala LibreOffice desde https://www.libreoffice.org/download/ y comprueba su detección en Ajustes → Vistas previas y caché.</p><p>Esta actualización conserva los datos. No desinstales ni borres la base de datos para actualizar.</p></body></html>", encoding="utf-8")
     distribution = work / "distribution.xml"
     distribution.write_text('''<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
   <title>AIBID Pruebas ''' + VERSION + '''</title>
+  <welcome file="welcome.html"/>
   <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
   <domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
   <allowed-os-versions><os-version min="13.0"/></allowed-os-versions>
   <choices-outline><line choice="app.aibid.test"/></choices-outline>
   <choice id="app.aibid.test" visible="false"><pkg-ref id="app.aibid.test"/></choice>
-  <pkg-ref id="app.aibid.test" version="2.0.0.3">component.pkg</pkg-ref>
+  <pkg-ref id="app.aibid.test" version="2.0.0.8">component.pkg</pkg-ref>
 </installer-gui-script>
 ''')
-    run(["productbuild", "--distribution", distribution, "--package-path", work,
+    run(["productbuild", "--distribution", distribution, "--resources", resources, "--package-path", work,
          output / f"AIBID-Pruebas-{VERSION}-macOS-arm64.pkg"])
 
 
@@ -161,6 +175,7 @@ Architecture: {architecture}
 Maintainer: AIBID local test builds <aibid@example.invalid>
 Installed-Size: {size}
 Depends: adduser, util-linux, systemd, poppler-utils, tesseract-ocr, tesseract-ocr-spa, tesseract-ocr-eng, fonts-dejavu-core
+Recommends: libreoffice-writer, libreoffice-calc
 Description: AIBID - Aplicacion de Indexacion de Bibliotecas Digitales (pruebas)
  Servicio local aislado de prueba. Datos conservados incluso al desinstalar.
  Requiere activar una licencia para habilitar las modificaciones.
@@ -311,10 +326,16 @@ def check_windows_icon(executable, gui=False):
     print(f"Windows icon resources: {executable.name}: {sorted(sizes)} OK")
 
 
-def windows(output, work, prefix, makensis):
+def windows(output, work, prefix, makensis, powershell=None):
     if not prefix or not makensis:
         raise RuntimeError("Windows requires --windows-tools and --makensis")
+    powershell = powershell or shutil.which("powershell.exe") or shutil.which("pwsh")
+    if not powershell:
+        raise RuntimeError("Windows packaging requires PowerShell to validate the generated script; use --powershell")
     payload = work / "root"
+    copy(ROOT / "packaging/windows/manage.ps1", payload / "manage.ps1", template=True)
+    run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", ROOT / "scripts/check_windows_script.ps1", "-Path", payload / "manage.ps1"])
     # The checked-in .syso resources are reproducible from the existing brand SVG.
     copy(ROOT / "packaging/windows/aibid.ico", payload / "aibid.ico")
     binary(payload / "gestor-documental.exe", "windows", "amd64")
@@ -325,7 +346,6 @@ def windows(output, work, prefix, makensis):
     documents(payload / "docs")
     windows_tools(prefix, payload / "tools", payload / "docs")
     check_pe_imports(payload / "tools/Library/bin")
-    copy(ROOT / "packaging/windows/manage.ps1", payload / "manage.ps1", template=True)
     copy(ROOT / "packaging/windows/admin.cmd", payload / "admin.cmd")
     manifest = [{"path": path.relative_to(payload).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                 for path in sorted(payload.rglob("*")) if path.is_file()]
@@ -341,9 +361,10 @@ def windows(output, work, prefix, makensis):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=["macos", "windows", "ubuntu", "all"], required=True)
-    parser.add_argument("--output", type=Path, default=ROOT / "dist/aibid-2.0-fase-3")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist/aibid-2.0-fase-8")
     parser.add_argument("--windows-tools", type=Path)
     parser.add_argument("--makensis")
+    parser.add_argument("--powershell", help="PowerShell parser for Windows scripts (prefers Windows PowerShell 5.1 on Windows)")
     parser.add_argument("--ubuntu-arch", choices=["amd64", "arm64", "all"], default="all",
                         help="Ubuntu architectures to build (default: both)")
     args = parser.parse_args()
@@ -354,7 +375,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix="aibid-package-") as directory:
             work = Path(directory).resolve()
             if target == "windows":
-                windows(output, work, args.windows_tools, args.makensis)
+                windows(output, work, args.windows_tools, args.makensis, args.powershell)
             elif target == "ubuntu":
                 architectures = ["amd64", "arm64"] if args.ubuntu_arch == "all" else [args.ubuntu_arch]
                 for architecture in architectures:

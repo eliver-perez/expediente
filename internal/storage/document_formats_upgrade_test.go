@@ -14,6 +14,9 @@ import (
 func TestDocumentFormatsUpgradeFromVersionEight(t *testing.T) { testDocumentUpgrade(t, 8) }
 func TestDocumentExtractorsUpgradeFromPhaseOne(t *testing.T)  { testDocumentUpgrade(t, 9) }
 func TestProcessingUpgradeFromPhaseTwo(t *testing.T)          { testDocumentUpgrade(t, 10) }
+func TestPreviewUpgradeFromPhaseThree(t *testing.T)           { testDocumentUpgrade(t, 11) }
+func TestAdvancedUpgradeFromPhaseFive(t *testing.T)           { testDocumentUpgrade(t, 12) }
+func TestObservabilityUpgradeFromPhaseSix(t *testing.T)       { testDocumentUpgrade(t, 13) }
 func testDocumentUpgrade(t *testing.T, previousRevision int) {
 	directory, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {

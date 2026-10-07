@@ -11,12 +11,14 @@ import (
 	"sync"
 	"time"
 
+	"gestor-documental/internal/diagnostics"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/extraction"
 	"github.com/fsnotify/fsnotify"
 )
 
 type Job struct {
+	Manual            bool   `json:"-"`
 	LibraryName       string `json:"library_name"`
 	Filename          string `json:"filename"`
 	Relative          string `json:"relative_path"`
@@ -64,6 +66,10 @@ type Runtime struct {
 	ocrQueue                chan *ocrTask
 }
 
+// Folder enumeration mostly waits on filesystem/network IO. Bound it separately
+// from extraction: each claimed job still holds the database's per-root lock.
+const reconciliationWorkers = 4
+
 func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 	// The state lock excludes a surviving process. Only disposable private
 	// snapshots created by this extractor are removed; originals are elsewhere.
@@ -89,11 +95,14 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 	if err := service.recoverJobs(ctx); err != nil {
 		return nil, err
 	}
+	_ = diagnostics.Record(ctx, service.Database, "system", "SERVICE_STARTED", diagnostics.Context{Operation: "startup"})
 	if err := service.Database.Write(ctx, func(tx *sql.Tx) error { return service.queueNewlyIndexable(ctx, tx, "") }); err != nil {
 		return nil, err
 	}
 	workerContext, cancel := context.WithCancel(ctx)
 	runtime.cancel = cancel
+	runtime.workers.Add(1)
+	go runtime.previewWorker(workerContext)
 	runtime.watcher, _ = fsnotify.NewBufferedWatcher(512)
 	if runtime.watcher != nil {
 		runtime.workers.Add(1)
@@ -105,8 +114,10 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 		runtime.workers.Add(1)
 		go runtime.worker(workerContext, "content", worker)
 	}
-	runtime.workers.Add(1)
-	go runtime.worker(workerContext, "scan", 0)
+	for worker := 0; worker < reconciliationWorkers; worker++ {
+		runtime.workers.Add(1)
+		go runtime.worker(workerContext, "scan", worker)
+	}
 	for worker := 0; worker < 4; worker++ {
 		runtime.workers.Add(1)
 		go runtime.ocrWorker(workerContext, worker)
@@ -122,8 +133,15 @@ func (service *Service) recoverJobs(ctx context.Context) error {
 		if _, err := transaction.ExecContext(ctx, "UPDATE materializations SET state=CASE WHEN state IN ('committed','cleaned') THEN state ELSE 'failed' END,error_code='PROCESS_RESTARTED',updated_at=? WHERE id IN (SELECT target_version FROM jobs WHERE job_type='materialize' AND status='running')", now()); err != nil {
 			return err
 		}
-		_, err := transaction.ExecContext(ctx, "UPDATE jobs SET status=CASE WHEN EXISTS(SELECT 1 FROM job_controls WHERE job_id=jobs.id AND cancel_requested=1) THEN 'cancelled' WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'retry_wait' END,available_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code='PROCESS_RESTARTED',fencing_token=fencing_token+1 WHERE status='running'", now())
-		return err
+		result, err := transaction.ExecContext(ctx, "UPDATE jobs SET status=CASE WHEN EXISTS(SELECT 1 FROM job_controls WHERE job_id=jobs.id AND cancel_requested=1) THEN 'cancelled' WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'retry_wait' END,available_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code='PROCESS_RESTARTED',fencing_token=fencing_token+1 WHERE status='running'", now())
+		if err != nil {
+			return err
+		}
+		count, _ := result.RowsAffected()
+		if count > 0 {
+			return diagnostics.RecordTx(ctx, transaction, "processing", "PROCESS_RESTARTED", diagnostics.Context{Operation: "startup"})
+		}
+		return nil
 	})
 }
 func (runtime *Runtime) Close() {
@@ -200,6 +218,7 @@ func (runtime *Runtime) schedule(ctx context.Context) {
 func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 	if time.Now().After(runtime.nextRetentionCheck) {
 		_ = runtime.Service.cleanExpiredUploads(ctx)
+		_ = diagnostics.Prune(ctx, runtime.Service.Database)
 		runtime.nextRetentionCheck = time.Now().Add(time.Minute)
 	}
 	roots, err := rootsQuery(ctx, runtime.Service.Database.Reader, "")
@@ -218,7 +237,11 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		if err := runtime.Service.jobLicense(ctx, runtime.Service.Database.Reader, Job{Kind: rootJobKind(root), LibraryID: root.LibraryID}); err != nil {
 			continue
 		}
-		active[root.ID] = true
+		rules, ruleError := runtime.Service.advancedConfiguration(ctx, runtime.Service.Database.Reader, root.LibraryID)
+		if ruleError != nil {
+			continue
+		}
+		active[root.ID] = rules.Effective.WatcherEnabled && rules.Effective.AutomaticProcessing
 		runtime.mutex.Lock()
 		if runtime.watchInitialized == nil {
 			runtime.watchInitialized = map[string]bool{}
@@ -229,7 +252,7 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		}
 		runtime.mutex.Unlock()
 		watchError := errors.New("managed uses periodic verification")
-		if root.Source != "managed" {
+		if root.Source != "managed" && active[root.ID] {
 			watchError = runtime.register(root.ID, root.Path)
 		}
 		runtime.mutex.Lock()
@@ -241,10 +264,13 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		}
 		firstDirty := runtime.dirtySince[root.ID]
 		runtime.mutex.Unlock()
-		if root.Source == "managed" {
+		if root.Source == "managed" || !active[root.ID] {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling' WHERE id=? AND watch_mode<>'polling'", root.ID)
 		} else if degraded != "" {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling',last_error_code=? WHERE id=? AND (watch_mode<>'polling' OR coalesce(last_error_code,'')<>?)", degraded, root.ID, degraded)
+			if root.LastError != degraded {
+				_ = diagnostics.Record(ctx, runtime.Service.Database, "watcher", degraded, diagnostics.Context{RootID: root.ID, LibraryID: root.LibraryID, Operation: "watch"})
+			}
 		} else if watchError == nil && root.LastError != "WATCH_EVENTS_LOST" && root.LastError != "WATCH_LIMIT" {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='native' WHERE id=? AND watch_mode<>'native'", root.ID)
 		}
@@ -303,14 +329,14 @@ func (service *Service) claimLane(ctx context.Context, lane string) (Job, error)
 		if policy.Paused {
 			return nil
 		}
-		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token,max_attempts,retry_delay_seconds,timeout_seconds FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) ORDER BY created_at,id LIMIT 64", lane, lane, lane, now())
+		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token,max_attempts,retry_delay_seconds,timeout_seconds,coalesce(json_extract(payload_json,'$.manual'),json_extract(payload_json,'$.manual_reindex'),0) FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) "+advancedJobEligibility+" ORDER BY "+advancedJobPriority+",created_at,id LIMIT 64", lane, lane, lane, now())
 		if err != nil {
 			return err
 		}
 		candidates := []Job{}
 		for rows.Next() {
 			var candidate Job
-			if err = rows.Scan(&candidate.ID, &candidate.LibraryID, &candidate.FileID, &candidate.Kind, &candidate.Version, &candidate.Attempts, &candidate.Fence, &candidate.MaximumAttempts, &candidate.RetryDelaySeconds, &candidate.TimeoutSeconds); err != nil {
+			if err = rows.Scan(&candidate.ID, &candidate.LibraryID, &candidate.FileID, &candidate.Kind, &candidate.Version, &candidate.Attempts, &candidate.Fence, &candidate.MaximumAttempts, &candidate.RetryDelaySeconds, &candidate.TimeoutSeconds, &candidate.Manual); err != nil {
 				rows.Close()
 				return err
 			}
@@ -378,7 +404,7 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 			}
 			continue
 		}
-		operationContext, cancel := context.WithCancel(ctx)
+		operationContext, cancel := context.WithCancel(context.WithValue(ctx, manualProcessingKey{}, job.Manual))
 		if job.Kind != "scan" {
 			cancel()
 			operationContext, cancel = context.WithTimeout(ctx, jobTimeout(job))
@@ -405,6 +431,13 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 			watchFailed := false
 			err = isolatedOperation(func() error {
 				return runtime.Service.Scan(operationContext, job.Version, 0, func(path string) error {
+					rules, e := runtime.Service.advancedConfiguration(operationContext, runtime.Service.Database.Reader, job.LibraryID)
+					if e != nil {
+						return e
+					}
+					if !rules.Effective.WatcherEnabled || !rules.Effective.AutomaticProcessing {
+						return nil
+					}
 					watchError := runtime.register(job.Version, path)
 					if watchError != nil {
 						watchFailed = true
@@ -413,7 +446,8 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 					return watchError
 				})
 			})
-			if err == nil && !watchFailed && len(paths) == 0 {
+			rules, _ := runtime.Service.advancedConfiguration(operationContext, runtime.Service.Database.Reader, job.LibraryID)
+			if err == nil && !watchFailed && len(paths) == 0 && rules.Effective.WatcherEnabled && rules.Effective.AutomaticProcessing {
 				_, _ = runtime.Service.Database.Writer.ExecContext(operationContext, "UPDATE storage_roots SET last_error_code=CASE WHEN last_error_code='WATCH_LIMIT' THEN '' ELSE last_error_code END,watch_mode=CASE WHEN EXISTS(SELECT 1 FROM root_watch_recovery w WHERE w.root_id=storage_roots.id AND w.loss_generation>w.recovered_generation) THEN 'polling' ELSE 'native' END WHERE id=? AND EXISTS(SELECT 1 FROM root_scans s WHERE s.root_id=storage_roots.id AND s.status='complete' AND s.can_confirm_absence=1 AND s.id=(SELECT id FROM root_scans WHERE root_id=storage_roots.id ORDER BY started_at DESC,id DESC LIMIT 1))", job.Version)
 			}
 
@@ -526,6 +560,13 @@ func (service *Service) finish(ctx context.Context, job Job, cause error) error 
 			}
 		}
 		if status == "failed" || status == "retry_wait" {
+			module := "processing"
+			if job.Kind == "scan" {
+				module = "scan"
+			}
+			if err := diagnostics.RecordTx(ctx, transaction, module, code, diagnostics.Context{LibraryID: job.LibraryID, JobID: job.ID, Operation: job.Kind, Attempt: job.Attempts}); err != nil {
+				return err
+			}
 			return record(ctx, transaction, domain.Principal{}, domain.RequestMetadata{RequestID: domain.NewID()}, "indexing.attempt_failed", job.LibraryID, "", map[string]any{"job_id": job.ID, "error_code": code, "attempt": job.Attempts})
 		}
 		return nil

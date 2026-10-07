@@ -89,6 +89,9 @@ func CompleteDocument(ctx context.Context, documentPath, languages string, optio
 func preparePDF(ctx context.Context, file *os.File, options Options, result *Result) error {
 	pages, err := options.Prepare(ctx, file.Name())
 	result.Units = pages
+	if options.DisableOCR {
+		result.Warnings = append(result.Warnings, "OCR_DISABLED")
+	}
 	return err
 }
 func completePDF(ctx context.Context, documentPath, languages string, options Options, result *Result) error {

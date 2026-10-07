@@ -18,14 +18,20 @@ import (
 )
 
 type UploadItem struct {
-	ID         string `json:"id"`
-	DocumentID string `json:"document_id"`
-	Filename   string `json:"original_filename"`
-	Status     string `json:"status"`
-	Error      string `json:"error_code"`
-	Size       int64  `json:"size_bytes"`
+	Format          string `json:"format"`
+	ProcessingState string `json:"processing_state"`
+	IndexReason     string `json:"index_block_reason"`
+	CanView         bool   `json:"can_view"`
+	Created         string `json:"created_at"`
+	ID              string `json:"id"`
+	DocumentID      string `json:"document_id"`
+	Filename        string `json:"original_filename"`
+	Status          string `json:"status"`
+	Error           string `json:"error_code"`
+	Size            int64  `json:"size_bytes"`
 }
 type UploadBatch struct {
+	Count     int          `json:"file_count"`
 	ID        string       `json:"id"`
 	LibraryID string       `json:"library_id"`
 	CreatedBy string       `json:"created_by"`
@@ -71,7 +77,7 @@ func (service *Service) CreateBatch(ctx context.Context, principal domain.Princi
 	})
 	return identifier, err
 }
-func (service *Service) Batch(ctx context.Context, principal domain.Principal, identifier string) (UploadBatch, error) {
+func (service *Service) batchHeader(ctx context.Context, principal domain.Principal, identifier string) (UploadBatch, error) {
 	batch := UploadBatch{Items: []UploadItem{}}
 	err := service.Database.Reader.QueryRowContext(ctx, "SELECT id,library_id,created_by,created_at FROM upload_batches WHERE id=?", identifier).Scan(&batch.ID, &batch.LibraryID, &batch.CreatedBy, &batch.Created)
 	if err == sql.ErrNoRows {
@@ -85,6 +91,13 @@ func (service *Service) Batch(ctx context.Context, principal domain.Principal, i
 	}
 	if batch.CreatedBy != principal.User.ID && service.require(ctx, service.Database.Reader, principal, batch.LibraryID, "documents.review") != nil {
 		return UploadBatch{}, notFound()
+	}
+	return batch, nil
+}
+func (service *Service) Batch(ctx context.Context, principal domain.Principal, identifier string) (UploadBatch, error) {
+	batch, err := service.batchHeader(ctx, principal, identifier)
+	if err != nil {
+		return batch, err
 	}
 	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,coalesce(document_id,''),original_filename,status,error_code,size_bytes FROM upload_items WHERE batch_id=? ORDER BY created_at,id", identifier)
 	if err != nil {
@@ -110,14 +123,14 @@ func (service *Service) Batches(ctx context.Context, principal domain.Principal,
 	if err != nil {
 		return result, err
 	}
-	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,library_id,created_by,created_at FROM upload_batches WHERE library_id=? AND created_by=? AND (?='' OR created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51", libraryID, principal.User.ID, after.Time, after.Time, after.Time, after.ID)
+	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,library_id,created_by,created_at,(SELECT count(*) FROM upload_items u WHERE u.batch_id=upload_batches.id) FROM upload_batches WHERE library_id=? AND created_by=? AND (?='' OR created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51", libraryID, principal.User.ID, after.Time, after.Time, after.Time, after.ID)
 	if err != nil {
 		return result, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item UploadBatch
-		if err = rows.Scan(&item.ID, &item.LibraryID, &item.CreatedBy, &item.Created); err != nil {
+		if err = rows.Scan(&item.ID, &item.LibraryID, &item.CreatedBy, &item.Created, &item.Count); err != nil {
 			return result, err
 		}
 		item.Items = []UploadItem{}
