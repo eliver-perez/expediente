@@ -24,6 +24,7 @@ test('fase 8: Dashboard con gráficas locales, Ajustes agrupados y contraste', a
   }
   // Existing deep links stay valid, including reload and history navigation.
   await page.reload();await expect(page.getByRole('heading',{name:'Acceso y red',exact:true})).toBeVisible();
+  const saveAccess=page.getByRole('button',{name:'Guardar acceso',exact:true});await expect(saveAccess).toBeDisabled();await expect(saveAccess).toHaveCSS('cursor','not-allowed');
   await sections.getByRole('link',{name:'Archivos',exact:true}).focus();await page.keyboard.press('Enter');await expect(page).toHaveURL(/\/admin\/files$/);await page.goBack();await expect(page).toHaveURL(/\/admin\/network$/);
   const contrast=await sections.evaluate(nav=>{
     function luminance(color:string){const rgb=(color.match(/[\d.]+/g)||[]).slice(0,3).map(Number).map(value=>{const c=value/255;return c<=.04045?c/12.92:((c+.055)/1.055)**2.4});return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722}

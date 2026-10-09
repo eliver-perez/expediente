@@ -1,4 +1,4 @@
-// Package network owns the HTTP listener and read-only operating system diagnostics.
+// Package network owns the HTTP listener and operating system diagnostics.
 package network
 
 import (
@@ -92,31 +92,6 @@ func listen(configuration config.Config) (net.Listener, error) {
 	return net.Listen(protocol, configuration.ListenAddress)
 }
 
-// BSD may allow a wildcard listener beside a listener bound to a specific IP.
-// Binding alone therefore cannot establish that every advertised URL is ours.
-// Probe only this machine's addresses, on our configured port, before binding.
-func checkLANPort(address string) error {
-	_, port, _ := net.SplitHostPort(address)
-	available, err := interfaces(port)
-	if err != nil {
-		return err
-	}
-	available = append(available, Interface{Address: "127.0.0.1"})
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	for _, device := range available {
-		connection, err := (&net.Dialer{Timeout: 250 * time.Millisecond}).DialContext(ctx, "tcp4", net.JoinHostPort(device.Address, port))
-		if err == nil {
-			_ = connection.Close()
-			return fmt.Errorf("configured port already accepts connections on %s", device.Address)
-		}
-		if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-			return fmt.Errorf("could not verify configured port availability")
-		}
-	}
-	return nil
-}
-
 func mode(configuration config.Config) string {
 	if configuration.NetworkMode != "" {
 		return configuration.NetworkMode
@@ -189,7 +164,13 @@ func (s *Service) Apply(selected, expectedRevision string) error {
 		if restoreErr := s.restore(old); restoreErr != nil {
 			return restoreErr
 		}
-		return domain.Failure("NETWORK_PORT_UNAVAILABLE", "El puerto no está disponible en todas las interfaces o faltan permisos. Se restauró el acceso anterior.", 409)
+		if errors.Is(err, errPortInspection) {
+			return domain.Failure("NETWORK_PORT_CHECK_FAILED", "Windows no permitió comprobar los puertos en escucha. Se restauró el acceso anterior.", 409)
+		}
+		if errors.Is(err, errPortOccupied) {
+			return domain.Failure("NETWORK_PORT_IN_USE", "Otro servicio ya utiliza el puerto de AIBID. Se restauró el acceso anterior.", 409)
+		}
+		return domain.Failure("NETWORK_PORT_UNAVAILABLE", "No se pudo abrir el puerto de AIBID en la dirección solicitada. Se restauró el acceso anterior.", 409)
 	}
 	if err = config.Save(s.path, next); err != nil {
 		_ = listener.Close()

@@ -2,7 +2,7 @@
 set -eu
 BASE='/Library/Application Support/AIBID-Test'
 CONFIG="$BASE/data/config.json"
-echo 'AIBID Pruebas — configuración local. Contraseña de AIBID: mínimo 6 caracteres.'
+echo 'AIBID — configuración local. Contraseña de AIBID: mínimo 6 caracteres.'
 echo 'Puede solicitarse primero la contraseña de administrador de macOS (sudo).'
 /usr/bin/sudo -u _aibidtest "$BASE/bin/gestor-documental" doctor --config "$CONFIG" --sample-directory "$BASE/docs/pdf"
 if ! /usr/bin/sudo test -f "$BASE/data/service-enabled"; then

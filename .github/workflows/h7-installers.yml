@@ -1,4 +1,4 @@
-name: AIBID 2.0 phase 8 preview installers
+name: AIBID 2.0 RC1 installers
 on:
   workflow_dispatch:
 permissions:
@@ -36,12 +36,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-spa fonts-dejavu-core
       - run: go test -tags development ./...
       - run: python scripts/test_build_installers.py
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test_windows_firewall.ps1
       - if: runner.os != 'Windows'
         run: python3 scripts/build_installers.py --target ${{ matrix.target }}
       - if: runner.os == 'macOS'
-        run: python3 scripts/smoke_macos_installer.py dist/aibid-2.0-fase-8/AIBID-Pruebas-2.0.0-alpha.8-macOS-arm64.pkg
+        run: python3 scripts/smoke_macos_installer.py dist/aibid-2.0-rc.1/AIBID-2.0.0-rc.1-macOS-arm64.pkg
       - if: runner.os == 'Linux'
-        run: dpkg-deb --info dist/aibid-2.0-fase-8/aibid-test_2.0.0~alpha.8_amd64.deb
+        run: dpkg-deb --info dist/aibid-2.0-rc.1/aibid-test_2.0.0~rc.1_amd64.deb
       - if: runner.os == 'Windows'
         uses: mamba-org/setup-micromamba@v3
         with:
@@ -59,7 +62,7 @@ jobs:
       # Internal preview artifacts only; no release publication or production signing.
       - uses: actions/upload-artifact@v7
         with:
-          name: AIBID-Pruebas-${{ matrix.target }}
-          path: dist/aibid-2.0-fase-8/
+          name: AIBID-${{ matrix.target }}
+          path: dist/aibid-2.0-rc.1/
           if-no-files-found: error
           retention-days: 14

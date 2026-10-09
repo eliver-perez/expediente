@@ -34,7 +34,17 @@ func fixture(t *testing.T) *Service {
 	}
 	service := New(path, configuration)
 	if err = service.Start(func(active config.Config) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, mode(active)) })
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if requested := r.URL.Query().Get("mode"); requested != "" {
+				if err := service.Apply(requested, revision(active)); err != nil {
+					http.Error(w, err.Error(), http.StatusConflict)
+					return
+				}
+				_, _ = io.WriteString(w, requested)
+				return
+			}
+			_, _ = io.WriteString(w, mode(active))
+		})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +54,29 @@ func fixture(t *testing.T) *Service {
 		_ = service.Close(ctx)
 	})
 	return service
+}
+
+// Change modes through an accepted HTTP connection, as the browser does. On
+// Windows the old request is still ESTABLISHED while we inspect/rebind the port.
+func TestModeChangeInsideLiveHTTPRequest(t *testing.T) {
+	s := fixture(t)
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
+	defer client.CloseIdleConnections()
+	for _, selected := range []string{"lan", "local", "lan", "local"} {
+		response, err := client.Get(s.configuration.PublicURL + "?mode=" + selected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK || string(body) != selected {
+			t.Fatal("mode-change response lost", response.StatusCode, string(body), err)
+		}
+		assertServing(t, s, selected)
+		if !s.Diagnose(context.Background()).Listening {
+			t.Fatal("replacement listener failed post-change diagnosis")
+		}
+	}
 }
 
 func assertServing(t *testing.T, service *Service, expected string) {

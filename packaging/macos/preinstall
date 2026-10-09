@@ -5,7 +5,7 @@ BASE='/Library/Application Support/AIBID-Test'
 # The new binary snapshots SQLite before migration, before publishing the marker.
 if [ -f "$BASE/data/package-version" ]; then
     case "$(cat "$BASE/data/package-version")" in
-        '0.7.0-test.1'|'2.0.0-alpha.1'|'2.0.0-alpha.2'|'2.0.0-alpha.3'|'2.0.0-alpha.4'|'2.0.0-alpha.5'|'2.0.0-alpha.6'|'2.0.0-alpha.7'|'@VERSION@') ;;
+        '0.7.0-test.1'|'2.0.0-alpha.1'|'2.0.0-alpha.2'|'2.0.0-alpha.3'|'2.0.0-alpha.4'|'2.0.0-alpha.5'|'2.0.0-alpha.6'|'2.0.0-alpha.7'|'2.0.0-alpha.8'|'@VERSION@') ;;
         *) echo 'Versión de datos no compatible con esta fase. Se conservan los datos.' >&2; exit 1 ;;
     esac
 fi
@@ -18,4 +18,17 @@ if /bin/launchctl print system/app.aibid.test >/dev/null 2>&1; then
 fi
 if [ -f "$BASE/bin/gestor-documental" ] && [ -f "$BASE/data/config.json" ]; then
     /usr/bin/sudo -u _aibidtest "$BASE/bin/gestor-documental" migrate --config "$BASE/data/config.json"
+fi
+# Move the visible launchers to /Applications/AIBID without moving private data.
+# Only remove known, unchanged legacy files identified by the previous manifest.
+if [ -f "$BASE/package-files.tsv" ] && [ ! -L '/Applications/AIBID Pruebas' ]; then
+    TAB=$(printf '\t')
+    while IFS="$TAB" read -r HASH FILE; do
+        case "$FILE" in
+            '/Applications/AIBID Pruebas/Configurar AIBID.command'|'/Applications/AIBID Pruebas/Desinstalar AIBID.command'|'/Applications/AIBID Pruebas/Abrir AIBID.webloc')
+                if [ -f "$FILE" ] && [ ! -L "$FILE" ] && [ "$(/usr/bin/shasum -a 256 "$FILE" | /usr/bin/cut -d ' ' -f 1)" = "$HASH" ]; then /bin/rm -f "$FILE"; fi
+                ;;
+        esac
+    done < "$BASE/package-files.tsv"
+    /bin/rmdir '/Applications/AIBID Pruebas' 2>/dev/null || true
 fi

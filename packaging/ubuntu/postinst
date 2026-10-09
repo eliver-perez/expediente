@@ -21,6 +21,6 @@ configure)
         systemctl daemon-reload
         if [ -f /var/lib/aibid-test/service-enabled ]; then systemctl enable --now aibid-test.service; fi
     fi
-    echo 'AIBID Pruebas: ejecuta sudo aibid-test-admin para crear el administrador e iniciar el servicio.'
+    echo 'AIBID: ejecuta sudo aibid-admin para crear el administrador e iniciar el servicio.'
 ;;
 esac

@@ -25,7 +25,9 @@ type previewJob struct{ ID, DocumentID, Version, Hash, Generator, RequestedBy st
 func (runtime *Runtime) previewWorker(ctx context.Context) {
 	defer runtime.workers.Done()
 	service := runtime.Service
-	_ = service.recoverPreviews(ctx)
+	if !retryWorkerWrite(ctx, diagnostics.Context{Operation: "startup"}, service.recoverPreviews) {
+		return
+	}
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	lastCleanup := time.Time{}
@@ -63,8 +65,14 @@ func (runtime *Runtime) previewWorker(ctx context.Context) {
 			if code == "PROCESS_TIMEOUT" {
 				code = "PREVIEW_TIMEOUT"
 			}
-			_, _ = service.Database.Writer.ExecContext(ctx, "UPDATE preview_cache SET status='error',error_code=? WHERE id=? AND status='generating'", code, job.ID)
-			_ = diagnostics.Record(ctx, service.Database, "preview", code, diagnostics.Context{DocumentID: job.DocumentID, Operation: "preview"})
+			retryWorkerWrite(ctx, diagnostics.Context{DocumentID: job.DocumentID, Operation: "preview"}, func(writeContext context.Context) error {
+				return service.Database.Write(writeContext, func(tx *sql.Tx) error {
+					if _, err := tx.ExecContext(writeContext, "UPDATE preview_cache SET status='error',error_code=? WHERE id=? AND status='generating'", code, job.ID); err != nil {
+						return err
+					}
+					return diagnostics.RecordTx(writeContext, tx, "preview", code, diagnostics.Context{DocumentID: job.DocumentID, Operation: "preview"})
+				})
+			})
 		}
 	}
 }

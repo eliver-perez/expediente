@@ -3,11 +3,13 @@
 **Aplicación de Indexación de Bibliotecas Digitales**  
 Tu biblioteca digital, ordenada y al alcance.
 
-**AIBID 2.0 · fase 8:** Dashboard con gráficas locales y datos reales, configuración
-reunida en Ajustes y revisión de compatibilidad, seguridad, caché y regresiones.
-Conserva el esquema 14, las funciones anteriores y la corrección Windows f6r1.
-[Cambios, validación y pruebas manuales](docs/AIBID-2.0-FASE-8.md).
-Paquetes: `dist/aibid-2.0-fase-8/`; se conservan las entregas anteriores.
+**AIBID 2.0 RC1:** corrección del cambio de acceso LAN en Windows, regla de firewall
+preparada por el instalador, cursor de controles deshabilitados y nombres visibles
+AIBID. Conserva las funciones de fase 8, el esquema 14 y las rutas/servicios internos
+necesarios para actualizar sin mover datos.
+[Diagnóstico, compatibilidad y pruebas](docs/AIBID-2.0-RC1.md).
+[Revisión final de QA: correcciones, cobertura y pendientes](docs/QA-V2-RC1.md).
+Paquetes: `dist/aibid-2.0-rc.1/`; se conservan las entregas anteriores.
 
 Producto comercial genérico de instalación local, con Go + React + SQLite WAL/FTS5
 y acceso por LAN. **H6 implementado:** cliente de licencias V1.0 online/offline, con simulador HTTPS,
@@ -16,9 +18,11 @@ recuperable, verificación de integridad,
 bibliotecas híbridas, cargas privadas, expedientes, catálogos y clasificación. Conserva
 identidad, auditoría, bibliotecas vinculadas, vigilancia y OCR de H2/H3.
 Contraseñas de **6–128 caracteres**. Detalles y prueba del simulador: [entrega H6](docs/H6.md).
-**H7 en curso:** [instaladores de prueba y pasos por SO](docs/H7.md) para Mac Apple Silicon,
-Windows y Ubuntu 24.04, en el canal aislado AIBID Pruebas (puerto 18090).
-macOS Intel queda excluido. La conexión comercial se realizará al terminar ambos proyectos.
+Los instaladores actuales usan el nombre **AIBID**, para Mac Apple Silicon,
+Windows y Ubuntu 24.04 (amd64/arm64), conservando el puerto 18090 y los identificadores
+internos de las instalaciones anteriores. [H7](docs/H7.md) conserva las instrucciones
+históricas del canal de pruebas; los cambios vigentes están en la guía RC1.
+macOS Intel queda excluido.
 
 Los cuatro logotipos SVG suministrados están en `web/public/assets/brand/`.
 Se conservan el identificador técnico `gestor_documental`, el nombre de los
@@ -83,7 +87,7 @@ web/                    React/TypeScript y pruebas de navegador
 db/schema.proposed.sql  Modelo de referencia de V1; NO es una migración
 db/migrations/          Migraciones H2–H6, checksum y reversión protegida
 docs/                   Especificaciones y criterios de aceptación
-packaging/              Instaladores por SO, a implementar en H7
+packaging/              Instaladores y servicios por SO
 testdata/license/       Vectores V1 versionados para compartir con el servidor
 scripts/check_design.py Verificación aislada del diseño SQL y enlaces
 ```
@@ -104,5 +108,5 @@ al terminar; no inicializa el producto ni descarga paquetes. Comprueba integrida
 restricciones relevantes, sesión única, conservación y publicación de texto FTS,
 y enlaces locales de documentación. Se ejecuta también dentro de make check.
 
-El siguiente desarrollo es **AIBID 2.0, fase 3: procesamiento robusto**, pendiente de
-autorización. Los pendientes de operación e instaladores anteriores siguen documentados en H7.
+La entrega actual es **AIBID 2.0 RC1**, posterior a fase 8. La validación realizada y
+las comprobaciones nativas pendientes están documentadas en su guía de entrega.

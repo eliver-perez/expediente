@@ -4,7 +4,9 @@ param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor')][string]$A
       [string]$PreflightBinary = '',
       [switch]$EraseInternalData)
 $ErrorActionPreference = 'Stop'
+# Keep the service SID and data paths during the production-name transition.
 $ServiceName = 'AIBIDTest'
+$FirewallRuleName = 'AIBID-LAN-TCP'
 $DataRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'AIBID-Test'
 $Config = Join-Path $DataRoot 'config.json'
 $Binary = Join-Path $InstallRoot 'gestor-documental.exe'
@@ -35,6 +37,40 @@ function Write-LauncherTarget {
     # license keys and database remain inaccessible to ordinary desktop users.
     $Configuration = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
     @{ public_url = [string]$Configuration.public_url } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallRoot 'launcher.json') -Encoding UTF8
+}
+# The elevated installer provisions one narrowly scoped rule. The service keeps
+# its virtual account and controls exposure by binding loopback or LAN. The rule
+# can remain enabled in local mode: no LAN socket is listening in that mode.
+function Set-AibidFirewall {
+    $Configuration = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+    if ($Configuration.network_mode -and $Configuration.network_mode -notin @('local', 'lan')) { return }
+    $Address = [string]$Configuration.listen_address
+    if ($Address -notmatch '^(127\.0\.0\.1|0\.0\.0\.0):([0-9]{1,5})$') { throw 'Dirección de AIBID no válida para preparar la regla LAN.' }
+    $Port = [int]$Matches[2]
+    if ($Port -lt 1 -or $Port -gt 65535) { throw 'Puerto de AIBID inválido.' }
+    $Existing = Get-NetFirewallRule -PolicyStore PersistentStore -Name $FirewallRuleName -ErrorAction SilentlyContinue
+    if ($Existing -and $Existing.Group -ne 'AIBID') { throw 'Existe una regla con el identificador de AIBID que no pertenece a esta instalación.' }
+    $Scope = @{
+        PolicyStore = 'PersistentStore'
+        Description = 'Regla del instalador AIBID. Solo el servicio, su puerto TCP y subred local en perfiles privados o de dominio. El modo local de AIBID no escucha en la LAN.'
+        Enabled = 'True'; Direction = 'Inbound'; Action = 'Allow'; Profile = @('Domain', 'Private')
+        Program = $Binary; Service = $ServiceName; Protocol = 'TCP'; LocalPort = $Port
+        RemoteAddress = 'LocalSubnet'; EdgeTraversalPolicy = 'Block'; ErrorAction = 'Stop'
+    }
+    if ($Existing) { Set-NetFirewallRule -Name $FirewallRuleName -NewDisplayName 'AIBID - Red local' @Scope | Out-Null }
+    else { New-NetFirewallRule -Name $FirewallRuleName -DisplayName 'AIBID - Red local' -Group 'AIBID' @Scope | Out-Null }
+    $Saved = Get-NetFirewallRule -PolicyStore PersistentStore -Name $FirewallRuleName -ErrorAction Stop
+    if ($Saved.Enabled -ne 'True' -or $Saved.Action -ne 'Allow' -or $Saved.Direction -ne 'Inbound') {
+        throw 'Windows no confirmó la regla de acceso LAN de AIBID.'
+    }
+    Write-Host "Firewall: regla AIBID preparada para TCP $Port, subred local, dominio y red privada."
+}
+function Remove-AibidFirewall {
+    $Existing = Get-NetFirewallRule -PolicyStore PersistentStore -Name $FirewallRuleName -ErrorAction SilentlyContinue
+    if ($Existing) {
+        if ($Existing.Group -ne 'AIBID') { throw 'Se conserva una regla ajena con el identificador de AIBID.' }
+        Remove-NetFirewallRule -PolicyStore PersistentStore -Name $FirewallRuleName -ErrorAction Stop
+    }
 }
 function Remove-PackagedFiles {
     $Manifest = Join-Path $InstallRoot 'package-files.json'
@@ -79,7 +115,7 @@ try {
             $Marker = Join-Path $DataRoot 'package-version'
             # Only this phase and the existing preview have a tested additive
             # migration. Configure snapshots/migrates before updating the marker.
-            if ((Test-Path $Marker) -and ((Get-Content $Marker -Raw).Trim() -notin @('0.7.0-test.1', '2.0.0-alpha.1', '2.0.0-alpha.2', '2.0.0-alpha.3', '2.0.0-alpha.4', '2.0.0-alpha.5', '2.0.0-alpha.6', '2.0.0-alpha.7', $Version))) {
+            if ((Test-Path $Marker) -and ((Get-Content $Marker -Raw).Trim() -notin @('0.7.0-test.1', '2.0.0-alpha.1', '2.0.0-alpha.2', '2.0.0-alpha.3', '2.0.0-alpha.4', '2.0.0-alpha.5', '2.0.0-alpha.6', '2.0.0-alpha.7', '2.0.0-alpha.8', $Version))) {
                 throw 'Versión de datos no compatible con esta fase. Se conservan los datos.'
             }
             if ((Test-Path $Config) -and !(Test-Path $Marker)) { throw 'Configuración existente sin versión de paquete. Requiere revisión antes de instalar.' }
@@ -94,12 +130,13 @@ try {
         'Configure' {
             $CommandLine = '"' + $Binary + '" serve --config "' + $Config + '"'
             if (!(Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
-                New-Service -Name $ServiceName -BinaryPathName $CommandLine -StartupType Manual -DisplayName 'AIBID Pruebas' | Out-Null
+                New-Service -Name $ServiceName -BinaryPathName $CommandLine -StartupType Manual -DisplayName 'AIBID' | Out-Null
                 Invoke-Native sc.exe @('config',$ServiceName,'obj=','NT SERVICE\AIBIDTest')
             } else {
                 $Installed = Get-CimInstance Win32_Service -Filter "Name='AIBIDTest'"
                 if ($Installed.PathName -ne $CommandLine) { throw 'Existe un servicio AIBIDTest con otra ruta. Requiere revisión.' }
             }
+            Set-Service -Name $ServiceName -DisplayName 'AIBID'
             Invoke-Native sc.exe @('sidtype',$ServiceName,'unrestricted')
             if (![Diagnostics.EventLog]::SourceExists($ServiceName)) { New-EventLog -LogName Application -Source $ServiceName }
             if (!(Test-Path $DataRoot)) { New-Item -ItemType Directory -Path $DataRoot | Out-Null }
@@ -113,8 +150,9 @@ try {
             }
             Invoke-Native $Binary @('configure-license','--config',$Config)
             Invoke-Native $Binary @('migrate','--config',$Config)
-            Set-Content -LiteralPath (Join-Path $DataRoot 'package-version') -Value $Version -Encoding ASCII
             Write-LauncherTarget
+            Set-AibidFirewall
+            Set-Content -LiteralPath (Join-Path $DataRoot 'package-version') -Value $Version -Encoding ASCII
             if (Test-Path (Join-Path $DataRoot 'service-enabled')) { Start-Service $ServiceName }
         }
         'Admin' {
@@ -126,8 +164,9 @@ try {
             }
             Invoke-Native sc.exe @('config',$ServiceName,'start=','delayed-auto')
             Write-LauncherTarget
+            Set-AibidFirewall
             Start-Service $ServiceName
-            Write-Host 'AIBID Pruebas: http://127.0.0.1:18090. Puedes cerrar la consola.'
+            Write-Host 'AIBID: http://127.0.0.1:18090. Puedes cerrar la consola.'
             $Configuration = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
             Start-Process ([string]$Configuration.public_url)
         }
@@ -135,6 +174,7 @@ try {
         'Remove' {
             Stop-Aibid
             if (Test-Path $Config) { Invoke-Native $Binary @('check-state','--config',$Config) }
+            Remove-AibidFirewall
             if ($EraseInternalData -and (Test-Path $Config)) {
                 Invoke-Native $Binary @('erase-internal-data','--config',$Config,'--confirm-erase-internal-data')
             }

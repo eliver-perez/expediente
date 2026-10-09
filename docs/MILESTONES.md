@@ -350,3 +350,18 @@ esquema 14 y la actualización conserva datos. Regresión automática, conversi�
 Office real, inspección de paquetes y actualización nativa de fase 7 en datos
 temporales; la ejecución de instaladores en los equipos destino sigue documentada.
 [Alcance, dependencias, validación y comprobación manual](AIBID-2.0-FASE-8.md).
+
+## AIBID 2.0 RC1 — ajustes de cierre (2026-10-07)
+
+Corrección específica de la comprobación de puertos Windows: tabla TCP del sistema
+en lugar de conectar a puertos cerrados con timeout de 250 ms. Regla de firewall
+limitada a AIBID preparada por el instalador; el servicio conserva su cuenta virtual.
+Cursor `not-allowed` en controles deshabilitados. Nombres visibles AIBID, con
+identificadores internos anteriores conservados por compatibilidad. Sin migración
+de base de datos ni movimiento del estado. [Detalle y validación](AIBID-2.0-RC1.md).
+
+QA final: correcciones reproducidas de paginación al cambiar filtros, solicitudes
+sin respuesta/errores inválidos, persistencia del estado final de trabajos y
+aislamiento de errores de archivos administrados. Regresiones, concurrencia,
+9.000 archivos y Chrome; sin refactorización ni funciones nuevas.
+[Cobertura, evidencia y comprobaciones nativas pendientes](QA-V2-RC1.md).

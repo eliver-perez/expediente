@@ -4,7 +4,8 @@ body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Se
 button, input, select { font: inherit; }
 button { cursor: pointer; border: 1px solid transparent; border-radius: 7px; padding: 11px 19px; background: var(--accent); color: #fff; font-weight: 650; transition: background .15s; }
 button:hover { background: #18584e; }
-button:disabled { opacity: .55; cursor: wait; }
+button:disabled { opacity: .55; }
+button:disabled, input:disabled, select:disabled, textarea:disabled, [aria-disabled="true"] { cursor: not-allowed; }
 button.secondary { border-color: var(--line); background: #fff; color: var(--ink); }
 button.secondary:hover { background: #f0f4f2; }
 button.text-button { color: var(--accent); background: transparent; padding: 7px 5px; }
@@ -256,7 +257,7 @@ fieldset { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; m
 .explorer-details tbody tr:hover, .selected-row { background: #e5f1ec; color: var(--ink); }
 .file-tile:hover strong, .file-tile:focus-visible strong { color: var(--ink); }
 .file-tile:hover small, .file-tile:focus-visible small { color: #425e59; }
-.file-tile:disabled, .explorer-name:disabled { background: #f0f1ef; color: #5a6560; cursor: default; }
+.file-tile:disabled, .explorer-name:disabled { background: #f0f1ef; color: #5a6560; cursor: not-allowed; }
 .explorer-name { display: flex; align-items: center; gap: 12px; text-align: left; overflow-wrap: anywhere; }
 .explorer-name .folder-icon { flex: 0 0 26px; width: 26px; height: 26px; }
 .explorer-name .pdf-symbol { flex: 0 0 30px; width: 30px; height: 36px; margin: 0; font-size: 9px; }

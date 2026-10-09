@@ -19,9 +19,9 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.0.0-alpha.8"
-PACKAGE_REVISION = "f8"
-DEB_VERSION = "2.0.0~alpha.8"
+VERSION = "2.0.0-rc.1"
+PACKAGE_REVISION = "r1"
+DEB_VERSION = "2.0.0~rc.1"
 EPOCH = 1790294400  # Fixed packaging timestamp, 2026-09-25 UTC.
 
 
@@ -44,13 +44,17 @@ def binary(destination, system, architecture):
     destination.parent.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ, CGO_ENABLED="0", GOOS=system, GOARCH=architecture)
     run(["go", "build", "-trimpath", "-ldflags",
-         "-s -w -X gestor-documental/internal/buildinfo.Channel=installer-test"
+         "-s -w -X gestor-documental/internal/buildinfo.Channel=release-candidate"
          + " -X gestor-documental/internal/buildinfo.Revision="+PACKAGE_REVISION
          + (" -X gestor-documental/internal/buildinfo.ServiceName=AIBIDTest" if system == "windows" else ""),
          "-o", destination, "./cmd/gestor-documental"], env=environment)
 
 
 def documents(destination):
+    copy(ROOT / "docs/AIBID-2.0-RC1.md", destination / "ACTUALIZACION-RC1.md")
+    copy(ROOT / "docs/QA-V2-RC1.md", destination / "QA-V2-RC1.md")
+    qa = destination / "QA-V2-RC1.md"
+    qa.write_text(qa.read_text().replace("(AIBID-2.0-RC1.md)", "(ACTUALIZACION-RC1.md)"))
     copy(ROOT / "docs/AIBID-2.0-FASE-8.md", destination / "FASE-8.md")
     copy(ROOT / "web/node_modules/chart.js/LICENSE.md", destination / "third-party/frontend/chartjs-MIT.txt")
     copy(ROOT / "web/node_modules/@kurkle/color/LICENSE.md", destination / "third-party/frontend/kurkle-color-MIT.txt")
@@ -62,7 +66,7 @@ def documents(destination):
     copy(ROOT / "docs/AIBID-2.0-FASE-2.md", destination / "AIBID-2.0-FASE-2.md")
     copy(ROOT / "docs/H7.md", destination / "LEEME.md")
     readme = destination / "LEEME.md"
-    readme.write_text("# AIBID 2.0 — fase 8 (alpha de pruebas)\n\nConsulta [FASE-8.md](FASE-8.md) para Dashboard con gráficas, Ajustes y la revisión completa. Las gráficas funcionan sin Internet. Para previsualizar Word y Excel se necesita LibreOffice en el servidor; sin él se conservan extracción, búsqueda y descarga. En Ubuntu se instala como paquete recomendado con apt; en Windows/macOS se indica durante la instalación y en Ajustes → Vistas previas y caché. Incluye la corrección del instalador Windows f6r1. Los nombres de versión de la guía H7 siguiente son históricos.\n\n" + readme.read_text().replace("../packaging/TEST-PLAN.md", "PRUEBAS.md").replace("H7-WINDOWS-R2.md", "WINDOWS-R2.md"))
+    readme.write_text("# AIBID 2.0 — candidata de publicación RC1\n\nConsulta [ACTUALIZACION-RC1.md](ACTUALIZACION-RC1.md) para la corrección de red en Windows, firewall automático y nombres de producción. Conserva datos y esquema 14. Algunas rutas e identificadores internos de pruebas permanecen por compatibilidad. El puerto existente no cambia. Para vistas previas Word/Excel se necesita LibreOffice; consulta Ajustes → Vistas previas y caché. Los nombres de las siguientes guías son históricos.\n\n" + readme.read_text().replace("../packaging/TEST-PLAN.md", "PRUEBAS.md").replace("H7-WINDOWS-R2.md", "WINDOWS-R2.md"))
     copy(ROOT / "LICENSE_CONTRACT.md", destination / "LICENSE_CONTRACT.md")
     copy(ROOT / "packaging/TEST-PLAN.md", destination / "PRUEBAS.md")
     copy(ROOT / "packaging/THIRD-PARTY.md", destination / "THIRD-PARTY.md")
@@ -87,7 +91,7 @@ def macos(output, work):
     # Local ad-hoc Mach-O signature for Apple Silicon execution; not notarization.
     run(["codesign", "--force", "--sign", "-", base / "bin/gestor-documental"])
     documents(base / "docs")
-    apps = payload / "Applications/AIBID Pruebas"
+    apps = payload / "Applications/AIBID"
     for source, name in [("admin.command", "Configurar AIBID.command"), ("uninstall.command", "Desinstalar AIBID.command")]:
         copy(ROOT / "packaging/macos" / source, apps / name, 0o755)
     (apps / "Abrir AIBID.webloc").write_bytes(plistlib.dumps({"URL": "http://127.0.0.1:18090"}))
@@ -111,26 +115,26 @@ def macos(output, work):
         copy(ROOT / "packaging/macos" / name, scripts / name, 0o755, template=True)
     component = work / "component.pkg"
     run(["pkgbuild", "--root", payload, "--scripts", scripts, "--identifier", "app.aibid.test",
-         "--version", "2.0.0.8", "--install-location", "/", "--ownership", "recommended", component])
+         "--version", "2.0.0.9", "--install-location", "/", "--ownership", "recommended", component])
     resources = work / "resources"
     resources.mkdir()
     welcome = resources / "welcome.html"
-    welcome.write_text("<html><body><h1>AIBID Pruebas " + VERSION + "</h1><p>Dashboard con gráficas locales y configuración reunida en Ajustes.</p><p>PDF/OCR necesita las herramientas indicadas en Configurar AIBID. Las vistas previas de Word y Excel necesitan LibreOffice instalado en este equipo. Sin LibreOffice continúan la extracción, búsqueda y descarga de esos formatos.</p><p>Instala LibreOffice desde https://www.libreoffice.org/download/ y comprueba su detección en Ajustes → Vistas previas y caché.</p><p>Esta actualización conserva los datos. No desinstales ni borres la base de datos para actualizar.</p></body></html>", encoding="utf-8")
+    welcome.write_text("<html><body><h1>AIBID " + VERSION + "</h1><p>Dashboard con gráficas locales y configuración reunida en Ajustes.</p><p>PDF/OCR necesita las herramientas indicadas en Configurar AIBID. Las vistas previas de Word y Excel necesitan LibreOffice instalado en este equipo. Sin LibreOffice continúan la extracción, búsqueda y descarga de esos formatos.</p><p>Instala LibreOffice desde https://www.libreoffice.org/download/ y comprueba su detección en Ajustes → Vistas previas y caché.</p><p>Esta actualización conserva los datos. No desinstales ni borres la base de datos para actualizar.</p></body></html>", encoding="utf-8")
     distribution = work / "distribution.xml"
     distribution.write_text('''<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-  <title>AIBID Pruebas ''' + VERSION + '''</title>
+  <title>AIBID ''' + VERSION + '''</title>
   <welcome file="welcome.html"/>
   <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
   <domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
   <allowed-os-versions><os-version min="13.0"/></allowed-os-versions>
   <choices-outline><line choice="app.aibid.test"/></choices-outline>
   <choice id="app.aibid.test" visible="false"><pkg-ref id="app.aibid.test"/></choice>
-  <pkg-ref id="app.aibid.test" version="2.0.0.8">component.pkg</pkg-ref>
+  <pkg-ref id="app.aibid.test" version="2.0.0.9">component.pkg</pkg-ref>
 </installer-gui-script>
 ''')
     run(["productbuild", "--distribution", distribution, "--resources", resources, "--package-path", work,
-         output / f"AIBID-Pruebas-{VERSION}-macOS-arm64.pkg"])
+         output / f"AIBID-{VERSION}-macOS-arm64.pkg"])
 
 
 def tar_bytes(directory):
@@ -165,6 +169,10 @@ def ubuntu(output, work, architecture):
     copy(ROOT / "packaging/ubuntu/aibid-test.service", payload / "usr/lib/systemd/system/aibid-test.service")
     copy(ROOT / "packaging/ubuntu/aibid-test-admin", payload / "usr/sbin/aibid-test-admin", 0o755)
     copy(ROOT / "packaging/ubuntu/aibid-test-uninstall", payload / "usr/sbin/aibid-test-uninstall", 0o755)
+    for action in ["admin", "uninstall"]:
+        alias = payload / "usr/sbin" / ("aibid-" + action)
+        alias.write_text('#!/bin/sh\nexec /usr/sbin/aibid-test-' + action + ' "$@"\n')
+        alias.chmod(0o755)
     control.mkdir()
     size = sum(path.stat().st_size for path in payload.rglob("*") if path.is_file()) // 1024
     (control / "control").write_text(f"""Package: aibid-test
@@ -172,12 +180,12 @@ Version: {DEB_VERSION}
 Section: utils
 Priority: optional
 Architecture: {architecture}
-Maintainer: AIBID local test builds <aibid@example.invalid>
+Maintainer: AIBID <aibid@example.invalid>
 Installed-Size: {size}
 Depends: adduser, util-linux, systemd, poppler-utils, tesseract-ocr, tesseract-ocr-spa, tesseract-ocr-eng, fonts-dejavu-core
 Recommends: libreoffice-writer, libreoffice-calc
-Description: AIBID - Aplicacion de Indexacion de Bibliotecas Digitales (pruebas)
- Servicio local aislado de prueba. Datos conservados incluso al desinstalar.
+Description: AIBID - Aplicacion de Indexacion de Bibliotecas Digitales
+ Servicio local de biblioteca digital. Datos conservados incluso al desinstalar.
  Requiere activar una licencia para habilitar las modificaciones.
 """)
     for name in ["preinst", "postinst", "prerm", "postrm"]:
@@ -353,7 +361,7 @@ def windows(output, work, prefix, makensis, powershell=None):
     define = "/D" if os.name == "nt" else "-D"
     package_version = VERSION+"-"+PACKAGE_REVISION
     run([makensis, f"{define}VERSION={package_version}", f"{define}STAGE={payload}",
-         f"{define}OUTPUT={output / ('AIBID-Pruebas-' + package_version + '-Windows-amd64.exe')}", ROOT / "packaging/windows/installer.nsi"])
+         f"{define}OUTPUT={output / ('AIBID-' + package_version + '-Windows-amd64.exe')}", ROOT / "packaging/windows/installer.nsi"])
     copy(payload / "docs/windows-ocr.lock.json", output / "windows-ocr.lock.json")
     copy(ROOT / "packaging/windows/ocr-explicit.txt", output / "windows-ocr-explicit.txt")
 
@@ -361,7 +369,7 @@ def windows(output, work, prefix, makensis, powershell=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=["macos", "windows", "ubuntu", "all"], required=True)
-    parser.add_argument("--output", type=Path, default=ROOT / "dist/aibid-2.0-fase-8")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist/aibid-2.0-rc.1")
     parser.add_argument("--windows-tools", type=Path)
     parser.add_argument("--makensis")
     parser.add_argument("--powershell", help="PowerShell parser for Windows scripts (prefers Windows PowerShell 5.1 on Windows)")

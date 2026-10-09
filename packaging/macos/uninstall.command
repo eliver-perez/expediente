@@ -29,7 +29,7 @@ fi
 TAB=$(printf '\t')
 while IFS="$TAB" read -r HASH FILE; do
     case "$FILE" in
-        "$BASE/bin/"*|"$BASE/docs/"*|'/Applications/AIBID Pruebas/'*|'/Library/LaunchDaemons/app.aibid.test.plist') ;;
+        "$BASE/bin/"*|"$BASE/docs/"*|'/Applications/AIBID/'*|'/Applications/AIBID Pruebas/'*|'/Library/LaunchDaemons/app.aibid.test.plist') ;;
         *) echo 'Ruta de paquete inválida.' >&2; exit 1 ;;
     esac
     CURRENT="$FILE"

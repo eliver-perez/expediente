@@ -3,10 +3,49 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"time"
 
+	"gestor-documental/internal/diagnostics"
 	"gestor-documental/internal/domain"
 )
+
+// A completed operation must not be abandoned in running/generating when its
+// final database write fails. Retry only the journal, never extraction/conversion.
+// SQLite bounds lock waits; the context cancels writes/backoff on shutdown.
+// Do not impose a small deadline on startup cleanup of a large preview cache.
+// Shutdown leaves restart recovery
+// in charge. Log once outside SQLite because the database itself may be full.
+func retryWorkerWrite(ctx context.Context, details diagnostics.Context, write func(context.Context) error) bool {
+	details = details.Safe()
+	delay := time.Second
+	failed := false
+	for ctx.Err() == nil {
+		err := write(ctx)
+		if err == nil {
+			if failed {
+				slog.Info("worker state recovered", "code", "WORKER_STATE_RECOVERED", "context", details)
+			}
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		if !failed {
+			slog.Error("worker state could not be saved; retrying journal", "code", "WORKER_STATE_WRITE_FAILED", "context", details)
+			failed = true
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+		delay = min(delay*2, 30*time.Second)
+	}
+	return false
+}
 
 func (service *Service) reportProgress(ctx context.Context, job Job, operation, relative string, completed, total int) error {
 	var totalValue any

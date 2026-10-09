@@ -21,31 +21,46 @@ export function setCSRF(value: string) { csrfToken = value; }
 export class APIError extends Error {
   constructor(public code: string, message: string, public status: number) { super(message); }
 }
+// Bound both connection and response-body waits. A timeout does not prove that
+// a write failed: callers keep their idempotency key and check state before retry.
+const responseTimeout = 45_000;
+const timeoutMessage = 'El servidor tardó demasiado en responder. Actualiza el estado antes de reintentar.';
 export async function api<T>(path: string, options: { method?: string; body?: unknown; revision?: number; idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.method && options.method !== 'GET') headers['X-CSRF-Token'] = csrfToken;
   if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
   if (options.revision) headers['If-Match'] = `"${options.revision}"`;
-  let response: Response;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, responseTimeout);
   try {
-    response = await fetch(`/api/v1${path}`, { method: options.method ?? 'GET', headers,
-      credentials: 'same-origin', cache: 'no-store', signal: options.signal,
+    const response = await fetch(`/api/v1${path}`, { method: options.method ?? 'GET', headers,
+      credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
       body: options.body === undefined ? undefined : JSON.stringify(options.body) });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    throw new APIError('NETWORK_ERROR', 'No se pudo conectar con el servidor. Inténtalo nuevamente.', 0);
-  }
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: { code: 'SERVER_ERROR', message: 'El servidor no pudo completar la operación.' } }));
-    const failure = new APIError(payload.error.code, payload.error.message, response.status);
-    if (response.status === 401 && path !== '/auth/login') {
-      setCSRF(''); window.dispatchEvent(new CustomEvent('session-ended', { detail: failure }));
+    if (!response.ok) {
+      const payload = await response.json().catch(error => { if (controller.signal.aborted) throw error; return null; });
+      const failure = new APIError(typeof payload?.error?.code === 'string' ? payload.error.code : 'SERVER_ERROR',
+        typeof payload?.error?.message === 'string' ? payload.error.message : 'El servidor no pudo completar la operación.', response.status);
+      if (response.status === 401 && path !== '/auth/login') {
+        setCSRF(''); window.dispatchEvent(new CustomEvent('session-ended', { detail: failure }));
+      }
+      throw failure;
     }
-    throw failure;
+    if (response.status === 204) return undefined as T;
+    return await response.json() as T;
+  } catch (error) {
+    if (timedOut) throw new APIError('REQUEST_TIMEOUT', timeoutMessage, 0);
+    if (error instanceof APIError) throw error;
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    if (error instanceof SyntaxError) throw new APIError('INVALID_RESPONSE', 'El servidor devolvió una respuesta no válida. Actualiza el estado antes de reintentar.', 0);
+    throw new APIError('NETWORK_ERROR', 'No se pudo conectar con el servidor. Inténtalo nuevamente.', 0);
+  } finally {
+    clearTimeout(timer); options.signal?.removeEventListener('abort', abort);
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
 }
 export const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—';
 export function message(error: unknown) { return error instanceof Error ? error.message : 'No se pudo completar la operación.'; }
@@ -58,14 +73,16 @@ export function uploadDocument<T>(batchID: string, clientID: string, file: File,
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open('POST', `/api/v1/upload-batches/${batchID}/files`);
+    request.timeout = 120_000;
     request.setRequestHeader('X-CSRF-Token', csrfToken);
     request.upload.onprogress = event => { if (event.lengthComputable) progress(Math.round(100 * event.loaded / event.total)); };
     request.onerror = () => reject(new APIError('NETWORK_ERROR', 'Se interrumpió la conexión. Puedes reintentar el archivo.', 0));
+    request.ontimeout = () => reject(new APIError('REQUEST_TIMEOUT', timeoutMessage, 0));
     request.onload = () => {
       let payload;
       try { payload = JSON.parse(request.responseText); } catch { reject(new Error('El servidor no pudo completar la carga.')); return; }
       if (request.status >= 200 && request.status < 300) { resolve(payload as T); return; }
-      const failure = new APIError(payload.error?.code || 'UPLOAD_FAILED', payload.error?.message || 'La carga no se completó.', request.status);
+      const failure = new APIError(typeof payload?.error?.code === 'string' ? payload.error.code : 'UPLOAD_FAILED', typeof payload?.error?.message === 'string' ? payload.error.message : 'La carga no se completó.', request.status);
       if (request.status === 401) { setCSRF(''); window.dispatchEvent(new CustomEvent('session-ended', { detail: failure })); }
       reject(failure);
     };
@@ -77,14 +94,22 @@ export interface LicenseSummary { state: string; write_allowed: boolean; read_al
 export async function importLicense<T>(file: File): Promise<T> {
   if (file.size > 65536) throw new APIError('REQUEST_TOO_LARGE', 'El archivo no debe exceder 64 KiB.', 413);
   const body = new FormData(); body.append('file', file);
-  let response: Response;
-  try { response = await fetch('/api/v1/license/import', { method: 'POST', body, headers: { 'X-CSRF-Token': csrfToken }, credentials: 'same-origin', cache: 'no-store' }); }
-  catch { throw new APIError('NETWORK_ERROR', 'No se pudo conectar con el servidor.', 0); }
-  const payload = await response.json();
-  if (!response.ok) {
-    const failure = new APIError(payload.error?.code || 'IMPORT_FAILED', payload.error?.message || 'No fue posible importar la licencia.', response.status);
-    if (response.status === 401) { setCSRF(''); window.dispatchEvent(new CustomEvent('session-ended', { detail: failure })); }
-    throw failure;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), responseTimeout);
+  try {
+    const response = await fetch('/api/v1/license/import', { method: 'POST', body, headers: { 'X-CSRF-Token': csrfToken }, credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+    const payload = await response.json().catch(error => { if (controller.signal.aborted) throw error; return null; });
+    if (!response.ok || payload === null) {
+      const failure = new APIError(typeof payload?.error?.code === 'string' ? payload.error.code : 'IMPORT_FAILED', typeof payload?.error?.message === 'string' ? payload.error.message : 'No fue posible importar la licencia.', response.status);
+      if (response.status === 401) { setCSRF(''); window.dispatchEvent(new CustomEvent('session-ended', { detail: failure })); }
+      throw failure;
+    }
+    return payload as T;
+  } catch (error) {
+    if (controller.signal.aborted) throw new APIError('REQUEST_TIMEOUT', timeoutMessage, 0);
+    if (error instanceof APIError) throw error;
+    throw new APIError('NETWORK_ERROR', 'No se pudo conectar con el servidor.', 0);
+  } finally {
+    clearTimeout(timer);
   }
-  return payload as T;
 }

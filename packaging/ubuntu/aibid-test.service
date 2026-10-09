@@ -1,5 +1,5 @@
 [Unit]
-Description=AIBID Pruebas — biblioteca digital
+Description=AIBID — biblioteca digital
 After=network.target
 ConditionPathExists=/var/lib/aibid-test/service-enabled
 

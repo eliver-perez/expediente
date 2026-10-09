@@ -21,8 +21,8 @@ func unknownFirewall() Firewall {
 	return Firewall{State: "unknown", Message: "No fue posible verificar automáticamente si el firewall permite conexiones a AIBID.", Checks: []string{}}
 }
 
-// Diagnostics are strictly read-only. The service never elevates privileges,
-// changes global policy or creates firewall rules that an uninstaller must guess.
+// Diagnostics are read-only. Windows rules are provisioned/removed by the
+// elevated installer; the virtual service account never changes global policy.
 // Command output stays bounded and is never returned raw to the browser.
 type limitedOutput struct{ bytes.Buffer }
 
@@ -47,7 +47,11 @@ func commandPath(name string) string {
 }
 
 func probe(ctx context.Context, path string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	return probeWithin(ctx, 3*time.Second, path, args...)
+}
+
+func probeWithin(ctx context.Context, limit time.Duration, path string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	command := exec.CommandContext(ctx, path, args...)
 	command.Env = append(os.Environ(), "LC_ALL=C")

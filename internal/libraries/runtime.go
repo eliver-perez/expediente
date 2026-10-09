@@ -494,7 +494,9 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 		if requested == 1 {
 			err = scanFailure("USER_CANCELLED")
 		}
-		_ = runtime.Service.finish(ctx, job, err)
+		retryWorkerWrite(ctx, diagnostics.Context{LibraryID: job.LibraryID, JobID: job.ID, Operation: job.Kind}, func(writeContext context.Context) error {
+			return runtime.Service.finish(writeContext, job, err)
+		})
 	}
 }
 func (service *Service) finish(ctx context.Context, job Job, cause error) error {

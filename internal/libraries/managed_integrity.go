@@ -3,6 +3,7 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"gestor-documental/internal/licensing"
 	"os"
 	"strings"
@@ -52,6 +53,7 @@ func (service *Service) VerifyManagedRoot(ctx context.Context, rootID string) er
 		return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
 	}
 	after := ""
+	partial := false
 	for {
 		rows, err := service.Database.Reader.QueryContext(ctx, "SELECT f.id,l.relative_path FROM physical_files f JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN documents d ON d.physical_file_id=f.id WHERE l.root_id=? AND f.storage_source='managed' AND d.deleted_at IS NULL AND f.id>? ORDER BY f.id LIMIT 100", root.ID, after)
 		if err != nil {
@@ -77,7 +79,15 @@ func (service *Service) VerifyManagedRoot(ctx context.Context, rootID string) er
 		}
 		for _, item := range targets {
 			if err = service.verifyManagedFile(ctx, root, item.ID, item.Relative); err != nil {
-				return service.scanError(ctx, root, err)
+				if ctx.Err() != nil || !managedFileReadFailure(err) {
+					return service.scanError(ctx, root, err)
+				}
+				if err = service.scanPathError(ctx, root, item.Relative, err); err != nil {
+					return err
+				}
+				partial = true
+			} else if _, err = service.Database.Writer.ExecContext(ctx, "DELETE FROM scan_errors WHERE root_id=? AND relative_path=?", root.ID, item.Relative); err != nil {
+				return err
 			}
 			after = item.ID
 		}
@@ -86,9 +96,30 @@ func (service *Service) VerifyManagedRoot(ctx context.Context, rootID string) er
 	if err != nil || inspected.Identity != root.Identity {
 		return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
 	}
+	if partial {
+		return service.scanError(ctx, root, scanFailure("SCAN_PARTIAL"))
+	}
 	_, err = service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET status='active',last_verified_at=?,last_scan_at=?,last_error_code='' WHERE id=? AND configuration_revision=?", now(), now(), root.ID, root.Revision)
 	return err
 }
+
+// Isolate file I/O failures, but never mistake SQL, root revision, licensing or
+// cancellation errors for a damaged file and continue a compromised operation.
+func managedFileReadFailure(err error) bool {
+	var pathError *os.PathError
+	if errors.As(err, &pathError) {
+		return true
+	}
+	var failure *domain.Error
+	if errors.As(err, &failure) {
+		switch failure.Code {
+		case "SOURCE_UNAVAILABLE", "PATH_ACCESS_DENIED", "PATH_NOT_FOUND", "FILE_SIZE_LIMIT", "FILE_UNSTABLE", "INVALID_OFFICE_DOCUMENT", "DOCUMENT_COMPLEXITY_LIMIT":
+			return true
+		}
+	}
+	return false
+}
+
 func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID, relative string) error {
 	file, err := openLinked(root, relative)
 	if err != nil {

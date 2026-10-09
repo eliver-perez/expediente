@@ -12,7 +12,7 @@ import (
 func main() {
 	if message := openApplication(); message != "" {
 		text, _ := windows.UTF16PtrFromString(message)
-		caption, _ := windows.UTF16PtrFromString("AIBID Pruebas")
+		caption, _ := windows.UTF16PtrFromString("AIBID")
 		_, _ = windows.MessageBox(0, text, caption, windows.MB_OK|windows.MB_ICONINFORMATION)
 		os.Exit(1)
 	}
@@ -25,12 +25,12 @@ func openApplication() string {
 	}
 	file, err := os.Open(filepath.Join(filepath.Dir(executable), "launcher.json"))
 	if err != nil {
-		return "Falta la dirección de AIBID. Ejecuta «Configurar AIBID Pruebas» desde Inicio."
+		return "Falta la dirección de AIBID. Ejecuta «Configurar AIBID» desde Inicio."
 	}
 	target, err := launcher.ReadTarget(file)
 	file.Close()
 	if err != nil {
-		return "La dirección de AIBID no es válida. Ejecuta «Configurar AIBID Pruebas» desde Inicio."
+		return "La dirección de AIBID no es válida. Ejecuta «Configurar AIBID» desde Inicio."
 	}
 	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
@@ -40,7 +40,7 @@ func openApplication() string {
 	name, _ := windows.UTF16PtrFromString("AIBIDTest")
 	service, err := windows.OpenService(manager, name, windows.SERVICE_QUERY_STATUS)
 	if err != nil {
-		return "El servicio de AIBID no está disponible. Ejecuta «Configurar AIBID Pruebas» desde Inicio."
+		return "El servicio de AIBID no está disponible. Ejecuta «Configurar AIBID» desde Inicio."
 	}
 	defer windows.CloseServiceHandle(service)
 	deadline := time.Now().Add(15 * time.Second)
@@ -53,7 +53,7 @@ func openApplication() string {
 			break
 		}
 		if status.CurrentState != windows.SERVICE_START_PENDING || time.Now().After(deadline) {
-			return "AIBID todavía no está iniciado.\n\nSi acabas de encender la PC, espera un momento y vuelve a abrirlo.\n\nSi es la primera vez o el problema continúa, ejecuta «Configurar AIBID Pruebas» desde Inicio o solicita ayuda al administrador."
+			return "AIBID todavía no está iniciado.\n\nSi acabas de encender la PC, espera un momento y vuelve a abrirlo.\n\nSi es la primera vez o el problema continúa, ejecuta «Configurar AIBID» desde Inicio o solicita ayuda al administrador."
 		}
 		time.Sleep(250 * time.Millisecond)
 	}

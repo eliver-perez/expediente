@@ -21,10 +21,12 @@ else
     /usr/bin/dscl . -create /Users/$ACCOUNT PrimaryGroupID "$ID"
     /usr/bin/dscl . -create /Users/$ACCOUNT NFSHomeDirectory "$BASE/data"
     /usr/bin/dscl . -create /Users/$ACCOUNT UserShell /usr/bin/false
-    /usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIBID Pruebas'
+    /usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIBID'
     /usr/bin/dscl . -create /Users/$ACCOUNT IsHidden 1
     /usr/bin/dscl . -create /Users/$ACCOUNT Password '*'
 fi
+# Display name only: preserve UID/GID, ownership and launchd identity on upgrades.
+/usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIBID'
 /usr/bin/install -d -o "$ACCOUNT" -g "$ACCOUNT" -m 700 "$BASE/data" "$BASE/data/logs"
 if [ ! -e "$BASE/data/config.json" ]; then
     /usr/bin/sudo -u "$ACCOUNT" "$BASE/bin/gestor-documental" init --config "$BASE/data/config.json" --listen 127.0.0.1:18090 --tools /opt/homebrew/bin

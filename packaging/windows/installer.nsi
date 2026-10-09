@@ -6,7 +6,7 @@ Unicode true
 !include "nsDialogs.nsh"
 Var EraseData
 Var EraseCheckbox
-Name "AIBID Pruebas ${VERSION}"
+Name "AIBID ${VERSION}"
 !define MUI_ICON "${STAGE}/aibid.ico"
 !define MUI_UNICON "${STAGE}/aibid.ico"
 OutFile "${OUTPUT}"
@@ -15,10 +15,10 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 BrandingText "AIBID — Tu biblioteca digital, ordenada y al alcance."
 !define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TEXT "Instalación de pruebas independiente. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIBID Pruebas para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIBID.$\r$\n$\r$\nPara previsualizar Word y Excel instala LibreOffice en este equipo y revisa Ajustes > Vistas previas y caché. La extracción y búsqueda funcionan sin LibreOffice.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
+!define MUI_WELCOMEPAGE_TEXT "Instalación de AIBID. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIBID para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIBID.$\r$\n$\r$\nPara previsualizar Word y Excel instala LibreOffice en este equipo y revisa Ajustes > Vistas previas y caché. La extracción y búsqueda funcionan sin LibreOffice.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIBID Pruebas desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIBID Pruebas en el Escritorio o Abrir AIBID en Inicio: abre el navegador sin pedir permisos de administrador."
+!define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIBID desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIBID en el Escritorio o Abrir AIBID en Inicio: abre el navegador sin pedir permisos de administrador."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.DataOptions un.ConfirmDataOptions
@@ -80,13 +80,20 @@ Section "Instalar"
         Abort "La configuración falló. No se inició el servicio. Consulta el detalle."
     ${EndIf}
     WriteUninstaller "$INSTDIR\Desinstalar.exe"
-    CreateDirectory "$SMPROGRAMS\AIBID Pruebas"
-    CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Configurar AIBID Pruebas.lnk" "$INSTDIR\admin.cmd"
-    CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
+    ; Remove only known legacy shortcuts; keep the service SID and data paths.
+    Delete "$SMPROGRAMS\AIBID Pruebas\Configurar AIBID Pruebas.lnk"
+    Delete "$SMPROGRAMS\AIBID Pruebas\Desinstalar.lnk"
+    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.lnk"
     Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.url"
-    CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.lnk" "$INSTDIR\AIBID.exe"
-    CreateShortCut "$DESKTOP\AIBID Pruebas.lnk" "$INSTDIR\AIBID.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayName" "AIBID Pruebas"
+    RMDir "$SMPROGRAMS\AIBID Pruebas"
+    Delete "$DESKTOP\AIBID Pruebas.lnk"
+    CreateDirectory "$SMPROGRAMS\AIBID"
+    CreateShortCut "$SMPROGRAMS\AIBID\Configurar AIBID.lnk" "$INSTDIR\admin.cmd"
+    CreateShortCut "$SMPROGRAMS\AIBID\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
+    Delete "$SMPROGRAMS\AIBID\Abrir AIBID.url"
+    CreateShortCut "$SMPROGRAMS\AIBID\Abrir AIBID.lnk" "$INSTDIR\AIBID.exe"
+    CreateShortCut "$DESKTOP\AIBID.lnk" "$INSTDIR\AIBID.exe"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayName" "AIBID"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayVersion" "${VERSION}"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "UninstallString" '$\"$INSTDIR\Desinstalar.exe$\"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayIcon" "$INSTDIR\AIBID.exe,0"
@@ -104,12 +111,12 @@ Section "Uninstall"
         Abort "No se pudo completar la preparación de la desinstalación. Consulta el detalle; se conserva el programa."
     ${EndIf}
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Configurar AIBID Pruebas.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Desinstalar.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.url"
-    RMDir "$SMPROGRAMS\AIBID Pruebas"
-    Delete "$DESKTOP\AIBID Pruebas.lnk"
+    Delete "$SMPROGRAMS\AIBID\Configurar AIBID.lnk"
+    Delete "$SMPROGRAMS\AIBID\Desinstalar.lnk"
+    Delete "$SMPROGRAMS\AIBID\Abrir AIBID.lnk"
+    Delete "$SMPROGRAMS\AIBID\Abrir AIBID.url"
+    RMDir "$SMPROGRAMS\AIBID"
+    Delete "$DESKTOP\AIBID.lnk"
     ; Packaged files were checked by hash. Keep unknown and modified files.
     RMDir "$INSTDIR\tools"
     RMDir "$INSTDIR\docs"

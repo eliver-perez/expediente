@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"gestor-documental/internal/diagnostics"
 )
 
 type ocrTask struct {
@@ -68,7 +70,9 @@ func (r *Runtime) completeTask(ctx context.Context, task *ocrTask, cause error) 
 	if requested == 1 {
 		cause = scanFailure("USER_CANCELLED")
 	}
-	_ = r.Service.finish(ctx, task.job, cause)
+	retryWorkerWrite(ctx, diagnostics.Context{LibraryID: task.job.LibraryID, JobID: task.job.ID, Operation: "ocr"}, func(writeContext context.Context) error {
+		return r.Service.finish(writeContext, task.job, cause)
+	})
 }
 func (r *Runtime) ocrWorker(ctx context.Context, index int) {
 	defer r.workers.Done()
