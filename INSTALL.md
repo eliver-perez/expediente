@@ -1,9 +1,6 @@
-# AIBID — Desarrollo, distribución y operación
+# AIDEX — Desarrollo, distribución y operación
 
-**H6 ejecutable:** cliente de licencias online/offline y bibliotecas vinculadas/administradas/híbridas, cargas privadas,
-expedientes, revisión, guardado definitivo, integridad, OCR/búsqueda e identidad.
-**H7 en curso:** [instaladores de prueba, servicios y guía por SO](docs/H7.md), en un canal
-independiente (18090). No se configura Apache/XAMPP. Integración comercial aplazada al final.
+**AIDEX 1.0** es la primera edición comercial (versión interna 1.0.0). Distribución para Windows x64, Ubuntu 24.04 amd64/arm64 y macOS Apple Silicon. [Instalación vigente](docs/PRODUCCION.md), [transición y verificación](docs/TRANSICION-PRODUCCION.md). Los apartados de desarrollo usan configuración propia; no son instrucciones del paquete instalado. No se requiere Apache/XAMPP.
 
 ## Ejecutar en macOS / Visual Studio Code
 
@@ -13,9 +10,9 @@ Desde la terminal de esta carpeta:
 ```sh
 make deps
 make build-dev
-./build/gestor-documental-dev init
-./build/gestor-documental-dev bootstrap
-./build/gestor-documental-dev serve
+./build/aidex-server-dev init
+./build/aidex-server-dev bootstrap
+./build/aidex-server-dev serve
 ```
 
 Para actualizar H2–H5, detener su proceso y ejecutar `make build-dev` y `serve`.
@@ -30,15 +27,15 @@ mostrarla. No hay credenciales predeterminadas ni contraseñas por argumentos/pi
 Node/npm ni conexión a Internet para operar. H3 requiere las herramientas PDF/OCR
 e idiomas instalados en el equipo servidor.
 
-En macOS: `~/Library/Application Support/gestor-documental/config.json`; la DB vive
+En macOS: `~/Library/Application Support/aidex/config.json`; la DB vive
 en su subcarpeta `state/`. Linux usa `os.UserConfigDir()` (normalmente `~/.config/`)
 y Windows el directorio de configuración del usuario. Son rutas de desarrollo,
-distintas de las rutas de servicio propuestas para H7. Todos los comandos admiten:
+distintas de las rutas del servicio instalado indicadas en la guía vigente. Todos los comandos admiten:
 
 ```sh
-./build/gestor-documental-dev init --config /ruta/local/privada/config.json
-./build/gestor-documental-dev bootstrap --config /ruta/local/privada/config.json
-./build/gestor-documental-dev serve --config /ruta/local/privada/config.json
+./build/aidex-server-dev init --config /ruta/local/privada/config.json
+./build/aidex-server-dev bootstrap --config /ruta/local/privada/config.json
+./build/aidex-server-dev serve --config /ruta/local/privada/config.json
 ```
 
 Elegir ruta fuera de `htdocs`, `wwwroot` y cualquier raíz pública del cliente.
@@ -47,7 +44,7 @@ No usar enlaces simbólicos en estado; para pruebas desechables macOS usar
 El repositorio fuente tampoco debe exponerse como raíz de un virtual host Apache.
 
 En Windows sin Make: `go mod download`, `npm --prefix web ci`,
-`npm --prefix web run build`, `go build -tags development -o build/gestor-documental-dev.exe ./cmd/gestor-documental`;
+`npm --prefix web run build`, `go build -tags development -o build/aidex-server-dev.exe ./cmd/gestor-documental`;
 después ejecutar `init`, `bootstrap`, `serve` con ese `.exe` de desarrollo.
 
 ## Pruebas
@@ -72,7 +69,7 @@ Su configuración y presupuestos se describen en [H3](docs/H3.md).
 
 ## Recuperación administrativa y migraciones
 
-Con servicio detenido, `./build/gestor-documental recover-admin` solicita un
+Con servicio detenido, `./build/aidex-server recover-admin` solicita un
 administrador existente y nueva contraseña, rehabilita esa cuenta, invalida sus
 sesiones y deja auditoría. No crea una cuenta oculta. Usar el mismo `--config` de
 la instalación. El lock impide recuperación/bootstrap/migración con servicio activo.
@@ -116,138 +113,10 @@ rechaza montajes de red como ubicación. Documentos finales pueden usar discos/N
 verificados. Cambiar estado/temporal requiere mantenimiento y plan explícito;
 cambiar destino futuro de biblioteca no mueve sus archivos históricos.
 
-## Matriz comercial prevista y canal de prueba H7
+## Paquetes y operación vigentes
 
-| Plataforma | Artefacto | Servicio | Estado y configuración propuestos |
-| --- | --- | --- | --- |
-| Windows amd64 | `.exe` instalador + desinstalador | Servicio Windows sin consola persistente | Binarios en Program Files; config/DB/clave en ProgramData con ACL específica |
-| Ubuntu 24.04 LTS amd64 | `.deb` online y bundle offline | systemd, usuario restringido | `/etc/gestor-documental/`, `/var/lib/gestor-documental/`, journald |
-| macOS Apple Silicon arm64 | `.pkg` | launchd | Mismos criterios de permisos y actualización |
+Primera edición comercial: AIDEX 1.0; versión técnica 1.0.0. Windows amd64, Ubuntu 24.04 amd64/arm64 y macOS Apple Silicon arm64; Intel queda excluido. Cuatro paquetes en dist/aidex-1.0.0. Instalación nueva: servicio Windows AIDEX, Ubuntu aidex.service y macOS app.aidex; backend aidex-server (en Windows .exe), launcher AIDEX.exe.
 
-macOS Intel se excluyó el 2026-09-25. La tabla describe el objetivo comercial; los instaladores
-actuales usan nombres/rutas **AIBID-Test**, cuentas propias y puerto **18090** para evitar
-interferir con la instalación de desarrollo. Instrucciones y límites en [H7](docs/H7.md).
+Los comandos, rutas, cuentas, permisos, actualización y desinstalación actuales están en [Instalación](docs/PRODUCCION.md). Las actualizaciones de AIDEX preservan su cuenta, rutas e identidad. No se importan perfiles de otros productos; retira manualmente cualquier instalación anterior que ocupe el puerto, conservando sus datos.
 
-Las ubicaciones internas por defecto no fijan dónde van todos los PDF. Seleccionar
-y conceder ACL a cada raíz; no dar al servicio acceso total al disco por conveniencia.
-Redistribuir dependencias OCR/PDF e idiomas conforme a sus licencias; inventario/SBOM,
-notices y fuentes/ofertas de componentes de terceros cuando su licencia lo requiera.
-Esto se revisa antes de elegir herramientas: el código propio se entrega compilado.
-
-Los cuatro objetivos necesitan builds y pruebas nativas con dependencias reales;
-cross-compilar Go no prueba instalador, permisos, servicio ni OCR. CI en H2 agrega
-format/lint/tests/migraciones de ese módulo; en H3 añade FTS/rutas; H6 contrato y
-aislamiento de claves; H7 matriz de empaquetado, smoke tests, checksums/firma y
-proceso de publicación. No descargar dependencias sin fijar versión/integridad.
-
-## Ubuntu y operación offline
-
-Cuando exista el artefacto H7, instalación online prevista:
-
-```sh
-sudo apt install ./gestor-documental_VERSION_amd64.deb
-```
-
-El bundle offline contiene el `.deb`, todas las dependencias de la matriz Ubuntu
-24.04 amd64 y repositorio/índice local verificable o instalador que configure ese
-repositorio para APT. Incluir Tesseract, español y herramienta PDF elegida; probar
-con red deshabilitada en VM limpia. `dpkg -i` solo no resuelve dependencias ausentes.
-No afirmar instalación offline hasta completar ese ensayo y guardar evidencia.
-
-Para NAS: montar en SO con credenciales protegidas, identidad de servicio y permisos
-de lectura/escritura apropiados, reconexión y comprobación de identidad del recurso.
-Documentar SMB/NFS, UID/GID o ACL según caso; no almacenar contraseñas de montaje
-en rutas de biblioteca ni enviarlas a licencias. systemd/launchd/Windows deben
-gestionar recurso tardío/desconectado sin declarar eliminados todos los archivos.
-
-## Actualización y desinstalación
-
-1. Verificar firma/checksum del release y `published_at` firmado contra
-   `entitled_release_until`. La firma del manifiesto usa claves distintas a licencias.
-2. Modo mantenimiento, drenar jobs/materializaciones, snapshot verificado y comprobar
-   espacio. No ejecutar migraciones con dos instancias del servicio.
-3. Actualizar binarios/dependencias y migrar esquema por versión/checksum.
-4. Comprobar salud, FKs/FTS y muestra de archivos, reanudar cola/watcher.
-5. Si falla, restaurar conjunto compatible de binario/DB/estado; no bajar únicamente
-   el binario tras una migración irreversible. Conservar evidencia de recuperación.
-
-Conservar DB, raíz/ubicaciones externas, OCR, configuración, identidad/clave local y
-licencia entre upgrades. Desinstalación elimina programa/servicio, **no documentos
-ni DB por defecto**; borrado explícito posterior es operación separada. Perder
-mantenimiento no deshabilita la versión instalada de una perpetua válida.
-
-## Backup/restore consistente
-
-Respaldar solo `.db` en caliente ignorando WAL no es un backup válido. Propuesta V1:
-ventana breve de mantenimiento para escrituras de negocio, drenar materializaciones,
-fijar corte de metadatos y usar [Online Backup API](https://www.sqlite.org/backup.html)
-para snapshot DB que incorpore transacciones comprometidas del WAL. La copia
-resultante no necesita transportar un WAL separado incongruente.
-
-Copiar archivos managed referenciados y temporales que deban recuperarse, revisiones
-de configuración, licencia, identidad y clave local protegida, y manifiesto de
-hashes/tamaños/versiones. Definir alcance visible: las raíces linked pertenecen al
-cliente y pueden cambiar externamente; incluir copia de originales solo por opción
-administrativa explícita o snapshot del volumen. Si no se incluyen, manifest indica
-«índice/OCR conservado, originales externos no incluidos». No prometer consistencia
-de bytes linked contra cambios externos sin snapshot/control del cliente.
-
-Validar origen antes/después de copiar. Una ventana de solo lectura de la app no
-impide editores externos; si managed cambia externamente, reportar inconsistencia
-y reintentar/verificar, no declarar respaldo íntegro. Snapshot DB/documentos se
-asocian a un mismo corte; no omitir materializaciones en tránsito.
-
-Restaurar en directorio privado aislado con servicio detenido: verificar manifiesto,
-integridad DB/FKs, relación documentos/archivos y credenciales locales. Registrar
-restore, invalidar sesiones restauradas y reconciliar raíces con ausencia segura.
-Remapear rutas mediante plan auditado conservando historial; no tratarlas como
-carpetas nuevas para duplicar índice. En otro equipo, usar recuperación/transferencia
-de licencia, no aceptar silenciosamente huella anterior ni bajar revisión máxima.
-Ensayar pérdida de energía, disco lleno y restore completo en los cuatro objetivos.
-
-## Almacenamiento privado de cargas H4
-
-Por defecto se usa `state/uploads`. `upload_directory` permite una ruta absoluta
-local y privada, fuera de `htdocs`, `wwwroot` y cualquier raíz documental. Puede
-omitirse en configuraciones H2/H3. No requiere cambiar las rutas de instalación
-al adoptar la marca AIBID; los nombres técnicos anteriores permanecen compatibles.
-
-Para cambiar esa ruta después de cargar archivos: detener el servicio, conservar
-una copia de DB/estado/temporales, trasladar **todo** el directorio preservando
-nombres y permisos, actualizar `upload_directory` y comprobar las cargas al
-reiniciar. No apuntar a una carpeta vacía dejando archivos pendientes en la
-anterior. H4 no ofrece traslado automático ni purgas. Los destinos managed se
-registran separadamente en Carpetas y se seleccionan en Configuración; su uso
-para materializar documentos está disponible en H5. [Recorrido y recuperación](docs/H5.md).
-
-### Corrección del escaneo en bibliotecas híbridas
-
-Detener el proceso anterior y arrancar el binario actualizado evita que el escaneo
-linked marque como ausentes las nuevas cargas temporales managed. Esta corrección
-no cambia el esquema ni repara los datos de prueba anteriores por indicación del
-propietario. [Detalle y regresión](docs/H4.md).
-
-## Actualizar a H5
-
-Conservar copia consistente de estado/configuración y temporales con el servicio
-detenido. Iniciar el nuevo binario sobre la misma configuración aplica 0004 sin
-reparar ni reclasificar documentos H4. Registrar/seleccionar un destino administrado
-y decidir si se exige revisión. Por defecto ambas políticas están desactivadas y
-la retención conserva temporales. Las cargas previas sanas pueden confirmarse o
-enviarse a revisión. No se debe mover el destino ni borrar sus parciales durante
-un guardado. [Diagnósticos y reintentos](docs/H5.md).
-
-## H6: licencias y simulador
-
-La pantalla **Licencia** permite activar y renovar con HTTPS o archivos. La
-[guía H6](docs/H6.md) incluye una instalación aislada en el puerto 8100, simulador
-HTTPS en 9443, escenarios públicos y recuperación de identidad. Ninguna prueba
-requiere modificar la instalación habitual en 8090. No ejecutar ambos servicios
-con el mismo directorio de estado.
-
-Producción requiere `license.server_url` y claves públicas autorizadas por `kid`
-para activar online; para archivos basta la confianza pública configurada. No
-acepta CA/bypass/clave de desarrollo. Conservar `state/license/installation.json`
-junto a SQLite al respaldar; perderlo requiere recuperación local y nueva
-autorización del proveedor. La migración 0005 es automática y deja intactos los
-originales, cargas, expedientes, usuarios y migraciones anteriores.
+Construir no certifica el instalador nativo. Validación y pendientes reales: [transición](docs/TRANSICION-PRODUCCION.md). No se incluye Mac Intel, no se publica una actualización automática firmada ni se promete respaldo/restauración integral. Los documentos de hitos anteriores quedan como evidencia histórica, no como instrucciones vigentes.

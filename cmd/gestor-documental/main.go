@@ -41,11 +41,11 @@ func main() {
 
 func run(ctx context.Context, ready func()) error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("uso: gestor-documental version|init|configure-license|doctor|check-state|erase-internal-data|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
+		return fmt.Errorf("uso: aidex-server version|init|configure-license|doctor|check-state|erase-internal-data|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
 	}
 	command := os.Args[1]
 	if command == "version" {
-		fmt.Printf("AIBID %s (%s; %s/%s)\n", buildinfo.DisplayVersion(), buildinfo.Channel, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("AIDEX %s (%s; %s/%s)\n", buildinfo.DisplayVersion(), buildinfo.Channel, runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)

@@ -38,7 +38,7 @@ test('vistas previas: configuración, error aislado, generación, reutilización
   await page.screenshot({ path: 'test-results/v2-phase4-missing-converter.png', fullPage: true });
   await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
   await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Vistas previas y caché', exact: true }).click();
-  const program = process.env.AIBID_TEST_LIBREOFFICE || '';
+  const program = process.env.AIDEX_TEST_LIBREOFFICE || '';
   await page.getByLabel('Ruta de LibreOffice (opcional)').fill(program);
   await page.getByRole('button', { name: 'Guardar vistas previas', exact: true }).click();
   await expect(page.getByText('Configuración de vistas previas guardada.', { exact: true })).toBeVisible();

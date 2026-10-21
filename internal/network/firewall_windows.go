@@ -12,7 +12,7 @@ import (
 // local rules from applying. No raw command output or paths enter the response.
 const windowsFirewallQuery = `$ErrorActionPreference='Stop'
 $profiles = @(Get-NetFirewallProfile | ForEach-Object { [pscustomobject]@{Name=[string]$_.Name; Enabled=($_.Enabled -eq 'True'); LocalRulesBlocked=($_.AllowLocalFirewallRules -eq 'False')} })
-$rule = Get-NetFirewallRule -PolicyStore ActiveStore -Name 'AIBID-LAN-TCP' -ErrorAction SilentlyContinue
+$rule = Get-NetFirewallRule -PolicyStore ActiveStore -Name 'AIDEX-LAN-TCP' -ErrorAction SilentlyContinue
 $detail = $null
 if ($rule) {
     $port = $rule | Get-NetFirewallPortFilter
@@ -31,7 +31,7 @@ $categories = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach
 
 func inspectFirewall(ctx context.Context, port string) Firewall {
 	result := unknownFirewall()
-	result.Instructions = "El instalador prepara una regla de AIBID para su puerto TCP, la subred local y perfiles privados o de dominio. En modo local solo se escucha en 127.0.0.1 aunque la regla permanezca preparada. Las políticas del dominio y reglas de bloqueo pueden prevalecer."
+	result.Instructions = "El instalador prepara una regla de AIDEX para su puerto TCP, la subred local y perfiles privados o de dominio. En modo local solo se escucha en 127.0.0.1 aunque la regla permanezca preparada. Las políticas del dominio y reglas de bloqueo pueden prevalecer."
 	path := commandPath("powershell.exe")
 	if path == "" {
 		return result

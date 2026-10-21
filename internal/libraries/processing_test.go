@@ -173,8 +173,8 @@ func TestCancelledScanStaysPausedAndCanResume(t *testing.T) {
 
 // Opt-in corpus test: actual files, actual SQLite commits, no external 9,000-file corpus required.
 func TestLargeLibrary9000(t *testing.T) {
-	if os.Getenv("AIBID_LARGE_TEST") != "1" {
-		t.Skip("set AIBID_LARGE_TEST=1 for the 9,000-file regression")
+	if os.Getenv("AIDEX_LARGE_TEST") != "1" {
+		t.Skip("set AIDEX_LARGE_TEST=1 for the 9,000-file regression")
 	}
 	service, principal, directory := fixture(t)
 	ctx := context.Background()

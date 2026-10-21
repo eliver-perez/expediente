@@ -34,6 +34,6 @@ func inspectFirewall(ctx context.Context, port string) Firewall {
 		}
 		result.Checks = append(result.Checks, check)
 	}
-	result.Instructions = "Pide al administrador que revise el firewall detectado y permita TCP al puerto " + port + " únicamente desde tu red local. No basta con que la herramienta esté instalada: deben revisarse sus reglas y la interfaz o zona activa. AIBID no ha creado ni modificado reglas."
+	result.Instructions = "Pide al administrador que revise el firewall detectado y permita TCP al puerto " + port + " únicamente desde tu red local. No basta con que la herramienta esté instalada: deben revisarse sus reglas y la interfaz o zona activa. AIDEX no ha creado ni modificado reglas."
 	return result
 }

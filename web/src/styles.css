@@ -182,9 +182,9 @@ progress { display: block; width: 100%; height: 10px; accent-color: var(--accent
 .batch-link { display: block; }
 @media (max-width: 600px) { .upload-dropzone { padding: 20px 12px; } .case-card { padding: 18px; } .requirement-card .section-heading { flex-wrap: wrap; } .metadata-row > label { flex-basis: 100%; } }
 
-/* AIBID SVG assets are the originals supplied by the product owner. */
+/* AIDEX SVG assets are the originals supplied by the product owner. */
 :root { --navy: #0f172a; }
-.aibid-brand { display: block; object-fit: contain; height: auto; max-width: 100%; }
+.aidex-brand { display: block; object-fit: contain; height: auto; max-width: 100%; }
 .login-brand { width: 440px; margin: -10px auto 25px; }
 .sidebar-brand { width: 100%; margin: -8px 0 24px; }
 .topbar-brand { width: 360px; }

@@ -217,7 +217,7 @@ func (service *Service) beginApproval(ctx context.Context, transaction *sql.Tx, 
 		}
 	}
 	relative := renderNamingSequence(settings, input, document.ID, sequence)
-	partial := filepath.ToSlash(filepath.Join(filepath.Dir(relative), ".aibid-"+operationID+".part"))
+	partial := filepath.ToSlash(filepath.Join(filepath.Dir(relative), ".aidex-"+operationID+".part"))
 	_, err = transaction.ExecContext(ctx, `INSERT INTO materializations(id,document_id,library_id,physical_file_id,content_version_id,document_revision,target_root_id,root_revision,library_configuration_revision,target_relative_path,target_comparison_key,partial_relative_path,expected_sha256,expected_size_bytes,state,approved_by,decision_kind,review_id,created_at,updated_at)
  SELECT ?,d.id,d.library_id,f.id,v.id,d.revision,?,?,?,?,?,?,v.sha256,v.size_bytes,'planned',?,?,?,?,? FROM documents d JOIN physical_files f ON f.id=d.physical_file_id JOIN content_versions v ON v.id=f.current_content_version_id WHERE d.id=?`, operationID, root.ID, root.Revision, configurationRevision, relative, comparison(filepath.Join(root.Path, filepath.FromSlash(relative)), root.CaseSensitive), partial, principal.User.ID, kind, nullableID(reviewID), now(), now(), document.ID)
 	if err != nil {

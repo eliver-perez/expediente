@@ -107,7 +107,7 @@ func ProvisionProvider(path string) error {
 	if err = storage.ProtectPrivatePath(backup, false); err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".aibid-config-*")
+	file, err := os.CreateTemp(filepath.Dir(path), ".aidex-config-*")
 	if err != nil {
 		return err
 	}

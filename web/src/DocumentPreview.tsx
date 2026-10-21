@@ -14,7 +14,7 @@ const errors: Record<string,string> = {
  PREVIEW_TIMEOUT:'La conversión superó los dos minutos permitidos.',
  PREVIEW_OBSOLETE:'El archivo o el generador cambiaron. Verifica la biblioteca y solicita una nueva vista previa.',
  DOCUMENT_UNAVAILABLE:'No se puede leer el original en este momento.',
- PROCESS_RESTARTED:'La conversión se interrumpió al reiniciar AIBID. Puedes volver a intentarlo.',
+ PROCESS_RESTARTED:'La conversión se interrumpió al reiniciar AIDEX. Puedes volver a intentarlo.',
 };
 export function DocumentPreview({ documentID, hash, format }: { documentID:string; hash:string; format:string }) {
  const [preview,setPreview]=useState<Preview|null>(null); const [error,setError]=useState(''); const [busy,setBusy]=useState(false);

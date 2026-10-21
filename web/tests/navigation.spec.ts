@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 test('búsqueda agrupada independiente, navegación, PDF ampliado y recursos',async({page})=>{
- const directory=await realpath(await mkdtemp(join(tmpdir(),'aibid-r4-browser-')));
+ const directory=await realpath(await mkdtemp(join(tmpdir(),'aidex-r4-browser-')));
  try{
   for(const library of ['A','B']){
    await mkdir(join(directory,library,'Subcarpeta'),{recursive:true});

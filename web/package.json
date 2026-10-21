@@ -1,6 +1,6 @@
 {
-  "name": "gestor-documental-web",
-  "version": "0.2.0",
+  "name": "aidex-web",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "engines": {

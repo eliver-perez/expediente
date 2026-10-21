@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-param([Parameter(Mandatory=$true)][string]$Path)
+param([Parameter(Mandatory=$true)][string]$Path, [ValidateSet('Manage','Transport')][string]$Kind = 'Manage')
 $ErrorActionPreference = 'Stop'
 
 # Parse the actual generated payload without executing installer actions.
@@ -21,7 +21,8 @@ if ($Issues.Count -gt 0) {
 }
 if ($null -eq $Ast.ParamBlock) { throw 'Installer parameter block was not recognized.' }
 $Parameters = @($Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-foreach ($Required in @('Action', 'InstallRoot', 'PreflightBinary', 'EraseInternalData')) {
+$RequiredParameters = if ($Kind -eq 'Transport') { @('ManageScript','Action','InstallRoot','LogPath','TimeoutSeconds') } else { @('Action','InstallRoot','PreflightBinary','EraseInternalData') }
+foreach ($Required in $RequiredParameters) {
     if ($Required -notin $Parameters) { throw "Missing installer parameter: $Required" }
 }
 Write-Host "Windows PowerShell payload: encoding, syntax and parameters OK (parser $($PSVersionTable.PSVersion))"

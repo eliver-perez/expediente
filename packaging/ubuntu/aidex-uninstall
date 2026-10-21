@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
 if [ "$(id -u)" -ne 0 ]; then exec sudo "$0"; fi
+. /usr/lib/aidex/profile.sh
+aidex_select_profile
 ERASE=no
-echo 'Por defecto se conservarán los datos de AIBID.'
+echo 'Por defecto se conservarán los datos de AIDEX.'
 printf '¿Eliminar base de datos, índices, texto extraído y configuración? [s/N]: '
 read -r ANSWER || ANSWER=no
 case "$ANSWER" in
@@ -13,14 +15,14 @@ case "$ANSWER" in
         read -r ANSWER || ANSWER=no
         [ "$ANSWER" != ELIMINAR ] || ERASE=yes ;;
 esac
-systemctl stop aibid-test.service
-if [ -f /etc/aibid-test/config.json ]; then
-    /usr/lib/aibid-test/gestor-documental check-state --config /etc/aibid-test/config.json
+systemctl stop "$UNIT"
+if [ -f "$CONFIG" ]; then
+    "$BINARY" check-state --config "$CONFIG"
     if [ "$ERASE" = yes ]; then
-        /usr/lib/aibid-test/gestor-documental erase-internal-data --config /etc/aibid-test/config.json --confirm-erase-internal-data
+        "$BINARY" erase-internal-data --config "$CONFIG" --confirm-erase-internal-data
         # Ubuntu stores these package-owned markers next to state, while the
         # configuration is in /etc. Leave all other files and directories intact.
-        rm -f /var/lib/aibid-test/service-enabled /var/lib/aibid-test/package-version
+        rm -f "$DATA/service-enabled" "$DATA/package-version"
     fi
 fi
-apt-get remove aibid-test
+apt-get remove aidex

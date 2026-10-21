@@ -18,7 +18,7 @@ type Firewall struct {
 }
 
 func unknownFirewall() Firewall {
-	return Firewall{State: "unknown", Message: "No fue posible verificar automáticamente si el firewall permite conexiones a AIBID.", Checks: []string{}}
+	return Firewall{State: "unknown", Message: "No fue posible verificar automáticamente si el firewall permite conexiones a AIDEX.", Checks: []string{}}
 }
 
 // Diagnostics are read-only. Windows rules are provisioned/removed by the

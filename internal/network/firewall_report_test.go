@@ -7,10 +7,10 @@ import (
 )
 
 func TestWindowsFirewallEffectiveRuleDiagnostics(t *testing.T) {
-	const binary = `C:\Program Files\AIBID-Test\gestor-documental.exe`
+	const binary = `C:\Program Files\AIDEX\aidex-server.exe`
 	valid := map[string]any{
 		"Enabled": true, "Allow": true, "Inbound": true, "EdgeBlocked": true,
-		"Profiles": "Domain, Private", "Protocol": "TCP", "Port": "18090", "Program": binary, "Service": "AIBIDTest", "Remote": "LocalSubnet",
+		"Profiles": "Domain, Private", "Protocol": "TCP", "Port": "18090", "Program": binary, "Service": "AIDEX", "Remote": "LocalSubnet",
 	}
 	cases := []struct {
 		key   string
@@ -39,7 +39,7 @@ func TestWindowsFirewallEffectiveRuleDiagnostics(t *testing.T) {
 				rule[c.key] = c.value
 			}
 			data, _ := json.Marshal(report)
-			result := describeWindowsFirewall(unknownFirewall(), string(data), "18090", binary, "AIBIDTest")
+			result := describeWindowsFirewall(unknownFirewall(), string(data), "18090", binary, "AIDEX")
 			if result.State != c.state {
 				t.Fatal(result.State, "expected", c.state)
 			}
@@ -48,7 +48,7 @@ func TestWindowsFirewallEffectiveRuleDiagnostics(t *testing.T) {
 			}
 		})
 	}
-	if describeWindowsFirewall(unknownFirewall(), "invalid", "18090", binary, "AIBIDTest").State != "unknown" {
+	if describeWindowsFirewall(unknownFirewall(), "invalid", "18090", binary, "AIDEX").State != "unknown" {
 		t.Fatal("invalid probe result trusted")
 	}
 }

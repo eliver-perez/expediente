@@ -28,7 +28,7 @@ test('acceso local y LAN real, UUID en HTTP y vuelta a local', async ({ page }) 
     await page.getByRole('button', { name: 'Nueva biblioteca', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Crear biblioteca', exact: true })).toBeVisible();
     await page.getByRole('link', { name: 'Licencia', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Licencia de AIBID', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Licencia de AIDEX', exact: true })).toBeVisible();
     await page.getByText('Identificación para soporte', { exact: true }).click();
     await expect(page.locator('.document-accordion[open]').getByText('Clave pública de instalación', { exact: true })).toBeVisible();
     await page.getByRole('link', { name: 'Ajustes', exact: true }).click(); await page.getByRole('navigation', { name: 'Secciones de configuración' }).getByRole('link', { name: 'Acceso y red', exact: true }).click();

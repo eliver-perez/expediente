@@ -12,7 +12,7 @@ function details(event: Event): Record<string, unknown> { if (event.details) ret
 const documentDescriptions: Record<string, string> = {
   reindex_requested: 'Se comprobó el original y se solicitó una nueva extracción con la configuración actual.',
   opened: 'Se abrió la vista previa del original.', downloaded: 'Se descargó el archivo original.',
-  discovered: 'AIBID detectó el documento durante un recorrido de carpeta.',
+  discovered: 'AIDEX detectó el documento durante un recorrido de carpeta.',
   linked_changed: 'Cambió el contenido del original vinculado; se registró una nueva versión.',
   linked_missing: 'El original vinculado dejó de estar disponible.', linked_reappeared: 'El original vinculado volvió a estar disponible.',
   managed_changed: 'La verificación detectó cambios en el original administrado.', managed_missing: 'No se encontró el original administrado.', managed_reappeared: 'El original administrado volvió a estar disponible.',

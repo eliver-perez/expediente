@@ -1,4 +1,4 @@
-# AIBID — Arquitectura V1
+# AIDEX — Arquitectura V1
 
 Estado: H1 aprobada; H2–H6 implementadas: revisión, materialización recuperable y cliente de licencias.
 Requisitos en [alcance](docs/REQUIREMENTS.md), decisiones en [DECISIONS.md](DECISIONS.md)
@@ -157,7 +157,7 @@ cargas privadas. Una asociación linked cambia metadatos: conserva identidad,
 ubicaciones, contenido y extracción. Las raíces managed se registran como destinos;
 H5 utiliza esos destinos para publicar documentos mediante un diario recuperable.
 
-La interfaz AIBID incluye Cargas, Expedientes, Catálogos y ajustes por biblioteca,
+La interfaz AIDEX incluye Cargas, Expedientes, Catálogos y ajustes por biblioteca,
 además del buscador con filtros documentales. Los assets SVG son locales y están
 embebidos junto con React; no hay fuentes ni servicios de marca externos.
 

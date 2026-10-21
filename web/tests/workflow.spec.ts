@@ -14,7 +14,7 @@ async function request(page: Page, method: string, path: string, data: unknown) 
 
 test('H5: confirmar, detectar modificación administrada y revisar con otra cuenta', async ({ page, browser }) => {
   test.setTimeout(90_000);
-  const destination = await realpath(await mkdtemp(join(tmpdir(), 'aibid-h5-browser-')));
+  const destination = await realpath(await mkdtemp(join(tmpdir(), 'aidex-h5-browser-')));
   const reviewerPage = await browser.newPage();
   try {
     await login(page); await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click(); await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
@@ -45,11 +45,11 @@ test('H5: confirmar, detectar modificación administrada y revisar con otra cuen
     await page.getByRole('tab', { name: 'Documentos', exact: true }).click();
     await page.getByRole('button', { name: 'Vista de lista', exact: true }).click();
     for (const folder of document.relative_path.split('/').slice(0, -1)) { await page.getByRole('button', { name: folder, exact: true }).click(); }
-    await page.getByRole('button', { name: 'Ver ficha', exact: true }).click(); await expect(dialog).toContainText('El archivo administrado cambió fuera de AIBID.'); await dialog.getByRole('combobox', { name: 'Revisor', exact: true }).selectOption({ label: 'Revisora H5' }); await dialog.getByRole('button', { name: 'Enviar a revisión', exact: true }).click(); await expect(dialog).toContainText('Pendiente de decisión'); await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
+    await page.getByRole('button', { name: 'Ver ficha', exact: true }).click(); await expect(dialog).toContainText('El archivo administrado cambió fuera de AIDEX.'); await dialog.getByRole('combobox', { name: 'Revisor', exact: true }).selectOption({ label: 'Revisora H5' }); await dialog.getByRole('button', { name: 'Enviar a revisión', exact: true }).click(); await expect(dialog).toContainText('Pendiente de decisión'); await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
     await login(reviewerPage, 'reviewer-browser-h5', 'abcdef'); await reviewerPage.getByRole('link', { name: 'Bibliotecas', exact: true }).click(); await reviewerPage.getByRole('button', { name: /Revisión H5/ }).click(); await reviewerPage.getByRole('tab', { name: 'Revisiones', exact: true }).click(); await reviewerPage.getByRole('button', { name: 'Revisar documento', exact: true }).click();
     const reviewDialog = reviewerPage.getByRole('dialog'); await expect(reviewDialog).not.toContainText(destination); await reviewDialog.getByLabel('Motivo del rechazo').fill('Confirma la modificación del plano.'); await reviewDialog.getByRole('button', { name: 'Rechazar documento', exact: true }).click(); await expect(reviewDialog).toContainText('Rechazado'); await reviewDialog.getByRole('button', { name: 'Cerrar ficha' }).click();
     await page.getByRole('button', { name: 'Actualizar documentos', exact: true }).click(); await page.getByRole('button', { name: 'Ver ficha', exact: true }).click(); await expect(dialog).toContainText('Confirma la modificación del plano.'); await dialog.getByRole('button', { name: 'Enviar a revisión', exact: true }).click(); await expect(dialog).toContainText('Pendiente de decisión'); await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
-    await reviewerPage.getByRole('button', { name: 'Actualizar pendientes', exact: true }).click(); await reviewerPage.getByRole('button', { name: 'Revisar documento', exact: true }).click(); await reviewDialog.getByRole('button', { name: 'Aprobar documento', exact: true }).click(); await expect(reviewDialog).toContainText('Aprobado'); await expect(reviewDialog).not.toContainText('El archivo administrado cambió fuera de AIBID.');
+    await reviewerPage.getByRole('button', { name: 'Actualizar pendientes', exact: true }).click(); await reviewerPage.getByRole('button', { name: 'Revisar documento', exact: true }).click(); await reviewDialog.getByRole('button', { name: 'Aprobar documento', exact: true }).click(); await expect(reviewDialog).toContainText('Aprobado'); await expect(reviewDialog).not.toContainText('El archivo administrado cambió fuera de AIDEX.');
     await reviewDialog.getByRole('button', { name: 'Cerrar ficha' }).click();
     await page.getByRole('tab', { name: 'Cargas', exact: true }).click();
     await page.getByLabel('Archivos', { exact: true }).setInputFiles({ name: 'Para revisión.pdf', mimeType: 'application/pdf', buffer: await readFile(resolve('../testdata/documents/native.pdf')) });

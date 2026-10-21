@@ -1,4 +1,4 @@
-name: AIBID H2–H7 checks
+name: AIDEX H2–H7 checks
 on:
   push:
   pull_request:
@@ -33,7 +33,7 @@ jobs:
       - run: go test -tags development ./...
       - if: runner.os != 'Windows'
         run: go test -race -tags development ./...
-      - run: go build -trimpath -o build/gestor-documental ./cmd/gestor-documental
+      - run: go build -trimpath -o build/aidex-server ./cmd/gestor-documental
       - if: runner.os == 'Linux'
         run: python3 scripts/check_design.py
       - if: runner.os == 'Linux'

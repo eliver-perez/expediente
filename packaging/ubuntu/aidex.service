@@ -1,20 +1,20 @@
 [Unit]
-Description=AIBID — biblioteca digital
+Description=AIDEX — biblioteca digital
 After=network.target
-ConditionPathExists=/var/lib/aibid-test/service-enabled
+ConditionPathExists=/var/lib/aidex/service-enabled
 
 [Service]
 Type=simple
-User=aibid-test
-Group=aibid-test
-ExecStart=/usr/lib/aibid-test/gestor-documental serve --config /etc/aibid-test/config.json
-WorkingDirectory=/var/lib/aibid-test
+User=aidex
+Group=aidex
+ExecStart=/usr/lib/aidex/aidex-server serve --config /etc/aidex/config.json
+WorkingDirectory=/var/lib/aidex
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-# Only AIBID's private configuration directory is writable under /etc.
-ReadWritePaths=/etc/aibid-test
+# Only AIDEX's private configuration directory is writable under /etc.
+ReadWritePaths=/etc/aidex
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

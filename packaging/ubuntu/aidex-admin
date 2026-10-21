@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+[ "$(id -u)" -eq 0 ] || { echo 'Ejecuta sudo aidex-admin' >&2; exit 1; }
+. /usr/lib/aidex/profile.sh
+aidex_select_profile
+runuser -u "$ACCOUNT" -- "$BINARY" doctor --config "$CONFIG" --sample-directory /usr/share/doc/aidex/pdf
+if [ ! -f "$DATA/service-enabled" ]; then
+    if ! runuser -u "$ACCOUNT" -- "$BINARY" bootstrap-ready --config "$CONFIG"; then
+        runuser -u "$ACCOUNT" -- "$BINARY" bootstrap --config "$CONFIG"
+    fi
+    runuser -u "$ACCOUNT" -- touch "$DATA/service-enabled"
+fi
+systemctl enable --now "$UNIT"
+systemctl is-active --quiet "$UNIT"
+echo 'AIDEX disponible en http://127.0.0.1:18090 (en este equipo).'

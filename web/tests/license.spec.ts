@@ -5,7 +5,7 @@ test('licencias: simulador HTTPS, archivos sin conexión y recuperación de solo
   await page.getByLabel('Contraseña', { exact: true }).fill('Browser-fixture-password-2026');
   await page.getByRole('button', { name: 'Entrar', exact: true }).click();
   await page.getByRole('link', { name: 'Licencia', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Licencia de AIBID' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Licencia de AIDEX' })).toBeVisible();
   const online = page.getByRole('heading', { name: 'Activación y renovación en línea' }).locator('..');
   async function activate(key: string) {
     await page.getByLabel('Operación', { exact: true }).selectOption('activate');

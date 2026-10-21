@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 test('intervalos, páginas acotadas, vistas y confirmación sin borrar originales', async ({ page }) => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'aibid-r6-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'aidex-r6-')));
   const original = await readFile(resolve('../testdata/documents/native.pdf'));
   try {
     // One item beyond the page boundary; no volume or load test.
@@ -74,7 +74,7 @@ test('intervalos, páginas acotadas, vistas y confirmación sin borrar originale
     await page.getByLabel('Motivo', { exact: true }).fill('Prueba del retiro');
     await page.getByRole('button', { name: 'Confirmar retiro del índice', exact: true }).click();
     await expect(page.getByRole('dialog').first()).toBeVisible();
-    await page.getByLabel('Confirmo que se retirará del índice de AIBID.', { exact: false }).check();
+    await page.getByLabel('Confirmo que se retirará del índice de AIDEX.', { exact: false }).check();
     await page.getByRole('button', { name: 'Confirmar retiro del índice', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     expect(await readFile(join(directory, 'Carpeta-50', 'Ejemplo.pdf'))).toEqual(Buffer.concat([original, Buffer.from('\n% Segundo grupo de prueba\n')]));

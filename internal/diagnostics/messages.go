@@ -49,7 +49,7 @@ var Messages = map[string]string{
 	"ROOT_PLAN_STALE":               "Cambió la configuración de la raíz.",
 	"ROOT_UNAVAILABLE":              "No se puede acceder a la raíz o cambió el disco montado.",
 	"SCAN_PARTIAL":                  "Recorrido incompleto: consulta las rutas con error en Procesamiento.",
-	"SERVICE_STARTED":               "El servicio de AIBID inició correctamente.",
+	"SERVICE_STARTED":               "El servicio de AIDEX inició correctamente.",
 	"SOURCE_UNAVAILABLE":            "No se pudo leer una carpeta o archivo.",
 	"STORAGE_COLLISION":             "Ya existe otro archivo en el destino. No se sobrescribió.",
 	"STORAGE_INTEGRITY_FAILED":      "La copia no coincide con la huella esperada. Se conserva el temporal.",

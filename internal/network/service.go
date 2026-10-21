@@ -135,7 +135,7 @@ func (s *Service) Apply(selected, expectedRevision string) error {
 		return domain.Failure("NETWORK_CONFIG_READ", "No se pudo leer la configuración privada. Se conserva el acceso actual.", 500)
 	}
 	if !reflect.DeepEqual(disk, s.configuration) {
-		return domain.Failure("REVISION_CONFLICT", "El archivo de configuración cambió fuera de AIBID. Reinicia el servicio para cargarlo.", 409)
+		return domain.Failure("REVISION_CONFLICT", "El archivo de configuración cambió fuera de AIDEX. Reinicia el servicio para cargarlo.", 409)
 	}
 	if mode(s.configuration) == selected {
 		return nil
@@ -168,9 +168,9 @@ func (s *Service) Apply(selected, expectedRevision string) error {
 			return domain.Failure("NETWORK_PORT_CHECK_FAILED", "Windows no permitió comprobar los puertos en escucha. Se restauró el acceso anterior.", 409)
 		}
 		if errors.Is(err, errPortOccupied) {
-			return domain.Failure("NETWORK_PORT_IN_USE", "Otro servicio ya utiliza el puerto de AIBID. Se restauró el acceso anterior.", 409)
+			return domain.Failure("NETWORK_PORT_IN_USE", "Otro servicio ya utiliza el puerto de AIDEX. Se restauró el acceso anterior.", 409)
 		}
-		return domain.Failure("NETWORK_PORT_UNAVAILABLE", "No se pudo abrir el puerto de AIBID en la dirección solicitada. Se restauró el acceso anterior.", 409)
+		return domain.Failure("NETWORK_PORT_UNAVAILABLE", "No se pudo abrir el puerto de AIDEX en la dirección solicitada. Se restauró el acceso anterior.", 409)
 	}
 	if err = config.Save(s.path, next); err != nil {
 		_ = listener.Close()
@@ -194,7 +194,7 @@ func (s *Service) restore(configuration config.Config) error {
 		case s.errors <- err:
 		default:
 		}
-		return domain.Failure("NETWORK_RESTART_REQUIRED", "Otro proceso ocupó el puerto durante el cambio. La configuración anterior se conserva; reinicia AIBID cuando el puerto esté libre.", 503)
+		return domain.Failure("NETWORK_RESTART_REQUIRED", "Otro proceso ocupó el puerto durante el cambio. La configuración anterior se conserva; reinicia AIDEX cuando el puerto esté libre.", 503)
 	}
 	s.serve(listener, configuration)
 	return nil

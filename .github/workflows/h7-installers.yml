@@ -1,4 +1,4 @@
-name: AIBID 2.0 RC1 installers
+name: AIDEX installers
 on:
   workflow_dispatch:
 permissions:
@@ -35,16 +35,19 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-spa fonts-dejavu-core
       - run: go test -tags development ./...
-      - run: python scripts/test_build_installers.py
+      - run: python -m unittest discover -s scripts -p 'test_*.py'
       - if: runner.os == 'Windows'
         shell: powershell
         run: ./scripts/test_windows_firewall.ps1
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test_windows_transition.ps1
       - if: runner.os != 'Windows'
         run: python3 scripts/build_installers.py --target ${{ matrix.target }}
       - if: runner.os == 'macOS'
-        run: python3 scripts/smoke_macos_installer.py dist/aibid-2.0-rc.1/AIBID-2.0.0-rc.1-macOS-arm64.pkg
+        run: python3 scripts/smoke_macos_installer.py dist/aidex-1.0.0/AIDEX-1.0.0-macOS-arm64.pkg
       - if: runner.os == 'Linux'
-        run: dpkg-deb --info dist/aibid-2.0-rc.1/aibid-test_2.0.0~rc.1_amd64.deb
+        run: dpkg-deb --info dist/aidex-1.0.0/aidex_1.0.0_amd64.deb
       - if: runner.os == 'Windows'
         uses: mamba-org/setup-micromamba@v3
         with:
@@ -55,14 +58,14 @@ jobs:
         run: |
           choco install nsis --version=3.12 --yes --no-progress
           if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
-          micromamba create --no-rc --root-prefix "$env:RUNNER_TEMP\aibid-mamba" --prefix "$env:RUNNER_TEMP\aibid-ocr" --platform win-64 --file packaging/windows/ocr-explicit.txt --yes
+          micromamba create --no-rc --root-prefix "$env:RUNNER_TEMP\aidex-mamba" --prefix "$env:RUNNER_TEMP\aidex-ocr" --platform win-64 --file packaging/windows/ocr-explicit.txt --yes
           if ($LASTEXITCODE -ne 0) { throw 'OCR restoration failed' }
-          python scripts/build_installers.py --target windows --windows-tools "$env:RUNNER_TEMP\aibid-ocr" --makensis "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          python scripts/build_installers.py --target windows --windows-tools "$env:RUNNER_TEMP\aidex-ocr" --makensis "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
-      # Internal preview artifacts only; no release publication or production signing.
+      # Validation artifacts only; publication and production signing are separate.
       - uses: actions/upload-artifact@v7
         with:
-          name: AIBID-${{ matrix.target }}
-          path: dist/aibid-2.0-rc.1/
+          name: AIDEX-${{ matrix.target }}
+          path: dist/aidex-1.0.0/
           if-no-files-found: error
           retention-days: 14

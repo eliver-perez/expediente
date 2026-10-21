@@ -1,4 +1,4 @@
-# AIBID — Seguridad y controles por hito
+# AIDEX — Seguridad y controles por hito
 
 D-01 a D-05 fueron aprobadas por el propietario. H2 implementa identidad, cookies,
 CSRF, permisos globales, límites y auditoría descritos en [H2](docs/H2.md). Los
@@ -202,28 +202,12 @@ vencida/revocada; recuperación y política de backup siguen disponibles. La hor
 máxima persistida limita retrocesos, sin prometer protección frente al administrador
 del SO. [Pruebas, recuperación y límites de interoperabilidad](docs/H6.md).
 
-## Canal de instaladores H7
+## Instaladores de AIDEX
 
-AIBID Pruebas tiene licencia development, sin servidor comercial, puerto loopback 18090, estado y
-servicio independientes. No abrir firewall ni reutilizar sus binarios para una release comercial.
-Los paquetes de prueba carecen de firma de editor/notarización; se generan hashes para comprobar
-transferencia, no autenticidad del editor. La firma ad hoc del binario arm64 no equivale a notarización.
+Los paquetes usan compilación production y confianza de licencia de producción; las claves/servidores de simulación pertenecen exclusivamente a pruebas aisladas. Marca AIDEX, versión técnica 1.0.0. Servicio Windows AIDEX con cuenta virtual, aidex.service/cuenta aidex en Ubuntu y app.aidex/cuenta _aidex en macOS para instalaciones nuevas. No se instala una cuenta administrativa para el backend.
 
-La cuenta del servicio Windows se incluye explícitamente en las DACL privadas junto a SYSTEM,
-Administradores y la cuenta que realiza mantenimiento local. El nombre viene fijado en el binario
-instalado, no de una entrada HTTP. Las cuentas Unix no tienen login. Datos 0700/0600, estado local y
-rechazo de enlaces conservados. Los ejecutables y scripts se instalan en ubicaciones administradas.
-Las raíces adicionales requieren permisos específicos; los instaladores no amplían permisos de
-Documentos, discos o NAS. La desinstalación conserva datos y configuración.
+Las instalaciones AIDEX mantienen su SID/UID/GID y rutas de estado al actualizar. La primera edición no importa identidades ni datos de otro producto. El host Windows y launcher admiten únicamente AIDEX; la opción local de servicio no procede de HTTP. El launcher publica solo URL y nombre del servicio. Las rutas/cuentas de servicio ajenas, marcadores incompatibles y enlaces se rechazan. Las cuentas del backend siguen sin privilegios administrativos y el firewall administra únicamente su regla propia.
 
-Reinstalar otra versión queda bloqueado hasta completar backup/restore y actualización firmada.
-La matriz nativa, prueba offline Ubuntu y obligaciones de distribución de dependencias siguen
-abiertas; [guía y límites](docs/H7.md).
+El instalador elevado prepara AIDEX-LAN-TCP limitada al ejecutable/servicio, TCP del puerto configurado, subred local y perfiles privados/dominio. Solo administra su propia regla; la exposición efectiva la controla el listener local/LAN del backend. Windows usa fuentes PowerShell con un BOM UTF-8, JSON UTF-8 explícito y un registro UTF-16LE mostrado por NSIS, sin cambiar la configuración regional.
 
-### Acceso diario Windows r2
-
-El lanzador GUI usa solo SC_MANAGER_CONNECT y SERVICE_QUERY_STATUS; no inicia/detiene el servicio
-ni solicita elevación. Lee exclusivamente `launcher.json` en Program Files, con la URL pública
-escrita por el configurador administrativo. Acepta HTTPS u HTTP loopback, sin esquemas de comandos,
-credenciales, query ni fragmentos; abre mediante ShellExecuteW sin shell de comandos. La configuración
-privada y sus ACL no se amplían para facilitar este acceso.
+Hashes y firma ad hoc no acreditan identidad comercial del editor ni notarización. Siguen pendientes los ciclos nativos, firma de distribución, pruebas offline/SMB/GPO, fuentes/avisos de proveedores y restauración integral. Las políticas 0700/0600 y ACL privadas se conservan; los instaladores no amplían permisos de discos, Documentos o NAS. Desinstalar conserva datos de forma predeterminada. [Operación](docs/PRODUCCION.md), [evidencia y límites](docs/TRANSICION-PRODUCCION.md).

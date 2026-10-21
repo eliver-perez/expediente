@@ -57,7 +57,7 @@ export function FileSettings({ libraryID }: { libraryID?: string }) {
   const inherited = (key: keyof FilePolicy) => !!libraryID && overrides?.[key] === null;
   const inheritance = (key: keyof FilePolicy, label: string) => libraryID && <label className="check"><input type="checkbox" checked={inherited(key)} onChange={event => inherit(key, event.target.checked)} />Heredar {label}</label>;
   return <>
-    {!libraryID && <header className="page-heading"><p className="eyebrow">CONFIGURACIÓN GENERAL</p><h2>Archivos y procesamiento</h2><p>Define qué documentos puede incorporar AIBID y cuáles pueden aportar texto a las búsquedas.</p></header>}
+    {!libraryID && <header className="page-heading"><p className="eyebrow">CONFIGURACIÓN GENERAL</p><h2>Archivos y procesamiento</h2><p>Define qué documentos puede incorporar AIDEX y cuáles pueden aportar texto a las búsquedas.</p></header>}
     <section className="card"><div className="section-heading"><h2>{libraryID ? 'Archivos y procesamiento' : 'Reglas de archivos'}</h2><button className="secondary" disabled={busy} onClick={() => { setError(''); setSuccess(''); setRefresh(refresh + 1); }}>Actualizar reglas</button></div>
       <Notice text={error} /><Notice text={success} kind="success" />
       {libraryID && <p>Hereda cada regla de la instalación o define una excepción para esta biblioteca. Los formatos bloqueados por seguridad no pueden habilitarse.</p>}
@@ -90,7 +90,7 @@ export function FileSettings({ libraryID }: { libraryID?: string }) {
           <p className="muted">Los binarios desconocidos y los archivos prohibidos siempre se rechazan. La excepción de texto requiere permitir TXT. Una extensión conocida con contenido distinto se rechaza.</p>
           {inheritance('non_indexable_policy', 'comportamiento sin indexación')}
           <label>Archivo almacenable que no puede indexarse<select disabled={busy || inherited('non_indexable_policy')} value={policy.non_indexable_policy} onChange={event => change('non_indexable_policy', event.target.value)}><option value="store">Conservar original y metadatos (recomendado)</option><option value="reject">Rechazar su incorporación</option></select></label>
-          <p className="muted">Incluye formatos sin extractor y archivos que superan el límite de indexación. En bibliotecas vinculadas, un rechazo omite la incorporación a AIBID y conserva el archivo externo intacto.</p>
+          <p className="muted">Incluye formatos sin extractor y archivos que superan el límite de indexación. En bibliotecas vinculadas, un rechazo omite la incorporación a AIDEX y conserva el archivo externo intacto.</p>
         </fieldset>
         <button disabled={busy}>{busy ? 'Guardando…' : 'Guardar reglas de archivos'}</button>
       </form>}

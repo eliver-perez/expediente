@@ -40,7 +40,7 @@ func DefaultPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(directory, "gestor-documental", "config.json"), nil
+	return filepath.Join(directory, "aidex", "config.json"), nil
 }
 
 func Defaults(stateDirectory string) Config {

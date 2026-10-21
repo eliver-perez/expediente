@@ -1,7 +1,7 @@
-# Dependencias de los paquetes de prueba
+# AIDEX — Dependencias de los paquetes
 
-AIBID se entrega compilado con React embebido; los instaladores no incluyen su código Go/React.
-PDF/OCR se ejecuta en procesos externos. El contrato de licencias de AIBID no sustituye
+AIDEX se entrega compilado con React embebido; los instaladores no incluyen su código Go/React.
+PDF/OCR se ejecuta en procesos externos. El contrato de licencias de AIDEX no sustituye
 las licencias de estas dependencias.
 
 - Go y dependencias: inventario exacto en go.mod/go.sum del proyecto; runtime enlazado en el binario.
@@ -11,9 +11,9 @@ las licencias de estas dependencias.
 - Windows: compilaciones conda-forge. `windows-ocr.lock.json` identifica URL, versión, build, licencia y SHA256
   del paquete original. `docs/third-party/` conserva avisos, recetas de construcción y parches de sus proveedores.
   Se distribuyen DLL, cuatro ejecutables PDF/OCR, datos de Poppler, fuentes e idiomas spa/eng/osd seleccionados.
-  Las recetas apuntan a los archivos fuente originales y sus hashes. No son fuentes de AIBID.
+  Las recetas apuntan a los archivos fuente originales y sus hashes. No son fuentes de AIDEX.
 
-Este canal es para pruebas internas. Antes de una publicación comercial hay que preparar y verificar
+Antes de una publicación comercial hay que preparar y verificar
 la distribución de fuentes correspondientes y los avisos/ofertas que exija cada dependencia copyleft;
 la presencia de enlaces o recetas por sí sola no acredita ese cumplimiento.
 
@@ -21,17 +21,17 @@ Referencias de proveedores: [Tesseract](https://github.com/tesseract-ocr/tessera
 [Poppler](https://poppler.freedesktop.org/), [conda-forge](https://conda-forge.org/docs/),
 [NSIS](https://nsis.sourceforge.io/License).
 
-## Vistas previas de Word y Excel (fase 4)
+## Vistas previas de Word y Excel
 
 LibreOffice es una dependencia opcional instalada por el administrador en el servidor.
-AIBID no redistribuye sus ejecutables ni lo descarga automáticamente. Se utiliza un
+AIDEX no redistribuye sus ejecutables ni lo descarga automáticamente. Se utiliza un
 proceso headless con perfil privado para producir una representación PDF descartable.
 En Ubuntu, Writer y Calc se declaran como `Recommends` (apt los instala salvo que se desactiven los recomendados); las herramientas OCR anteriores
 siguen siendo las dependencias requeridas. Versiones y licencias dependen de la
 instalación elegida; ver los [avisos oficiales de LibreOffice](https://www.libreoffice.org/licenses/).
 La validación utiliza LibreOffice 26.2.6 para macOS ARM, temporalmente.
 
-## Gráficas locales (fase 8)
+## Gráficas locales
 
 Chart.js **4.5.1**, licencia MIT, y su dependencia @kurkle/color **0.3.4**, MIT,
 se integran en los recursos web del ejecutable mediante Vite. Versiones e integridad

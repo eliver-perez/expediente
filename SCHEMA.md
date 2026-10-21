@@ -1,4 +1,4 @@
-# AIBID — Modelo de datos
+# AIDEX — Modelo de datos
 
 El [SQL de referencia](db/schema.proposed.sql) describe V1 completa para revisar
 invariantes; **no es una migración inicial que cree todos los módulos**. H2 implementa
@@ -195,8 +195,10 @@ Migraciones con checksum, versión y backup previo. DDL `up`/`down` por módulo 
 cuando bajar sea seguro; una transformación con pérdida requiere restauración
 verificada, no un `down` que borre evidencia. Probar actualización desde N-1.
 
-## H7: primera entrega de instaladores
+## Historial: primera entrega de instaladores
+
+Nota 2026-10-09: el siguiente apartado describe aquella entrega de desarrollo. El esquema vigente mantiene las 14 migraciones existentes; la transición a la identidad AIDEX no añade ni reescribe ninguna.
 
 No añade migraciones: el esquema sigue en 5. Los marcadores de versión/habilitación del
-servicio pertenecen al canal AIBID Pruebas y viven fuera de la DB. No representan licencia
+servicio identifican la edición instalada y viven fuera de la DB. La identidad vigente es AIDEX; las cuentas/rutas históricas se conservan únicamente en actualización. No representan licencia
 ni autorización dentro de la aplicación. Las cinco migraciones anteriores conservan sus checksums.

@@ -16,6 +16,11 @@ type windowsService struct {
 }
 
 func runHost(application func(context.Context, func()) error) error {
+	arguments, name, err := buildinfo.WindowsServiceArguments(os.Args, buildinfo.ServiceName)
+	if err != nil {
+		return err
+	}
+	os.Args, buildinfo.ServiceName = arguments, name
 	inService, err := svc.IsWindowsService()
 	if err != nil {
 		return err

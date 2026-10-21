@@ -44,7 +44,7 @@ class WindowsTemplateTests(unittest.TestCase):
 class WindowsParserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.engine = os.environ.get('AIBID_TEST_POWERSHELL') or shutil.which('powershell.exe') or shutil.which('pwsh')
+        cls.engine = os.environ.get('AIDEX_TEST_POWERSHELL') or shutil.which('powershell.exe') or shutil.which('pwsh')
         if not cls.engine:
             raise unittest.SkipTest('PowerShell is required for parser tests')
 
@@ -55,7 +55,7 @@ class WindowsParserTests(unittest.TestCase):
             target.write_bytes(transform(target.read_bytes()))
             return subprocess.run([self.engine, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
                                    '-File', str(builder.ROOT / 'scripts/check_windows_script.ps1'), '-Path', str(target)],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, timeout=30)
 
     def test_actual_payload_parses_and_has_installer_parameters(self):
         result = self.check_payload()

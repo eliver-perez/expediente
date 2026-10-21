@@ -8,8 +8,8 @@ architecture=$(dpkg --print-architecture)
 [[ $ID == ubuntu && $VERSION_ID == 24.04 && ( $architecture == amd64 || $architecture == arm64 ) ]] || exit 1
 package=$(realpath "$1")
 destination=$(realpath -m "$2")
-[[ $destination != *[[:space:]]* && ! -e $destination ]] || { echo 'Usa una carpeta nueva sin espacios.' >&2; exit 1; }
-[[ $(dpkg-deb -f "$package" Package) == aibid-test ]] || exit 1
+[[ ! -e $destination ]] || { echo 'Usa una carpeta nueva.' >&2; exit 1; }
+[[ $(dpkg-deb -f "$package" Package) == aidex ]] || exit 1
 [[ $(dpkg-deb -f "$package" Architecture) == "$architecture" ]] || { echo "El paquete debe ser $architecture, igual que este Ubuntu." >&2; exit 1; }
 command -v python3 >/dev/null
 mkdir -m 755 -p "$destination/repository/partial"

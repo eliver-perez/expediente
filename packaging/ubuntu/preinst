@@ -1,17 +1,17 @@
 #!/bin/sh
 set -eu
-# Restrict upgrades to the tested preview path; postinst migrates with the new
-# binary (including its SQLite snapshot) before publishing the version marker.
-if [ -f /var/lib/aibid-test/package-version ]; then
-    case "$(cat /var/lib/aibid-test/package-version)" in
-        '0.7.0-test.1'|'2.0.0-alpha.1'|'2.0.0-alpha.2'|'2.0.0-alpha.3'|'2.0.0-alpha.4'|'2.0.0-alpha.5'|'2.0.0-alpha.6'|'2.0.0-alpha.7'|'2.0.0-alpha.8'|'@VERSION@') ;;
-        *) echo 'Versión de datos no compatible con esta fase. Se conservan los datos.' >&2; exit 1 ;;
+@PROFILE@
+aidex_select_profile
+if [ -f "$DATA/package-version" ]; then
+    case "$(cat "$DATA/package-version")" in
+        '@VERSION@') ;;
+        *) echo 'Versión de datos no compatible. Se conservan los datos.' >&2; exit 1 ;;
     esac
 fi
-for path in /var/lib/aibid-test /etc/aibid-test /etc/aibid-test/config.json; do
-    [ ! -L "$path" ] || exit 1
-done
-if [ -d /run/systemd/system ] && systemctl is-active --quiet aibid-test.service; then systemctl stop aibid-test.service; fi
-if [ -f /etc/aibid-test/config.json ] && [ -x /usr/lib/aibid-test/gestor-documental ]; then
-    runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental migrate --config /etc/aibid-test/config.json
+if [ -f "$CONFIG" ] && [ ! -f "$DATA/package-version" ]; then
+    echo 'Configuración existente sin versión de paquete. Requiere revisión.' >&2; exit 1
 fi
+if [ -d /run/systemd/system ]; then
+    if systemctl is-active --quiet "$UNIT"; then systemctl stop "$UNIT"; fi
+fi
+# Do not migrate using the old binary. Postinst uses the new checker and migration.

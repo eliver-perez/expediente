@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 test('seguimiento automático, duplicados, auditoría y configuración', async ({ page }) => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'aibid-processing-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'aidex-processing-')));
   await mkdir(join(directory, '$RECYCLE.BIN'));
   for (const name of ['Original.pdf', 'Copia.pdf', '$RECYCLE.BIN/Omitido.pdf']) {
     await copyFile(resolve('../testdata/documents/native.pdf'), join(directory, name)); const past = new Date(Date.now() - 5000); await utimes(join(directory, name), past, past);

@@ -11,7 +11,7 @@ import (
 // Optional local regression corpus. Documents stay outside version control and
 // installers; the extractor reads only test-directory copies. No text is logged.
 func TestLocalDocumentCorpus(t *testing.T) {
-	directory := os.Getenv("AIBID_LOCAL_DOCUMENTS")
+	directory := os.Getenv("AIDEX_LOCAL_DOCUMENTS")
 	if directory == "" {
 		t.Skip("no local corpus requested")
 	}

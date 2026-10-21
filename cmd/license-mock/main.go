@@ -118,7 +118,7 @@ func run() error {
 		return fmt.Errorf("simulator must listen on an explicit loopback IP")
 	}
 	server := &http.Server{Addr: *listen, Handler: mock, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, MaxHeaderBytes: 8192}
-	fmt.Println("AIBID development license simulator: https://" + *listen)
+	fmt.Println("AIDEX development license simulator: https://" + *listen)
 	return server.ListenAndServeTLS(cert, private)
 }
 func writeNew(path string, contents []byte) error {
@@ -141,7 +141,7 @@ func createCertificate(certPath, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "AIBID DEVELOPMENT LOCAL ONLY"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(365 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IsCA: true, DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}}
+	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "AIDEX DEVELOPMENT LOCAL ONLY"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(365 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IsCA: true, DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &private.PublicKey, private)
 	if err != nil {
 		return err

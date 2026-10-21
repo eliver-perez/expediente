@@ -101,11 +101,11 @@ func TestConversionDeadlineKillsProgram(t *testing.T) {
 
 // Opt-in real converter test. Documents remain private and only counts are logged.
 func TestLocalLibreOffice(t *testing.T) {
-	program := os.Getenv("AIBID_TEST_LIBREOFFICE")
+	program := os.Getenv("AIDEX_TEST_LIBREOFFICE")
 	if program == "" {
 		t.Skip("no local converter requested")
 	}
-	directory := os.Getenv("AIBID_LOCAL_DOCUMENTS")
+	directory := os.Getenv("AIDEX_LOCAL_DOCUMENTS")
 	synthetic := directory == ""
 	if directory == "" {
 		directory = "../../testdata/documents"

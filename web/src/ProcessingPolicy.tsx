@@ -17,7 +17,7 @@ export function ProcessingPolicy() {
     } catch (cause) { setError(message(cause)); } finally { setBusy(false); }
   }
   return <section className="card"><div className="section-heading"><h2>Cola y límites de procesamiento</h2><button className="secondary" disabled={busy} onClick={() => void load().catch(cause => setError(message(cause)))}>Actualizar configuración</button></div><Notice text={error}/><Notice text={success} kind="success"/>
-    {policy && draft && <><p role="status">{policy.paused ? 'Procesamiento pausado' : 'Procesamiento habilitado'}</p><p>La pausa impide iniciar trabajos nuevos. Conserva la cola y permite terminar los trabajos activos, consultar y buscar documentos. Se mantiene al reiniciar AIBID.</p>
+    {policy && draft && <><p role="status">{policy.paused ? 'Procesamiento pausado' : 'Procesamiento habilitado'}</p><p>La pausa impide iniciar trabajos nuevos. Conserva la cola y permite terminar los trabajos activos, consultar y buscar documentos. Se mantiene al reiniciar AIDEX.</p>
       <button className="secondary" disabled={busy} onClick={() => void save({ ...policy, paused: !policy.paused })}>{policy.paused ? 'Reanudar procesamiento' : 'Pausar procesamiento'}</button>
       <form onSubmit={event => { event.preventDefault(); void save({ ...draft, paused: policy.paused, revision: policy.revision }); }}>
         <div className="filters">

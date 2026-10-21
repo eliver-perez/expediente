@@ -1,18 +1,20 @@
 #!/bin/sh
 set -eu
-BASE='/Library/Application Support/AIBID-Test'
-CONFIG="$BASE/data/config.json"
-echo 'AIBID — configuración local. Contraseña de AIBID: mínimo 6 caracteres.'
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then exec /usr/bin/sudo /bin/sh "$0"; fi
+. '/Library/Application Support/AIDEX/profile.sh'
+aidex_select_profile
+echo 'AIDEX — configuración local. Contraseña de AIDEX: mínimo 6 caracteres.'
 echo 'Puede solicitarse primero la contraseña de administrador de macOS (sudo).'
-/usr/bin/sudo -u _aibidtest "$BASE/bin/gestor-documental" doctor --config "$CONFIG" --sample-directory "$BASE/docs/pdf"
+/usr/bin/sudo -u "$ACCOUNT" "$BINARY" doctor --config "$CONFIG" --sample-directory "$CODE/docs/pdf"
 if ! /usr/bin/sudo test -f "$BASE/data/service-enabled"; then
-    if ! /usr/bin/sudo -u _aibidtest "$BASE/bin/gestor-documental" bootstrap-ready --config "$CONFIG"; then
-        /usr/bin/sudo -u _aibidtest "$BASE/bin/gestor-documental" bootstrap --config "$CONFIG"
+    if ! /usr/bin/sudo -u "$ACCOUNT" "$BINARY" bootstrap-ready --config "$CONFIG"; then
+        /usr/bin/sudo -u "$ACCOUNT" "$BINARY" bootstrap --config "$CONFIG"
     fi
-    /usr/bin/sudo -u _aibidtest /usr/bin/touch "$BASE/data/service-enabled"
+    /usr/bin/sudo -u "$ACCOUNT" /usr/bin/touch "$BASE/data/service-enabled"
 fi
-if ! /bin/launchctl print system/app.aibid.test >/dev/null 2>&1; then
-    /usr/bin/sudo /bin/launchctl bootstrap system /Library/LaunchDaemons/app.aibid.test.plist
+if ! /bin/launchctl print system/app.aidex >/dev/null 2>&1; then
+    /bin/launchctl enable system/app.aidex
+    /usr/bin/sudo /bin/launchctl bootstrap system "$PLIST"
 fi
 echo 'Abre http://127.0.0.1:18090. El servicio continúa sin mantener esta consola abierta.'
-/usr/bin/open http://127.0.0.1:18090
+if [ -n "${SUDO_USER-}" ]; then /usr/bin/sudo -u "$SUDO_USER" /usr/bin/open http://127.0.0.1:18090; fi

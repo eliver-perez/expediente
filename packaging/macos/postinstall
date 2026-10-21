@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 umask 077
-BASE='/Library/Application Support/AIBID-Test'
-ACCOUNT='_aibidtest'
+. "$(dirname "$0")/profile.sh"
+aidex_select_profile
 if /usr/bin/dscl . -read /Users/$ACCOUNT >/dev/null 2>&1; then
     [ "$(/usr/bin/dscl . -read /Users/$ACCOUNT NFSHomeDirectory)" = "NFSHomeDirectory: $BASE/data" ] || exit 1
     [ "$(/usr/bin/dscl . -read /Users/$ACCOUNT UserShell)" = 'UserShell: /usr/bin/false' ] || exit 1
@@ -21,23 +21,39 @@ else
     /usr/bin/dscl . -create /Users/$ACCOUNT PrimaryGroupID "$ID"
     /usr/bin/dscl . -create /Users/$ACCOUNT NFSHomeDirectory "$BASE/data"
     /usr/bin/dscl . -create /Users/$ACCOUNT UserShell /usr/bin/false
-    /usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIBID'
+    /usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIDEX'
     /usr/bin/dscl . -create /Users/$ACCOUNT IsHidden 1
     /usr/bin/dscl . -create /Users/$ACCOUNT Password '*'
 fi
 # Display name only: preserve UID/GID, ownership and launchd identity on upgrades.
-/usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIBID'
+/usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIDEX'
 /usr/bin/install -d -o "$ACCOUNT" -g "$ACCOUNT" -m 700 "$BASE/data" "$BASE/data/logs"
-if [ ! -e "$BASE/data/config.json" ]; then
-    /usr/bin/sudo -u "$ACCOUNT" "$BASE/bin/gestor-documental" init --config "$BASE/data/config.json" --listen 127.0.0.1:18090 --tools /opt/homebrew/bin
+if [ ! -e "$CONFIG" ]; then
+    /usr/bin/sudo -u "$ACCOUNT" "$BINARY" init --config "$CONFIG" --listen 127.0.0.1:18090 --tools /opt/homebrew/bin
 fi
-/usr/bin/sudo -u "$ACCOUNT" "$BASE/bin/gestor-documental" configure-license --config "$BASE/data/config.json"
-/usr/bin/sudo -u "$ACCOUNT" "$BASE/bin/gestor-documental" migrate --config "$BASE/data/config.json"
+/usr/bin/sudo -u "$ACCOUNT" "$BINARY" check-state --config "$CONFIG"
+/usr/bin/sudo -u "$ACCOUNT" "$BINARY" configure-license --config "$CONFIG"
+/usr/bin/sudo -u "$ACCOUNT" "$BINARY" migrate --config "$CONFIG"
 /usr/bin/printf '%s\n' '@VERSION@' > "$BASE/data/package-version"
 /usr/sbin/chown "$ACCOUNT:$ACCOUNT" "$BASE/data/package-version"
 /bin/chmod 600 "$BASE/data/package-version"
-# Bootstrap is deliberately local and interactive; there is no default password.
-# Do not loop a failing daemon before an administrator exists.
+# Adapt the production plist to the existing account and private configuration.
+/usr/bin/plutil -replace UserName -string "$ACCOUNT" "$PLIST"
+/usr/bin/plutil -replace GroupName -string "$ACCOUNT" "$PLIST"
+/usr/bin/plutil -replace ProgramArguments.3 -string "$CONFIG" "$PLIST"
+/usr/bin/plutil -replace WorkingDirectory -string "$BASE/data" "$PLIST"
+/usr/bin/plutil -replace StandardOutPath -string "$BASE/data/logs/service.log" "$PLIST"
+/usr/bin/plutil -replace StandardErrorPath -string "$BASE/data/logs/service.log" "$PLIST"
+/usr/sbin/chown root:wheel "$PLIST"
+/bin/chmod 644 "$PLIST"
+/usr/bin/plutil -lint "$PLIST"
+# Record the finalized generated plist so hash-based uninstall remains accurate.
+HASH=$(/usr/bin/shasum -a 256 "$PLIST" | /usr/bin/cut -d ' ' -f 1)
+/usr/bin/awk -F '\t' -v hash="$HASH" -v file="$PLIST" 'BEGIN {OFS="\t"} $2==file {$1=hash} {print}' "$CODE/package-files.tsv" > "$CODE/package-files.tsv.new"
+/bin/mv "$CODE/package-files.tsv.new" "$CODE/package-files.tsv"
+# Bootstrap is local and interactive; there is no default password.
 if [ -f "$BASE/data/service-enabled" ]; then
-    /bin/launchctl bootstrap system /Library/LaunchDaemons/app.aibid.test.plist
+    /bin/launchctl enable system/app.aidex
+    /bin/launchctl bootstrap system "$PLIST"
+    /bin/launchctl print system/app.aidex >/dev/null
 fi

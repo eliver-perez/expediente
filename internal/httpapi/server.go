@@ -175,7 +175,7 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 		// A connection accepted before switching to local mode must not retain
 		// LAN access through keep-alive. In-flight responses may finish normally.
 		if server.network != nil && server.network.LocalOnly() && !remoteAddress(request).IsLoopback() {
-			server.fail(writer, request, domain.Failure("NETWORK_LOCAL_ONLY", "AIBID solo permite acceso desde este equipo.", 403))
+			server.fail(writer, request, domain.Failure("NETWORK_LOCAL_ONLY", "AIDEX solo permite acceso desde este equipo.", 403))
 			return
 		}
 		if server.secure && request.TLS == nil && (!server.isTrusted(remoteAddress(request)) || request.Header.Get("X-Forwarded-Proto") != "https") {

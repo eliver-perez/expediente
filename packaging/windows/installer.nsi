@@ -1,24 +1,33 @@
+# -*- coding: utf-8 -*-
 Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
 !include "LogicLib.nsh"
 !include "WinVer.nsh"
 !include "nsDialogs.nsh"
+!include "FileFunc.nsh"
+Var LogPath
+VIProductVersion "1.0.0.0"
+VIAddVersionKey /LANG=1034 "ProductName" "AIDEX"
+VIAddVersionKey /LANG=1034 "FileDescription" "Instalador de AIDEX"
+VIAddVersionKey /LANG=1034 "FileVersion" "1.0.0"
+VIAddVersionKey /LANG=1034 "ProductVersion" "1.0.0"
+VIAddVersionKey /LANG=1034 "LegalCopyright" "AIDEX"
 Var EraseData
 Var EraseCheckbox
-Name "AIBID ${VERSION}"
-!define MUI_ICON "${STAGE}/aibid.ico"
-!define MUI_UNICON "${STAGE}/aibid.ico"
+Name "AIDEX"
+!define MUI_ICON "${STAGE}/aidex.ico"
+!define MUI_UNICON "${STAGE}/aidex.ico"
 OutFile "${OUTPUT}"
-InstallDir "$PROGRAMFILES64\AIBID-Test"
+InstallDir "$PROGRAMFILES64\AIDEX"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
-BrandingText "AIBID — Tu biblioteca digital, ordenada y al alcance."
+BrandingText "AIDEX — Tu biblioteca digital, ordenada y al alcance."
 !define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TEXT "Instalación de AIBID. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIBID para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIBID.$\r$\n$\r$\nPara previsualizar Word y Excel instala LibreOffice en este equipo y revisa Ajustes > Vistas previas y caché. La extracción y búsqueda funcionan sin LibreOffice.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
+!define MUI_WELCOMEPAGE_TEXT "Instalación de AIDEX. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIDEX para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIDEX.$\r$\n$\r$\nPara previsualizar Word y Excel instala LibreOffice en este equipo y revisa Ajustes > Vistas previas y caché. La extracción y búsqueda funcionan sin LibreOffice.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIBID desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIBID en el Escritorio o Abrir AIBID en Inicio: abre el navegador sin pedir permisos de administrador."
+!define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIDEX desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIDEX en el Escritorio o Abrir AIDEX en Inicio: abre el navegador sin pedir permisos de administrador."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.DataOptions un.ConfirmDataOptions
@@ -37,16 +46,39 @@ Function .onInit
     SetRegView 64
     SetShellVarContext all
     ${DisableX64FSRedirection}
+    ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "InstallLocation"
+    ${If} $0 != ""
+        StrCpy $INSTDIR $0
+    ${EndIf}
 FunctionEnd
+
+!macro ReadAidexLog Prefix
+Function ${Prefix}ReadAidexLog
+    ClearErrors
+    FileOpen $1 $LogPath r
+    IfErrors done
+    read:
+    FileReadUTF16LE $1 $2
+    IfErrors close
+    DetailPrint $2
+    Goto read
+    close:
+    FileClose $1
+    done:
+    DetailPrint "Registro de instalación: $LogPath"
+FunctionEnd
+!macroend
+!insertmacro ReadAidexLog ""
+!insertmacro ReadAidexLog "un."
 
 Function un.DataOptions
     StrCpy $EraseData ""
     nsDialogs::Create 1018
     Pop $0
-    ${NSD_CreateCheckbox} 0 10u 100% 20u "Eliminar los datos de AIBID al desinstalar"
+    ${NSD_CreateCheckbox} 0 10u 100% 20u "Eliminar los datos de AIDEX al desinstalar"
     Pop $EraseCheckbox
     ${NSD_Uncheck} $EraseCheckbox
-    ${NSD_CreateLabel} 0 40u 100% 65u "Se eliminarán la base de datos, los índices, el contenido extraído, los usuarios y la configuración. Tus documentos físicos, incluidas las bibliotecas administradas y cargas, permanecerán intactos en sus rutas.$\r$\n$\r$\nPara usar la licencia en una instalación nueva, desactívala primero desde AIBID. Esta limpieza no libera la activación en el servidor."
+    ${NSD_CreateLabel} 0 40u 100% 65u "Se eliminarán la base de datos, los índices, el contenido extraído, los usuarios y la configuración. Tus documentos físicos, incluidas las bibliotecas administradas y cargas, permanecerán intactos en sus rutas.$\r$\n$\r$\nPara usar la licencia en una instalación nueva, desactívala primero desde AIDEX. Esta limpieza no libera la activación en el servidor."
     Pop $0
     nsDialogs::Show
 FunctionEnd
@@ -55,7 +87,7 @@ Function un.ConfirmDataOptions
     ${NSD_GetState} $EraseCheckbox $0
     StrCpy $EraseData ""
     ${If} $0 == ${BST_CHECKED}
-        MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "¿Eliminar los datos internos de AIBID? Se perderán usuarios, bibliotecas registradas, índices, historial y configuración. Los documentos físicos permanecerán intactos.$\r$\n$\r$\nUna reinstalación comenzará desde cero y requerirá activar la licencia." IDYES confirmed
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "¿Eliminar los datos internos de AIDEX? Se perderán usuarios, bibliotecas registradas, índices, historial y configuración. Los documentos físicos permanecerán intactos.$\r$\n$\r$\nUna reinstalación comenzará desde cero y requerirá activar la licencia." IDYES confirmed
         Abort
         confirmed:
         StrCpy $EraseData "-EraseInternalData"
@@ -66,57 +98,55 @@ Section "Instalar"
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "${STAGE}/manage.ps1"
-    File /oname=gestor-documental-repair.exe "${STAGE}/gestor-documental.exe"
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\manage.ps1" -Action Preflight -InstallRoot "$INSTDIR" -PreflightBinary "$PLUGINSDIR\gestor-documental-repair.exe"'
-    Pop $0
+    File "${STAGE}/installer-action.ps1"
+    File /oname=aidex-repair.exe "${STAGE}/aidex-server.exe"
+    GetTempFileName $LogPath
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\installer-action.ps1" -ManageScript "$PLUGINSDIR\manage.ps1" -LogPath "$LogPath" -Action Preflight -InstallRoot "$INSTDIR" -PreflightBinary "$PLUGINSDIR\aidex-repair.exe"' $0
+    Call ReadAidexLog
     ${If} $0 != 0
         Abort "No se pudo preparar la instalación; consulta el detalle."
     ${EndIf}
     SetOutPath "$INSTDIR"
     File /r "${STAGE}/*"
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\manage.ps1" -Action Configure -InstallRoot "$INSTDIR"'
-    Pop $0
+    GetTempFileName $LogPath
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Configure -InstallRoot "$INSTDIR"' $0
+    Call ReadAidexLog
     ${If} $0 != 0
         Abort "La configuración falló. No se inició el servicio. Consulta el detalle."
     ${EndIf}
     WriteUninstaller "$INSTDIR\Desinstalar.exe"
-    ; Remove only known legacy shortcuts; keep the service SID and data paths.
-    Delete "$SMPROGRAMS\AIBID Pruebas\Configurar AIBID Pruebas.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Desinstalar.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.url"
-    RMDir "$SMPROGRAMS\AIBID Pruebas"
-    Delete "$DESKTOP\AIBID Pruebas.lnk"
-    CreateDirectory "$SMPROGRAMS\AIBID"
-    CreateShortCut "$SMPROGRAMS\AIBID\Configurar AIBID.lnk" "$INSTDIR\admin.cmd"
-    CreateShortCut "$SMPROGRAMS\AIBID\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
-    Delete "$SMPROGRAMS\AIBID\Abrir AIBID.url"
-    CreateShortCut "$SMPROGRAMS\AIBID\Abrir AIBID.lnk" "$INSTDIR\AIBID.exe"
-    CreateShortCut "$DESKTOP\AIBID.lnk" "$INSTDIR\AIBID.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayName" "AIBID"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayVersion" "${VERSION}"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "UninstallString" '$\"$INSTDIR\Desinstalar.exe$\"'
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayIcon" "$INSTDIR\AIBID.exe,0"
-    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "NoModify" 1
-    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "NoRepair" 1
+    CreateDirectory "$SMPROGRAMS\AIDEX"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk" "$INSTDIR\admin.cmd"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
+    Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk" "$INSTDIR\AIDEX.exe"
+    CreateShortCut "$DESKTOP\AIDEX.lnk" "$INSTDIR\AIDEX.exe"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayName" "AIDEX"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayVersion" "${VERSION}"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "UninstallString" '$\"$INSTDIR\Desinstalar.exe$\"'
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayIcon" "$INSTDIR\AIDEX.exe,0"
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "NoModify" 1
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "NoRepair" 1
 SectionEnd
 
 Section "Uninstall"
     SetRegView 64
     SetShellVarContext all
     ${DisableX64FSRedirection}
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\manage.ps1" -Action Remove -InstallRoot "$INSTDIR" $EraseData'
-    Pop $0
+    GetTempFileName $LogPath
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Remove -InstallRoot "$INSTDIR" $EraseData' $0
+    Call un.ReadAidexLog
     ${If} $0 != 0
         Abort "No se pudo completar la preparación de la desinstalación. Consulta el detalle; se conserva el programa."
     ${EndIf}
-    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest"
-    Delete "$SMPROGRAMS\AIBID\Configurar AIBID.lnk"
-    Delete "$SMPROGRAMS\AIBID\Desinstalar.lnk"
-    Delete "$SMPROGRAMS\AIBID\Abrir AIBID.lnk"
-    Delete "$SMPROGRAMS\AIBID\Abrir AIBID.url"
-    RMDir "$SMPROGRAMS\AIBID"
-    Delete "$DESKTOP\AIBID.lnk"
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX"
+    Delete "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Desinstalar.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"
+    RMDir "$SMPROGRAMS\AIDEX"
+    Delete "$DESKTOP\AIDEX.lnk"
     ; Packaged files were checked by hash. Keep unknown and modified files.
     RMDir "$INSTDIR\tools"
     RMDir "$INSTDIR\docs"

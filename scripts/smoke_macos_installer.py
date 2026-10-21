@@ -69,17 +69,17 @@ def main():
                         help="Also migrate disposable administrator data created by the schema-8/9/10/11/12/13/14 package")
     args = parser.parse_args()
     package = args.package.resolve()
-    with tempfile.TemporaryDirectory(prefix="aibid-native-smoke-", dir="/private/tmp") as temporary:
+    with tempfile.TemporaryDirectory(prefix="aidex-native-José María López Muñoz ü 東京-", dir="/private/tmp") as temporary:
         root = Path(temporary)
         command(["pkgutil", "--expand-full", package, root / "expanded"])
-        matches = list((root / "expanded").rglob("Payload/Library/Application Support/AIBID-Test/bin/gestor-documental"))
+        matches = list((root / "expanded").rglob("Payload/Library/Application Support/AIDEX/bin/aidex-server"))
         if len(matches) != 1:
             raise RuntimeError("Unexpected package payload")
         binary = matches[0]
         initialization_binary = binary
         if args.previous_package:
             command(["pkgutil", "--expand-full", args.previous_package.resolve(), root / "previous"])
-            previous_matches = list((root / "previous").rglob("Payload/Library/Application Support/AIBID-Test/bin/gestor-documental"))
+            previous_matches = list((root / "previous").rglob("Payload/Library/Application Support/AIDEX/bin/aidex-server"))
             if len(previous_matches) != 1:
                 raise RuntimeError("Unexpected previous package payload")
             initialization_binary = previous_matches[0]
@@ -103,6 +103,8 @@ def main():
         print(command([binary, "doctor", "--config", configuration, "--sample-directory", binary.parent.parent / "docs/pdf"]))
         command([initialization_binary, "serve", "--config", configuration], success=False)
         bootstrap(initialization_binary, configuration)
+        installed_identity = configuration.parent / "state/license/installation.json"
+        original_identity = installed_identity.read_bytes()
         if args.previous_package:
             state_directory = configuration.parent / "state"
             with sqlite3.connect(str(state_directory / "documental.db")) as database:
@@ -130,6 +132,7 @@ def main():
                 assert not snapshots  # Same-schema update must not invent a migration.
             command([binary, "migrate", "--config", configuration])
             assert list((state_directory / "upgrade-backups").glob("*.db")) == snapshots
+        assert installed_identity.read_bytes() == original_identity
         command([binary, "bootstrap-ready", "--config", configuration])
         for iteration in range(2):
             with (root / "service.log").open("a") as log:
@@ -186,11 +189,12 @@ def main():
                         else:
                             raise RuntimeError('LAN still accessible after reverting to local')
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
-                        assert b"AIBID" in response.read()
+                        assert b"AIDEX" in response.read()
                 finally:
                     service.terminate()
                     service.wait(timeout=30)
                 assert service.returncode == 0
+        assert installed_identity.read_bytes() == original_identity
         current = json.loads(configuration.read_bytes())
         assert current.pop('network_mode') == 'local'
         assert current == json.loads(previous)
@@ -203,7 +207,7 @@ def main():
             assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 14
             assert database.execute("SELECT count(*) FROM bootstrap_state").fetchone()[0] == 1
         database.close()
-        original = state / "uploads/keep.pdf"
+        original = state / "uploads/Cotización María Muñoz #100% 東京.pdf"
         original.parent.mkdir(parents=True, exist_ok=True)
         contents = (binary.parent.parent / "docs/pdf/native.pdf").read_bytes()
         original.write_bytes(contents)
@@ -220,7 +224,7 @@ def main():
         assert original.read_bytes() == contents
         print(json.dumps({"package_sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
                           "previous_package_upgrade": "PASS" if args.previous_package else "not requested",
-                          "result": "PASS", "checks": "package manifest, PDF/OCR, PTY bootstrap with 6 characters, HTTP/login, local/LAN IPv4 with persisted restart and local-only restoration, lock, stop/restart, SQLite integrity, private permissions, confirmed metadata cleanup preserves PDF, fresh database",
+                          "result": "PASS", "checks": "package manifest, Unicode paths/processes and retained license identity, PDF/OCR, PTY bootstrap with 6 characters, HTTP/login, local/LAN IPv4 with persisted restart and local-only restoration, lock, stop/restart, SQLite integrity, private permissions, confirmed metadata cleanup preserves PDF, fresh database",
                           "not_tested": "system installer, service account, launchd, native Windows/Ubuntu"}, indent=2))
 
 
