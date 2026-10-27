@@ -2,6 +2,14 @@ package diagnostics
 
 // Only these application-owned codes/messages may be persisted.
 var Messages = map[string]string{
+	"CLEANUP_UNSAFE_PATH":           "Temporal conservado: no se pudo demostrar que su ruta sea segura y exclusiva.",
+	"CLEANUP_STORAGE_UNAVAILABLE":   "Limpieza pendiente: el almacenamiento interno no está disponible o faltan permisos.",
+	"CLEANUP_CHANGED":               "Temporal conservado: su identidad o contenido cambió. Requiere revisión de soporte.",
+	"CLEANUP_REFERENCED":            "Temporal conservado: aún tiene referencias de otros documentos u operaciones.",
+	"ROOT_PERMISSION_DENIED":        "La cuenta del servicio no tiene permisos para acceder a la carpeta.",
+	"ROOT_NOT_FOUND":                "No se encontró la carpeta indicada.",
+	"ROOT_NETWORK_UNAVAILABLE":      "No se pudo acceder a la ruta de red.",
+	"ROOT_READ_FAILED":              "No se pudo leer la carpeta.",
 	"PREVIEW_CONVERSION_FAILED":     "No se pudo convertir el documento para la vista previa.",
 	"PREVIEW_CONVERTER_MISSING":     "No está instalado el conversor de vistas previas.",
 	"PREVIEW_OBSOLETE":              "El documento cambió; la vista previa debe generarse de nuevo.",

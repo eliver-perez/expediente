@@ -338,9 +338,12 @@ def windows(output, work, prefix, makensis, powershell=None):
     check_windows_icon(payload / "aidex-server.exe")
     check_windows_icon(payload / "AIDEX.exe", gui=True)
     documents(payload / "docs")
+    copy(ROOT / "internal/httpapi/eula-draft.txt", payload / "docs/CLUF-BORRADOR-PENDIENTE.txt")
+    copy(ROOT / "docs/PRUEBAS-WINDOWS-1.0.0.md", payload / "docs/PRUEBAS-WINDOWS-1.0.0.md")
     windows_tools(prefix, payload / "tools", payload / "docs")
     check_pe_imports(payload / "tools/Library/bin")
     copy(ROOT / "packaging/windows/admin.cmd", payload / "admin.cmd")
+    copy(ROOT / "packaging/windows/server-port.cmd", payload / "server-port.cmd")
     manifest = [{"path": path.relative_to(payload).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                 for path in sorted(payload.rglob("*")) if path.is_file()]
     (payload / "package-files.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -358,6 +361,7 @@ def windows(output, work, prefix, makensis, powershell=None):
          f"{define}OUTPUT={output / ('AIDEX-' + package_version + '-Windows-amd64.exe')}", ROOT / "packaging/windows/installer.nsi"], env=environment)
     copy(payload / "docs/windows-ocr.lock.json", output / "windows-ocr.lock.json")
     copy(ROOT / "packaging/windows/ocr-explicit.txt", output / "windows-ocr-explicit.txt")
+    copy(ROOT / "docs/PRUEBAS-WINDOWS-1.0.0.md", output / "PRUEBAS-WINDOWS-1.0.0.md")
 
 
 def main():
@@ -385,8 +389,9 @@ def main():
             else:
                 macos(output, work)
     documents(output / "LEEME")
-    for name in ["prepare-offline.sh", "install-offline.sh"]:
-        copy(ROOT / "packaging/ubuntu" / name, output / "ubuntu-offline" / name, 0o755)
+    if "ubuntu" in targets:
+        for name in ["prepare-offline.sh", "install-offline.sh"]:
+            copy(ROOT / "packaging/ubuntu" / name, output / "ubuntu-offline" / name, 0o755)
     records = []
     for artifact in sorted(output.rglob("*")):
         if artifact.is_file() and artifact.name != "SHA256SUMS" and not any(part.startswith(".") for part in artifact.relative_to(output).parts):

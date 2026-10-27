@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"gestor-documental/internal/backups"
 	"gestor-documental/internal/buildinfo"
 	"gestor-documental/internal/config"
 	"gestor-documental/internal/domain"
@@ -55,6 +56,7 @@ func run(ctx context.Context, ready func()) error {
 	configurationPath := flags.String("config", "", "Archivo privado de configuración (por defecto, el del usuario)")
 	initialState := flags.String("state", "", "Directorio de datos (solo init)")
 	initialListen := flags.String("listen", "", "IP:puerto inicial (solo init; HTTP local)")
+	selectedPort := flags.Int("port", 0, "Puerto TCP para configure-port; requiere servicio detenido")
 	initialTools := flags.String("tools", "", "Directorio absoluto de herramientas PDF/OCR (solo init)")
 	initialTessdata := flags.String("tessdata", "", "Directorio absoluto de idiomas OCR (solo init)")
 	initialFontconfig := flags.String("fontconfig", "", "Archivo absoluto de fuentes (solo init)")
@@ -128,7 +130,7 @@ func run(ctx context.Context, ready func()) error {
 		return nil
 	}
 
-	if command != "serve" && command != "doctor" && command != "check-state" && command != "bootstrap-ready" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
+	if command != "serve" && command != "doctor" && command != "check-state" && command != "configure-port" && command != "bootstrap-ready" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
 		return fmt.Errorf("comando no reconocido")
 	}
 	var configuration config.Config
@@ -149,6 +151,17 @@ func run(ctx context.Context, ready func()) error {
 		return err
 	}
 	defer unlock()
+	if command == "configure-port" {
+		if *selectedPort == 0 {
+			return fmt.Errorf("indica --port entre 1 y 65535")
+		}
+		updated, err := network.ConfigureStopped(*configurationPath, *selectedPort)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Puerto configurado:", updated.ListenAddress)
+		return nil
+	}
 	if command == "check-state" {
 		fmt.Println("Configuración y acceso exclusivo al estado: OK. No se abrió ni migró la base de datos.")
 		return nil
@@ -208,6 +221,15 @@ func run(ctx context.Context, ready func()) error {
 	if !httpapi.AssetsReady() {
 		return fmt.Errorf("compila primero el frontend con npm --prefix web run build y vuelve a compilar Go")
 	}
+	backupService, err := backups.New(database, configuration)
+	if err != nil {
+		return err
+	}
+	// Apply a confirmed restore only while the state lock is held and before any
+	// watcher, queue worker or HTTP listener can observe the database.
+	if err := backupService.ApplyPending(ctx, service.License); err != nil {
+		return err
+	}
 	var administratorReady int
 	if err := database.Reader.QueryRowContext(ctx, "SELECT count(*) FROM bootstrap_state").Scan(&administratorReady); err != nil {
 		return err
@@ -223,7 +245,7 @@ func run(ctx context.Context, ready func()) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	access := network.New(*configurationPath, configuration)
 	if err := access.Start(func(active config.Config) http.Handler {
-		return httpapi.New(service, active, logger).WithNetwork(access).Handler()
+		return httpapi.New(service, active, logger).WithBackups(backupService).WithNetwork(access).Handler()
 	}); err != nil {
 		return err
 	}

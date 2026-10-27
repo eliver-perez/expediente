@@ -1,3 +1,4 @@
+import { toast } from './feedback';
 import { newRequestID } from './requestID';
 import { useState } from 'react';
 import { api, APIError, formatDate, message, uploadDocument } from './api';
@@ -17,16 +18,18 @@ export function Uploads({ library }: { library: Library }) {
   function addFiles(incoming: File[]) { if (busy) return; if (files.length + incoming.length > 100) { setError('Cada carga admite hasta 100 archivos. Inicia otra carga.'); return; } setFiles(previous => [...previous, ...incoming.map(file => ({ file, key: newRequestID(), percent: 0, status: 'waiting' as const, error: '' }))]); setError(''); }
   async function open(documentID: string) { try { setSelected(await api<Document>(`/documents/${documentID}`)); } catch (error) { setError(message(error)); } }
   async function send() {
-    setBusy(true); setError('');
+    if (busy) return; setBusy(true); setError('');
+    let completed = 0; let failed = 0;
     try {
       const identifier = batchID || (await api<{ id: string }>(`/libraries/${library.id}/upload-batches`, { method: 'POST', body: { client_batch_id: batchKey } })).id; setBatchID(identifier);
       for (const pending of files.filter(file => file.status === 'waiting' || file.status === 'failed')) {
         const key = pending.replaceKey ? newRequestID() : pending.key;
         const update = (patch: Partial<PendingFile>) => setFiles(previous => previous.map(file => file.key === pending.key || file.key === key ? { ...file, ...patch, key } : file));
         update({ status: 'uploading', error: '', percent: 0 });
-        try { const item = await uploadDocument<UploadItem>(identifier, key, pending.file, percent => update({ percent })); update({ status: 'staged', item, percent: 100 }); }
-        catch (error) { update({ status: 'failed', error: message(error), replaceKey: error instanceof APIError && error.status !== 0 && error.status !== 429 }); if (error instanceof APIError && error.status === 401) break; }
+        try { const item = await uploadDocument<UploadItem>(identifier, key, pending.file, percent => update({ percent })); update({ status: 'staged', item, percent: 100 }); completed++; }
+        catch (error) { failed++; update({ status: 'failed', error: message(error), replaceKey: error instanceof APIError && error.status !== 0 && error.status !== 429 }); if (error instanceof APIError && error.status === 401) break; }
       }
+      toast(`${completed} borradores guardados${failed ? ` · ${failed} cargas pendientes de corregir` : ''}. La extracción puede continuar en segundo plano.`, failed ? 'warning' : 'success');
       batches.reload(); setBatch(identifier); setHistoryRevision(value=>value+1);
     } catch (error) { setError(message(error)); } finally { setBusy(false); }
   }

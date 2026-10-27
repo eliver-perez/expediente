@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { useEffect, useState } from 'react';
 import { api, message, formatDate } from './api';
 import { Notice, PageEnd, usePage } from './components';
@@ -10,7 +11,7 @@ interface Workflow { processing: boolean; requires_review: boolean; can_submit: 
 const operationLabel: Record<string, string> = { planned: 'Esperando turno', copying: 'Copiando al destino', verified: 'Copia verificada', published: 'Confirmando guardado', committed: 'Documento aprobado; retirando temporal', cleaned: 'Guardado definitivo completado', failed: 'El guardado requiere atención' };
 const operationStep: Record<string, number> = { planned: 0, copying: 1, verified: 2, published: 3, committed: 4, cleaned: 5 };
 export function WorkflowPanel({ document, saved }: { document: Document; saved: (document: Document) => void }) {
-  const [workflow, setWorkflow] = useState<Workflow | null>(null); const [error, setError] = useState(''); const [success, setSuccess] = useState(''); const [busy, setBusy] = useState(false); const [reload, setReload] = useState(0);
+  const [workflow, setWorkflow] = useState<Workflow | null>(null); const [error, setError] = useState(''); const [success, setSuccess] = useToastState(); const [busy, setBusy] = useState(false); const [reload, setReload] = useState(0);
   const [reviewers, setReviewers] = useState<{ id: string; display_name: string }[]>([]);
   useEffect(() => { const controller = new AbortController(); api<Workflow>(`/documents/${document.id}/workflow`, { signal: controller.signal }).then(setWorkflow).catch(error => { if (!controller.signal.aborted) setError(message(error)); }); return () => controller.abort(); }, [document.id, document.revision, reload]);
   useEffect(() => { if (!workflow?.can_submit) return; const controller = new AbortController(); api<{ items: { id: string; display_name: string }[] }>(`/libraries/${document.library_id}/reviewers`, { signal: controller.signal }).then(result => setReviewers(result.items.filter(person => person.id !== document.created_by))).catch(error => { if (!controller.signal.aborted) setError(message(error)); }); return () => controller.abort(); }, [workflow?.can_submit, document.library_id, document.created_by]);

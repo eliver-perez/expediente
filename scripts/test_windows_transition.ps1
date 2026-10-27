@@ -6,7 +6,7 @@ $Source = Join-Path $PSScriptRoot '../packaging/windows/manage.ps1'
 $Tokens = $null; $Errors = $null
 $Ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$Tokens, [ref]$Errors)
 Assert-True (!$Errors.Count) 'Invalid manage script'
-foreach ($Name in @('Get-AidexServiceCommand','Assert-AidexServiceOwnership','ConvertTo-AidexNativeArgument','Write-LauncherTarget')) {
+foreach ($Name in @('Get-AidexServiceCommand','Assert-AidexServiceOwnership','Assert-NoLegacyServices','ConvertTo-AidexNativeArgument','Write-LauncherTarget')) {
     $Nodes = @($Ast.FindAll({param($Node) $Node -is [Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq $Name}, $true))
     Assert-True ($Nodes.Count -eq 1) "Missing $Name"
     . ([scriptblock]::Create($Nodes[0].Extent.Text))
@@ -17,6 +17,16 @@ $CommonData = $Root
 $InstallRoot = Join-Path $Root 'Programa con espacios'
 $Binary = Join-Path $InstallRoot 'aidex-server.exe'
 $script:Services = @{}
+function icacls.exe { $global:LASTEXITCODE = 0 }
+function New-Item {
+    param($Path,$ItemType,[switch]$Force)
+    if ($Path -eq 'HKLM:\Software\AIDEX') { return }
+    Microsoft.PowerShell.Management\New-Item -Path $Path -ItemType $ItemType -Force:$Force
+}
+function Set-ItemProperty {
+    param($Path,$Name,$Value,$ErrorAction)
+    if ($Path -ne 'HKLM:\Software\AIDEX' -or $Name -ne 'Port' -or $Value -ne 18090) { throw 'Unexpected registry update' }
+}
 function Get-Service { param($Name, $ErrorAction) return $script:Services[$Name] }
 function Get-CimInstance { param($ClassName,$Filter,$ErrorAction) return $script:Installed }
 function Reset-Profile {
@@ -29,6 +39,14 @@ try {
     Assert-True ((ConvertTo-AidexNativeArgument $Argument) -eq ('"' + $Argument + '\"')) 'Trailing backslash escaped incorrectly'
     Assert-True ((ConvertTo-AidexNativeArgument '"José"') -eq '"\"José\""') 'Embedded service quotes lost'
     Reset-Profile
+    Assert-NoLegacyServices
+    foreach ($LegacyName in @('AIBID', 'AIBIDTest', 'AIBID-Test')) {
+        $script:Services[$LegacyName] = [pscustomobject]@{ Name = $LegacyName }
+        $Rejected = $false
+        try { Assert-NoLegacyServices } catch { $Rejected = $true }
+        Assert-True $Rejected "Legacy service $LegacyName was not detected"
+        $script:Services.Remove($LegacyName)
+    }
     $script:Installed = $null
     Assert-AidexServiceOwnership
     $script:Installed = [pscustomobject]@{PathName=(Get-AidexServiceCommand);StartName='NT SERVICE\AIDEX'}
@@ -47,9 +65,10 @@ try {
 
     # Go writes BOM-less UTF-8 JSON; Windows PowerShell 5.1 must decode it explicitly.
     New-Item -ItemType Directory -Path $InstallRoot | Out-Null
+    New-Item -ItemType Directory -Path $DataRoot | Out-Null
     $Config = Join-Path $Root 'Configuración ñ.json'
     $URL = 'https://biblioteca-ñ.example'
-    $JSON = @{ public_url = $URL; license = @{ secret = 'TEST_ONLY_DO_NOT_EXPORT' } } | ConvertTo-Json
+    $JSON = @{ public_url = $URL; listen_address = '127.0.0.1:18090'; license = @{ secret = 'TEST_ONLY_DO_NOT_EXPORT' } } | ConvertTo-Json
     [IO.File]::WriteAllText($Config, $JSON, [Text.UTF8Encoding]::new($false))
     Write-LauncherTarget
     $Saved = [IO.File]::ReadAllText((Join-Path $InstallRoot 'launcher.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json

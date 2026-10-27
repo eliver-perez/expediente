@@ -528,7 +528,7 @@ func (service *Service) ConfigureRoot(ctx context.Context, principal domain.Prin
 			status = "active"
 			mode = "polling"
 		}
-		result, err := transaction.ExecContext(ctx, "UPDATE storage_roots SET status=?,watch_mode=?,reconcile_interval_seconds=?,configuration_revision=configuration_revision+1 WHERE id=? AND configuration_revision=? AND status<>'superseded'", status, mode, interval, rootID, revision)
+		result, err := transaction.ExecContext(ctx, "UPDATE storage_roots SET status=?,watch_mode=?,reconcile_interval_seconds=?,configuration_revision=configuration_revision+1 WHERE id=? AND configuration_revision=? AND status NOT IN ('superseded','retired')", status, mode, interval, rootID, revision)
 		if err != nil {
 			return err
 		}
@@ -636,6 +636,9 @@ func (service *Service) Retire(ctx context.Context, principal domain.Principal, 
 		}
 		if policy == "remove_index_references" {
 			if err = service.require(ctx, transaction, current, root.LibraryID, "documents.remove_index"); err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, `INSERT INTO root_retired_documents SELECT ?,d.id,d.revision+1 FROM documents d WHERE d.deleted_at IS NULL AND d.physical_file_id IN (SELECT physical_file_id FROM physical_file_locations WHERE root_id=? AND retired_at IS NULL) ON CONFLICT(root_id,document_id) DO UPDATE SET removed_revision=excluded.removed_revision`, rootID, rootID); err != nil {
 				return err
 			}
 			if _, err = transaction.ExecContext(ctx, "UPDATE documents SET deleted_at=?,revision=revision+1 WHERE physical_file_id IN (SELECT physical_file_id FROM physical_file_locations WHERE root_id=? AND retired_at IS NULL)", now(), rootID); err != nil {

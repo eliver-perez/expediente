@@ -234,15 +234,12 @@ func TestRevisionFloorsImportAtomicityAndOfflineProof(t *testing.T) {
 		}
 	}
 	state, _ = client.Status(ctx)
-	if !state.DeactivationPending || !state.WriteAllowed {
-		t.Fatal("offline request claimed immediate deactivation")
+	if !state.DeactivationPending || state.WriteAllowed || state.ReadAllowed || state.State != "deactivated" {
+		t.Fatal("offline deactivation did not block this installation")
 	}
 	claims.Status = "revoked"
-	importClaims(t, client, private, claims)
-	expectCode(t, client.Check(ctx, WriteDocuments), "LICENSE_READ_ONLY")
-	if err = client.Check(ctx, ReadDocuments); err != nil {
-		t.Fatal(err)
-	}
+	_, err = client.Import(ctx, []byte(signed(private, claims)), nil, domain.RequestMetadata{})
+	expectCode(t, err, "ACTIVATION_DEACTIVATED")
 }
 func TestMissingKeyRecoveryRetainsEvidenceAndRequiresNewActivation(t *testing.T) {
 	ctx := context.Background()

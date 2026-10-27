@@ -65,6 +65,37 @@ func TestRootRequestsCoalesceAndRecoverAfterRestart(t *testing.T) {
 	}
 }
 
+func TestDailyPeriodicFailureDoesNotScheduleHundredsOfScans(t *testing.T) {
+	service, principal, directory := fixture(t)
+	ctx := context.Background()
+	library := addLibrary(t, service, principal, "Daily cadence")
+	path := filepath.Join(directory, "files")
+	requireNoError(t, os.Mkdir(path, 0700))
+	root := addRoot(t, service, principal, library, path)
+	_, err := service.Database.Writer.Exec("UPDATE jobs SET status='succeeded' WHERE job_type='scan' AND target_version=?", root)
+	requireNoError(t, err)
+	_, err = service.Database.Writer.Exec("UPDATE storage_roots SET last_scan_at=? WHERE id=?", domain.Timestamp(time.Now().Add(-48*time.Hour)), root)
+	requireNoError(t, err)
+	newRuntime := func() *Runtime {
+		return &Runtime{Service: service, directories: map[string]string{}, dirty: map[string]time.Time{}, degraded: map[string]string{}, watchInitialized: map[string]bool{root: true}}
+	}
+	runtime := newRuntime()
+	runtime.scheduleOnce(ctx)
+	job, err := service.claimLane(ctx, "scan")
+	requireNoError(t, err)
+	requireNoError(t, service.finish(ctx, job, scanFailure("SCAN_PARTIAL")))
+	for i := 0; i < 120; i++ {
+		runtime.scheduleOnce(ctx)
+	}
+	// A fresh runtime represents a restart; the cadence is in SQLite, not RAM.
+	newRuntime().scheduleOnce(ctx)
+	var count int
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT count(*) FROM jobs WHERE target_version=? AND job_type='scan' AND json_extract(payload_json,'$.periodic')=1", root).Scan(&count))
+	if count != 1 {
+		t.Fatalf("periodic scans after 121 ticks: %d", count)
+	}
+}
+
 func TestOverflowGenerationNeedsCompleteBarrier(t *testing.T) {
 	service, principal, directory := fixture(t)
 	ctx := context.Background()
@@ -163,7 +194,7 @@ func TestRetirementAndIndexRemovalPreserveOriginalAndHistory(t *testing.T) {
 	if retired.Status != "retired" || retired.WatchMode != "paused" || query(t, service, principal, library, "estructura").Count != 1 {
 		t.Fatal("retirement lost index or kept watcher", retired)
 	}
-	requireNoError(t, service.ConfigureRoot(ctx, principal, root, true, 86400, retired.Revision, domain.RequestMetadata{}))
+	requireNoError(t, service.ResumeRoot(ctx, principal, root, retired.Revision, domain.RequestMetadata{}))
 	requireNoError(t, service.RemoveIndex(ctx, principal, doc.ID, "Prueba", doc.Revision, domain.RequestMetadata{}))
 	requireNoError(t, service.Scan(ctx, root, 256<<20, nil))
 	if query(t, service, principal, library, "estructura").Count != 0 {

@@ -34,6 +34,9 @@ func checkStatus(status Status, operation Operation) error {
 	if operation == WriteDocuments && status.WriteAllowed {
 		return nil
 	}
+	if status.State == "deactivated" {
+		return domain.Failure("ACTIVATION_DEACTIVATED", "Esta instalación fue desactivada. Actívala nuevamente para acceder a sus documentos.", 403)
+	}
 	if status.State == "expired" || status.State == "revoked" {
 		return domain.Failure("LICENSE_READ_ONLY", "La licencia permite consulta y descarga; las modificaciones están suspendidas.", 403)
 	}

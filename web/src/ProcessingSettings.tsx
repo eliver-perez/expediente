@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { ProcessingPolicy } from './ProcessingPolicy';
 import { useEffect, useState } from 'react';
 import { api, message } from './api';
@@ -5,7 +6,7 @@ import { Notice } from './components';
 export interface Concurrency { mode: string; native_workers: number; ocr_workers: number; total_workers: number }
 interface Settings { configuration: Concurrency; effective: Concurrency; revision: number; resources: {logical_cpus: number; physical_cores: number; available_cpus: number; memory_bytes: number; available_memory_bytes: number; notes: string[]} }
 export function ProcessingSettings() {
- const [settings,setSettings]=useState<Settings|null>(null);const [configuration,setConfiguration]=useState<Concurrency>({mode:'auto',native_workers:2,ocr_workers:1,total_workers:2});const [error,setError]=useState('');const [success,setSuccess]=useState('');const [busy,setBusy]=useState(false);
+ const [settings,setSettings]=useState<Settings|null>(null);const [configuration,setConfiguration]=useState<Concurrency>({mode:'auto',native_workers:2,ocr_workers:1,total_workers:2});const [error,setError]=useState('');const [success,setSuccess]=useToastState();const [busy,setBusy]=useState(false);
  useEffect(()=>{const abort=new AbortController();api<Settings>('/system/processing',{signal:abort.signal}).then(value=>{setSettings(value);setConfiguration({...value.effective,mode:value.configuration.mode});}).catch(cause=>{if(!abort.signal.aborted)setError(message(cause));});return()=>abort.abort();},[]);
  const gb=(n:number)=>n?`${(n/2**30).toFixed(1)} GB`:'No disponible';
  return <><header className="page-heading"><p className="eyebrow">CONFIGURACIÓN DE AIDEX</p><h2>Procesamiento del equipo</h2><p>Comparte los recursos entre las bibliotecas y las demás aplicaciones del equipo.</p></header><Notice text={error}/><Notice text={success} kind="success"/>

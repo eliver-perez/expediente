@@ -1,0 +1,43 @@
+{
+  "resultado": "OK",
+  "biblioteca": "07080b12-9e21-5a2b-8d89-db47900b05b4",
+  "expedientes": 720,
+  "documentos": 11520,
+  "ejercicios": [
+    "2023",
+    "2024",
+    "2025",
+    "2026"
+  ],
+  "plantillas": [
+    "Expediente de Contratación",
+    "Expediente de Fiscalización",
+    "Expediente de Operación"
+  ],
+  "avance_porcentaje_exp": {
+    "0": 144,
+    "25": 144,
+    "50": 144,
+    "75": 144,
+    "100": 144
+  },
+  "resumen": {
+    "key": "all",
+    "label": "Todos los expedientes",
+    "total": 720,
+    "evaluable": 720,
+    "complete": 144,
+    "incomplete": 576,
+    "without_documents": 144,
+    "without_template": 0,
+    "required": 2880,
+    "fulfilled": 1440,
+    "unavailable": 0,
+    "complete_percent": 20,
+    "progress_percent": 50
+  },
+  "grupos_ejercicio": 4,
+  "grupos_plantilla": 3,
+  "faltantes_verificados": 10,
+  "integridad": "ok"
+}

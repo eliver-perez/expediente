@@ -23,7 +23,7 @@ test('biblioteca vinculada: raíz, OCR, búsqueda, texto retenido y vista lógic
   try {
     await login(page); await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click();
     await page.getByRole('button', { name: 'Nueva biblioteca' }).click(); await page.getByLabel('Nombre de la biblioteca').fill('Archivo de planos E2E');
-    await page.getByLabel('Asignarme como gestor de esta biblioteca').check(); await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
+     await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Archivo de planos E2E', exact: true })).toBeVisible();
     await page.getByRole('tab', { name: 'Carpetas', exact: true }).click();
     await page.getByLabel('Ruta de la carpeta en el servidor').fill(directory); await page.getByRole('button', { name: 'Inspeccionar carpeta' }).click();

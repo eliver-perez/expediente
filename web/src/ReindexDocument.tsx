@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { useEffect, useRef, useState } from 'react';
 import { api, message } from './api';
 import { Notice } from './components';
@@ -10,7 +11,7 @@ export function ReindexDocument({ document, updated }: { document: Document; upd
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [success, setSuccess] = useToastState();
   const onUpdate = useRef(updated);
   useEffect(() => { onUpdate.current = updated; }, [updated]);
   useEffect(() => {

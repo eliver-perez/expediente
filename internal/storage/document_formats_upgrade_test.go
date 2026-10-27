@@ -17,6 +17,7 @@ func TestProcessingUpgradeFromPhaseTwo(t *testing.T)          { testDocumentUpgr
 func TestPreviewUpgradeFromPhaseThree(t *testing.T)           { testDocumentUpgrade(t, 11) }
 func TestAdvancedUpgradeFromPhaseFive(t *testing.T)           { testDocumentUpgrade(t, 12) }
 func TestObservabilityUpgradeFromPhaseSix(t *testing.T)       { testDocumentUpgrade(t, 13) }
+func TestLibraryLifecycleUpgradeFromProduction(t *testing.T)  { testDocumentUpgrade(t, 14) }
 func testDocumentUpgrade(t *testing.T, previousRevision int) {
 	directory, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {

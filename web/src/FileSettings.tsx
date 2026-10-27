@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { useEffect, useState } from 'react';
 import { api, message } from './api';
 import { Notice } from './components';
@@ -23,7 +24,7 @@ export function FileSettings({ libraryID }: { libraryID?: string }) {
   const [policy, setPolicy] = useState<FilePolicy | null>(null);
   const [overrides, setOverrides] = useState<Overrides | null>(null);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [success, setSuccess] = useToastState();
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
   function receive(value: FileConfiguration) { setSaved(value); setPolicy(value.effective); setOverrides(value.overrides); }

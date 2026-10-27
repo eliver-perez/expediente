@@ -19,7 +19,7 @@ test('multiformato: reglas heredadas, incorporación segura y descarga del origi
   await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
   await page.getByLabel('Nombre de la biblioteca').fill('Formatos fase 1');
   await page.getByLabel('Modalidad de biblioteca').selectOption('managed');
-  await page.getByLabel('Asignarme como gestor de esta biblioteca').check();
+
   await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
   await page.getByRole('tab', { name: 'Configuración', exact: true }).click();
   await expect(page.getByLabel('Heredar formatos de almacenamiento', { exact: true })).toBeChecked();

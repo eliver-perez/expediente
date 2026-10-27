@@ -2,7 +2,7 @@ export interface User {
   id: string; username: string; display_name: string; disabled: boolean;
   revision: number; created_at: string; role_ids: string[]; permissions: string[];
 }
-export interface SessionResponse { license?: LicenseSummary; user: User; csrf_token: string; session_expires_at: string }
+export interface SessionResponse { license?: LicenseSummary; eula_accepted: boolean; user: User; csrf_token: string; session_expires_at: string }
 export interface Page<T> { items: T[]; next_cursor: string | null }
 export interface SessionEntry {
   id: string; user_id: string; started_at: string; last_activity_at: string;
@@ -18,6 +18,7 @@ export interface Attempt { id: string; occurred_at: string; attempted_identifier
 
 let csrfToken = '';
 export function setCSRF(value: string) { csrfToken = value; }
+export function getCSRF() { return csrfToken; }
 export class APIError extends Error {
   constructor(public code: string, message: string, public status: number) { super(message); }
 }
@@ -112,4 +113,24 @@ export async function importLicense<T>(file: File): Promise<T> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function inspectBackup<T>(file: File, password: string, progress: (percent: number) => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/v1/restores/inspect'); request.timeout = 30 * 60_000;
+    request.setRequestHeader('X-CSRF-Token', csrfToken);
+    request.upload.onprogress = event => { if (event.lengthComputable) progress(Math.round(100 * event.loaded / event.total)); };
+    request.onerror = () => reject(new APIError('NETWORK_ERROR', 'Se interrumpió la carga del respaldo.', 0));
+    request.ontimeout = () => reject(new APIError('REQUEST_TIMEOUT', 'La inspección excedió el tiempo disponible.', 0));
+    request.onload = () => {
+      let payload;
+      try { payload = JSON.parse(request.responseText); } catch { reject(new APIError('INVALID_RESPONSE', 'El servidor no devolvió un resultado válido.', request.status)); return; }
+      if (request.status >= 200 && request.status < 300) { resolve(payload as T); return; }
+      const failure = new APIError(typeof payload?.error?.code === 'string' ? payload.error.code : 'BACKUP_INVALID', typeof payload?.error?.message === 'string' ? payload.error.message : 'El respaldo no es válido.', request.status);
+      if (request.status === 401) { setCSRF(''); window.dispatchEvent(new CustomEvent('session-ended', { detail: failure })); }
+      reject(failure);
+    };
+    const body = new FormData(); body.append('password', password); body.append('file', file); request.send(body);
+  });
 }

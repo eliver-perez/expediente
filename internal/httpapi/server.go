@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"gestor-documental/internal/backups"
 	"gestor-documental/internal/config"
 	"gestor-documental/internal/diagnostics"
 	"gestor-documental/internal/domain"
@@ -28,6 +29,7 @@ import (
 var compiledAssets embed.FS
 
 type Server struct {
+	backups        *backups.Service
 	libraries      *libraries.Service
 	identity       *identity.Service
 	configuration  config.Config
@@ -36,6 +38,11 @@ type Server struct {
 	secure         bool
 	trustedProxies []netip.Prefix
 	network        *network.Service
+}
+
+func (server *Server) WithBackups(service *backups.Service) *Server {
+	server.backups = service
+	return server
 }
 
 func (server *Server) WithNetwork(service *network.Service) *Server {
@@ -66,8 +73,12 @@ func metadata(request *http.Request) domain.RequestMetadata {
 func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	server.libraryRoutes(mux)
+	server.backupRoutes(mux)
 	server.observabilityRoutes(mux)
 	server.licenseRoutes(mux)
+	mux.HandleFunc("GET /api/v1/eula", server.protected("", true, server.eulaGet))
+	mux.HandleFunc("GET /api/v1/about", server.protected("", true, server.about))
+	mux.HandleFunc("POST /api/v1/eula/accept", server.protected("license.manage", true, server.eulaAccept))
 	mux.HandleFunc("GET /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
 	mux.HandleFunc("POST /api/v1/system/previews/clear", server.protected("system.configure", true, server.clearPreviews))
@@ -137,9 +148,26 @@ func (server *Server) protected(permission string, touch bool, handler authorize
 			server.fail(writer, request, domain.Failure("CSRF_INVALID", "La solicitud no pudo validarse. Recarga la página.", 403))
 			return
 		}
-		if err := server.identity.License.Check(request.Context(), licensing.SecurityAdministration); err != nil {
-			server.fail(writer, request, err)
-			return
+		path := request.URL.Path
+		licenseSetup := strings.HasPrefix(path, "/api/v1/license/") || path == "/api/v1/license" || path == "/api/v1/eula" || path == "/api/v1/eula/accept" || path == "/api/v1/about" || path == "/api/v1/auth/session" || path == "/api/v1/auth/logout"
+		if !licenseSetup {
+			accepted, err := server.eulaAccepted(request.Context())
+			if err != nil {
+				server.fail(writer, request, err)
+				return
+			}
+			if !accepted {
+				server.fail(writer, request, domain.Failure("EULA_ACCEPTANCE_REQUIRED", "El administrador debe aceptar el contrato de licencia vigente antes de utilizar AIDEX.", 403))
+				return
+			}
+			operation := licensing.ReadDocuments
+			if request.Method != "GET" && request.Method != "HEAD" && !(path == "/api/v1/backups" && request.Method == "POST") {
+				operation = licensing.WriteDocuments
+			}
+			if err := server.identity.License.Check(request.Context(), operation); err != nil {
+				server.fail(writer, request, err)
+				return
+			}
 		}
 		handler(writer, request, principal)
 	}
@@ -267,7 +295,7 @@ func (server *Server) fail(writer http.ResponseWriter, request *http.Request, er
 		server.logger.Error("request failed", "request_id", metadata(request).RequestID, "error_type", fmt.Sprintf("%T", err))
 	}
 	// An older in-flight request must not delete a cookie issued by a newer login.
-	if failure.Status >= 500 {
+	if failure.Status >= 500 || failure.Code == "ROOT_PERMISSION_DENIED" || failure.Code == "ROOT_NOT_FOUND" || failure.Code == "ROOT_NETWORK_UNAVAILABLE" || failure.Code == "ROOT_READ_FAILED" {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = diagnostics.Record(ctx, server.identity.Database, "http", failure.Code, diagnostics.Context{RequestID: metadata(request).RequestID, Operation: "http", HTTPStatus: failure.Status})
@@ -301,7 +329,7 @@ func (server *Server) frontend(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	switch request.URL.Path {
-	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing", "/admin/network", "/admin/files", "/admin/previews", "/admin/advanced", "/admin/settings", "/admin/dashboard", "/admin/errors":
+	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/eula", "/admin/about", "/admin/processing", "/admin/network", "/admin/files", "/admin/previews", "/admin/advanced", "/admin/settings", "/admin/dashboard", "/admin/errors":
 		contents, err := fs.ReadFile(assets, "index.html")
 		if err != nil {
 			http.Error(writer, "Aplicación no disponible.", 503)

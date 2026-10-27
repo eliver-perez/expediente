@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { useState, type FormEvent } from 'react';
 import { api, formatDate, message, type User } from './api';
 import { Notice, PageEnd, usePage } from './components';
@@ -8,7 +9,7 @@ export function Users({ currentUser, refreshSession }: { currentUser: User; refr
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [success, setSuccess] = useToastState();
   const can = (permission: string) => currentUser.permissions.includes(permission);
   async function operation(action: () => Promise<unknown>, successText: string) {
     setBusy(true); setError(''); setSuccess('');

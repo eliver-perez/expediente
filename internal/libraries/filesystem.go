@@ -1,7 +1,9 @@
 package libraries
 
 import (
+	"errors"
 	"fmt"
+	"gestor-documental/internal/domain"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,11 +23,11 @@ func inspectDirectory(path string) (directoryInfo, error) {
 	}
 	canonical, err := filepath.EvalSymlinks(filepath.Clean(path))
 	if err != nil {
-		return result, invalid("No se puede acceder a la carpeta del servidor.")
+		return result, directoryFailure(path, err)
 	}
 	directory, err := os.Open(canonical)
 	if err != nil {
-		return result, invalid("No se puede leer la carpeta del servidor.")
+		return result, directoryFailure(path, err)
 	}
 	defer directory.Close()
 	info, err := directory.Stat()
@@ -34,7 +36,7 @@ func inspectDirectory(path string) (directoryInfo, error) {
 	}
 	entries, err := directory.ReadDir(128)
 	if err != nil && err != io.EOF {
-		return result, invalid("No se puede enumerar la carpeta.")
+		return result, directoryFailure(path, err)
 	}
 	identity, _, err := physicalIdentity(directory)
 	if err != nil {
@@ -139,4 +141,17 @@ func volumeKey(identity string) string {
 		return ""
 	}
 	return parts[0] + ":" + parts[1]
+}
+
+func directoryFailure(path string, err error) error {
+	if errors.Is(err, os.ErrPermission) {
+		return domain.Failure("ROOT_PERMISSION_DENIED", "AIDEX no tiene permisos para acceder a esta ubicación. Revisa los permisos de la cuenta del servicio en la carpeta y, si es compartida, en el recurso de red.", 422)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return domain.Failure("ROOT_NOT_FOUND", "No se encontró la carpeta indicada. Comprueba que la ruta sea correcta y esté disponible para el equipo donde corre AIDEX.", 422)
+	}
+	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") {
+		return domain.Failure("ROOT_NETWORK_UNAVAILABLE", "No se pudo acceder a la ruta de red. Comprueba la disponibilidad del equipo y el acceso de la cuenta del servicio.", 422)
+	}
+	return domain.Failure("ROOT_READ_FAILED", "No se pudo leer la carpeta. Comprueba su disponibilidad y vuelve a intentarlo; si persiste, consulta Registro de errores.", 422)
 }

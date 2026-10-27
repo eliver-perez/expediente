@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { Accordion } from './Accordion';
 import { useState } from 'react';
 import { api, message } from './api';
@@ -8,7 +9,7 @@ import type { CatalogEntry, RequirementInput, Template } from './organizationTyp
 export function Catalogs({ library }: { library: Library }) {
   const categories = usePage<CatalogEntry>(`/libraries/${library.id}/categories`); const types = usePage<CatalogEntry>(`/libraries/${library.id}/document-types`);
   const [category, setCategory] = useState<CatalogEntry | null>(null); const [type, setType] = useState<CatalogEntry | null>(null);
-  const [error, setError] = useState(''); const [success, setSuccess] = useState(''); const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(''); const [success, setSuccess] = useToastState(); const [busy, setBusy] = useState(false);
   const canEdit = library.permissions.includes('catalogs.manage');
   async function save(kind: string, selected: CatalogEntry | null, data: FormData) {
     setBusy(true); setError('');
@@ -26,7 +27,7 @@ export function Catalogs({ library }: { library: Library }) {
 }
 function Templates({ library, categories, types }: { library: Library; categories: CatalogEntry[]; types: CatalogEntry[] }) {
   const templates = usePage<Template>(`/libraries/${library.id}/templates`); const [selected, setSelected] = useState<Template | null>(null);
-  const [requirements, setRequirements] = useState<RequirementInput[]>([]); const [error, setError] = useState(''); const [success, setSuccess] = useState(''); const [busy, setBusy] = useState(false);
+  const [requirements, setRequirements] = useState<RequirementInput[]>([]); const [error, setError] = useState(''); const [success, setSuccess] = useToastState(); const [busy, setBusy] = useState(false);
   const canEdit = library.permissions.includes('templates.manage');
   return <section className="card"><h2>Plantillas de expedientes</h2><p className="muted">Cada expediente conserva sus propios requisitos. Una nueva versión solo se aplica a expedientes nuevos.</p><Notice text={error || templates.error} /><Notice text={success} kind="success" />
     <div className="catalog-list">{templates.items.map(template => <Accordion key={template.id} title={`${template.name} · versión ${template.versions[0]?.revision}`}>{template.versions.map(version => <p key={version.id}>Versión {version.revision}: {version.requirements.map(requirement => `${types.find(type => type.id === requirement.document_type_id)?.name || 'Tipo'} (${requirement.required_count}${requirement.mandatory ? ', obligatorio' : ', opcional'})`).join('; ') || 'Sin requerimientos'}</p>)}{canEdit && <button className="secondary" onClick={() => { setSelected(template); setRequirements(template.versions[0]?.requirements.map(item => ({ category_id: item.category_id, document_type_id: item.document_type_id, required_count: item.required_count, mandatory: item.mandatory })) || []); }}>Crear nueva versión de {template.name}</button>}</Accordion>)}</div>

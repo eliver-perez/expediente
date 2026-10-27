@@ -4,6 +4,7 @@ param([Parameter(Mandatory=$true)][string]$ManageScript,
       [Parameter(Mandatory=$true)][string]$InstallRoot,
       [Parameter(Mandatory=$true)][string]$LogPath,
       [string]$PreflightBinary = '', [switch]$EraseInternalData,
+      [int]$Port = 18090,
       [ValidateRange(1,900)][int]$TimeoutSeconds = 600)
 $ErrorActionPreference = 'Stop'
 # NSIS reads this file as UTF-16LE. No ACP/OEM conversion or global codepage change.
@@ -11,6 +12,7 @@ function Quote-AidexLiteral([string]$Value) { return "'" + $Value.Replace("'", "
 [IO.File]::WriteAllText($LogPath, '', [Text.Encoding]::Unicode)
 $Invocation = '& ' + (Quote-AidexLiteral $ManageScript) + ' -Action ' + (Quote-AidexLiteral $Action) + ' -InstallRoot ' + (Quote-AidexLiteral $InstallRoot)
 if ($PreflightBinary) { $Invocation += ' -PreflightBinary ' + (Quote-AidexLiteral $PreflightBinary) }
+if ($Action -eq 'Configure') { $Invocation += ' -Port ' + $Port }
 if ($EraseInternalData) { $Invocation += ' -EraseInternalData' }
 $Command = $Invocation + ' *>&1 | ForEach-Object { [IO.File]::AppendAllText(' + (Quote-AidexLiteral $LogPath) + ', $_.ToString() + [Environment]::NewLine, [Text.Encoding]::Unicode) }; exit $LASTEXITCODE'
 $Encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command))

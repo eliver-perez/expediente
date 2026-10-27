@@ -15,6 +15,9 @@ VIAddVersionKey /LANG=1034 "ProductVersion" "1.0.0"
 VIAddVersionKey /LANG=1034 "LegalCopyright" "AIDEX"
 Var EraseData
 Var EraseCheckbox
+Var SelectedPort
+Var PortInput
+Var ExistingInstall
 Name "AIDEX"
 !define MUI_ICON "${STAGE}/aidex.ico"
 !define MUI_UNICON "${STAGE}/aidex.ico"
@@ -24,10 +27,11 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 BrandingText "AIDEX — Tu biblioteca digital, ordenada y al alcance."
 !define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TEXT "Instalación de AIDEX. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIDEX para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIDEX.$\r$\n$\r$\nPara previsualizar Word y Excel instala LibreOffice en este equipo y revisa Ajustes > Vistas previas y caché. La extracción y búsqueda funcionan sin LibreOffice.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
+!define MUI_WELCOMEPAGE_TEXT "Instalación interna de AIDEX 1.0.0. Después abre Configurar AIDEX para crear el administrador e iniciar el servicio.$\r$\n$\r$\nEn la primera ejecución se mostrará el CLUF provisional, pendiente de revisión jurídica. Debe aceptarse expresamente antes de utilizar bibliotecas y expedientes. Luego podrás activar tu licencia en AIDEX.$\r$\n$\r$\nDesinstalar conserva datos y documentos por defecto. Si detectas servicios antiguos AIBID, desinstálalos con su propio programa conservando sus datos antes de continuar."
 !insertmacro MUI_PAGE_WELCOME
+Page custom PortPage PortPageLeave
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIDEX desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIDEX en el Escritorio o Abrir AIDEX en Inicio: abre el navegador sin pedir permisos de administrador."
+!define MUI_FINISHPAGE_TEXT "Abre Configurar AIDEX desde Inicio para crear el administrador e iniciar el servicio. Al entrar por primera vez, lee y acepta el CLUF provisional antes de utilizar el sistema.$\r$\n$\r$\nDespués usa AIDEX desde el Escritorio o Inicio: abrirá el navegador sin pedir permisos de administrador."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.DataOptions un.ConfirmDataOptions
@@ -49,6 +53,62 @@ Function .onInit
     ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "InstallLocation"
     ${If} $0 != ""
         StrCpy $INSTDIR $0
+    ${EndIf}
+    ReadRegStr $SelectedPort HKLM "Software\AIDEX" "Port"
+    ${If} $SelectedPort == ""
+        StrCpy $SelectedPort "18090"
+    ${EndIf}
+    StrCpy $ExistingInstall "0"
+    ; SetShellVarContext all makes $APPDATA the common ProgramData location.
+    IfFileExists "$APPDATA\AIDEX\config.json" 0 +2
+        StrCpy $ExistingInstall "1"
+FunctionEnd
+
+Function PortPage
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File "${STAGE}/manage.ps1"
+    nsDialogs::Create 1018
+    Pop $0
+    ${If} $ExistingInstall == "1"
+        ${NSD_CreateLabel} 0 0u 100% 60u "Se detectó una instalación AIDEX. La actualización conservará el puerto y toda la configuración privada existente. Para cambiar el puerto, usa Configurar servidor AIDEX después de instalar."
+        Pop $1
+        nsDialogs::Show
+        Return
+    ${EndIf}
+    ${NSD_CreateLabel} 0 0u 100% 28u "Puerto TCP de AIDEX. Se propone 18090; elige otro si ya lo usa una aplicación distinta."
+    Pop $1
+    ${NSD_CreateText} 0 35u 50% 13u "$SelectedPort"
+    Pop $PortInput
+    ${NSD_CreateLabel} 0 56u 100% 32u "Al actualizar, la configuración privada existente se conserva. Después puedes cambiar el puerto desde Configurar servidor AIDEX en Inicio."
+    Pop $1
+    nsDialogs::Show
+FunctionEnd
+
+Function PortPageLeave
+    ${If} $ExistingInstall == "1"
+        Return
+    ${EndIf}
+    ${NSD_GetText} $PortInput $SelectedPort
+    IntFmt $1 "%d" $SelectedPort
+    ${If} $1 != $SelectedPort
+        MessageBox MB_ICONEXCLAMATION "Introduce un número de puerto sin espacios ni caracteres adicionales."
+        Abort
+    ${EndIf}
+    ${If} $1 < 1
+        MessageBox MB_ICONEXCLAMATION "El puerto debe estar entre 1 y 65535."
+        Abort
+    ${EndIf}
+    ${If} $1 > 65535
+        MessageBox MB_ICONEXCLAMATION "El puerto debe estar entre 1 y 65535."
+        Abort
+    ${EndIf}
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\manage.ps1" -Action CheckPort -InstallRoot "$INSTDIR" -Port $SelectedPort'
+    Pop $0
+    Pop $2
+    ${If} $0 != 0
+        MessageBox MB_ICONEXCLAMATION "No se puede usar ese puerto. $\r$\n$2$\r$\nSelecciona otro puerto."
+        Abort
     ${EndIf}
 FunctionEnd
 
@@ -109,7 +169,7 @@ Section "Instalar"
     SetOutPath "$INSTDIR"
     File /r "${STAGE}/*"
     GetTempFileName $LogPath
-    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Configure -InstallRoot "$INSTDIR"' $0
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Configure -InstallRoot "$INSTDIR" -Port $SelectedPort' $0
     Call ReadAidexLog
     ${If} $0 != 0
         Abort "La configuración falló. No se inició el servicio. Consulta el detalle."
@@ -117,6 +177,7 @@ Section "Instalar"
     WriteUninstaller "$INSTDIR\Desinstalar.exe"
     CreateDirectory "$SMPROGRAMS\AIDEX"
     CreateShortCut "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk" "$INSTDIR\admin.cmd"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar servidor AIDEX.lnk" "$INSTDIR\server-port.cmd"
     CreateShortCut "$SMPROGRAMS\AIDEX\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
     Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"
     CreateShortCut "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk" "$INSTDIR\AIDEX.exe"
@@ -142,6 +203,7 @@ Section "Uninstall"
     ${EndIf}
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX"
     Delete "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Configurar servidor AIDEX.lnk"
     Delete "$SMPROGRAMS\AIDEX\Desinstalar.lnk"
     Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk"
     Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"

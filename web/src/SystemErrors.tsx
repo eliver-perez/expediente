@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { useEffect, useState } from 'react';
 import { api, formatDate, message } from './api';
 import { Notice } from './components';
@@ -10,13 +11,13 @@ export const severityLabels:Record<string,string>={info:'Información',warning:'
 interface Policy {retention_days:number;maximum_events:number;revision:number}
 export function SystemErrors(){
  const [filters,setFilters]=useState({from:'',to:'',module:'',severity:'',status:''});
- const [query,setQuery]=useState('');const [error,setError]=useState(''),[notice,setNotice]=useState('');
+ const [query,setQuery]=useState('');const [error,setError]=useState(''),[notice,setNotice]=useToastState();
  const [policy,setPolicy]=useState<Policy|null>(null),[busy,setBusy]=useState(false),[diagnostic,setDiagnostic]=useState('');
  const events=useCursorPage<DiagnosticEvent>(`/system/errors?${query}`);
  useEffect(()=>{const controller=new AbortController();api<Policy>('/system/error-policy',{signal:controller.signal}).then(setPolicy).catch(cause=>{if(!controller.signal.aborted)setError(message(cause))});return()=>controller.abort()},[]);
  async function review(event:DiagnosticEvent){setBusy(true);setError('');try{await api(`/system/errors/${event.id}`,{method:'PATCH',body:{status:event.status==='open'?'reviewed':'open',revision:event.revision}});events.reload()}catch(cause){setError(message(cause));events.reload()}finally{setBusy(false)}}
  async function copy(event:DiagnosticEvent){setBusy(true);setNotice('');setError('');try{const value=await api<object>(`/system/errors/${event.id}/diagnostic`);const text=JSON.stringify(value,null,2);setDiagnostic(text);try{await navigator.clipboard.writeText(text);setNotice('Información de diagnóstico copiada.')}catch{setNotice('El navegador no permite copiar automáticamente. Selecciona el diagnóstico de abajo y cópialo.')}}catch(cause){setError(message(cause))}finally{setBusy(false)}}
- return <><header className="page-heading"><p className="eyebrow">SISTEMA</p><h1>Errores y diagnósticos</h1><p>Incidencias internas para revisión y soporte. Las acciones de los usuarios siguen en Auditoría.</p><p className="muted">Este registro recoge incidencias a partir de esta versión; no reconstruye errores anteriores a la actualización.</p></header><Notice text={error||events.error}/><Notice text={notice} kind="success"/>
+ return <><header className="page-heading"><p className="eyebrow">SISTEMA</p><h1>Registro de errores</h1><p>Incidencias internas para revisión y soporte. Las acciones de los usuarios siguen en Auditoría.</p><p className="muted">Este registro recoge incidencias a partir de esta versión; no reconstruye errores anteriores a la actualización.</p></header><Notice text={error||events.error}/><Notice text={notice} kind="success"/>
  <section className="card"><div className="section-heading"><h2>Registros del sistema</h2><button className="secondary" onClick={events.reload} disabled={events.busy}>Actualizar registros</button></div>
  <form className="filters" onSubmit={event=>{event.preventDefault();setError('');if(filters.from&&filters.to&&filters.from>filters.to){setError('La fecha inicial debe ser anterior o igual a la final.');return}const q=new URLSearchParams();for(const key of ['module','severity','status'] as const){if(filters[key])q.set(key,filters[key])}if(filters.from)q.set('from',new Date(`${filters.from}T00:00:00`).toISOString());if(filters.to){const date=new Date(`${filters.to}T00:00:00`);date.setDate(date.getDate()+1);q.set('to',date.toISOString())}setQuery(q.toString());events.reload()}}>
  <label>Desde<input type="date" value={filters.from} onChange={e=>setFilters({...filters,from:e.target.value})}/></label><label>Hasta<input type="date" value={filters.to} onChange={e=>setFilters({...filters,to:e.target.value})}/></label>

@@ -74,6 +74,12 @@ func (service *Service) monitorCancellation(ctx context.Context, job Job, cancel
 	}
 }
 func (service *Service) CancelJob(ctx context.Context, principal domain.Principal, jobID string, metadata domain.RequestMetadata) error {
+	return service.stopJob(ctx, principal, jobID, metadata, false)
+}
+func (service *Service) PauseJob(ctx context.Context, principal domain.Principal, jobID string, metadata domain.RequestMetadata) error {
+	return service.stopJob(ctx, principal, jobID, metadata, true)
+}
+func (service *Service) stopJob(ctx context.Context, principal domain.Principal, jobID string, metadata domain.RequestMetadata, pause bool) error {
 	job, err := service.Job(ctx, principal, jobID)
 	if err != nil {
 		return err
@@ -93,8 +99,22 @@ func (service *Service) CancelJob(ctx context.Context, principal domain.Principa
 			return err
 		}
 		if job.Kind == "scan" {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO root_scan_controls VALUES(?,1) ON CONFLICT(root_id) DO UPDATE SET paused=1", target); err != nil {
-				return err
+			if pause {
+				if _, err := tx.ExecContext(ctx, "INSERT INTO root_scan_controls VALUES(?,1) ON CONFLICT(root_id) DO UPDATE SET paused=1", target); err != nil {
+					return err
+				}
+			} else {
+				if _, err := tx.ExecContext(ctx, "DELETE FROM root_scan_controls WHERE root_id=?", target); err != nil {
+					return err
+				}
+				// The terminated traversal is complete for scheduling purposes. A
+				// future interval or an explicit manual request can start a new one.
+				if _, err := tx.ExecContext(ctx, "UPDATE storage_roots SET last_scan_at=? WHERE id=?", now(), target); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE root_scans SET status='superseded',completed_at=? WHERE root_id=? AND status IN ('running','paused') AND NOT EXISTS(SELECT 1 FROM jobs WHERE job_type='scan' AND target_version=? AND status='running')", now(), target, target); err != nil {
+					return err
+				}
 			}
 			if _, err := tx.ExecContext(ctx, "UPDATE jobs SET status='cancelled',last_error_code='USER_CANCELLED' WHERE job_type='scan' AND target_version=? AND status IN ('queued','retry_wait','paused')", target); err != nil {
 				return err
@@ -103,7 +123,11 @@ func (service *Service) CancelJob(ctx context.Context, principal domain.Principa
 		if _, err := tx.ExecContext(ctx, "UPDATE jobs SET status='cancelled',last_error_code='USER_CANCELLED' WHERE id=? AND status<>'running'", jobID); err != nil {
 			return err
 		}
-		return record(ctx, tx, current, metadata, "indexing.cancel_requested", job.LibraryID, "", map[string]any{"job_id": jobID})
+		action := "indexing.cancel_requested"
+		if pause {
+			action = "indexing.pause_requested"
+		}
+		return record(ctx, tx, current, metadata, action, job.LibraryID, "", map[string]any{"job_id": jobID})
 	})
 }
 func (service *Service) RetryScanErrors(ctx context.Context, principal domain.Principal, rootID string, metadata domain.RequestMetadata) error {

@@ -95,6 +95,9 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 	if err := service.recoverJobs(ctx); err != nil {
 		return nil, err
 	}
+	if _, err := service.Database.Writer.ExecContext(ctx, "UPDATE entity_deletions SET execution_status='pending' WHERE execution_status='running' AND state='planned'"); err != nil {
+		return nil, err
+	}
 	_ = diagnostics.Record(ctx, service.Database, "system", "SERVICE_STARTED", diagnostics.Context{Operation: "startup"})
 	if err := service.Database.Write(ctx, func(tx *sql.Tx) error { return service.queueNewlyIndexable(ctx, tx, "") }); err != nil {
 		return nil, err
@@ -110,6 +113,8 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 	}
 	runtime.workers.Add(1)
 	go runtime.schedule(workerContext)
+	runtime.workers.Add(1)
+	go runtime.deletionWorker(workerContext)
 	for worker := 0; worker < 8; worker++ {
 		runtime.workers.Add(1)
 		go runtime.worker(workerContext, "content", worker)
@@ -123,6 +128,21 @@ func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 		go runtime.ocrWorker(workerContext, worker)
 	}
 	return runtime, nil
+}
+func (runtime *Runtime) deletionWorker(ctx context.Context) {
+	defer runtime.workers.Done()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		operation, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		_ = runtime.Service.processPendingDeletion(operation)
+		cancel()
+	}
 }
 func (service *Service) recoverJobs(ctx context.Context) error {
 	// The exclusive state lock proves that no worker from the previous process survives.
@@ -217,6 +237,9 @@ func (runtime *Runtime) schedule(ctx context.Context) {
 }
 func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 	if time.Now().After(runtime.nextRetentionCheck) {
+		cleanupCtx, cancelCleanup := context.WithTimeout(ctx, 30*time.Second)
+		_ = runtime.Service.cleanDeletionFiles(cleanupCtx, "", 50)
+		cancelCleanup()
 		_ = runtime.Service.cleanExpiredUploads(ctx)
 		_ = diagnostics.Prune(ctx, runtime.Service.Database)
 		runtime.nextRetentionCheck = time.Now().Add(time.Minute)
@@ -227,6 +250,12 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 	}
 	active := map[string]bool{}
 	for _, root := range roots {
+		if activeLibrary(ctx, runtime.Service.Database.Reader, root.LibraryID) != nil {
+			continue
+		}
+		if blocked, err := deletionPendingForRoot(ctx, runtime.Service.Database.Reader, root); err != nil || blocked {
+			continue
+		}
 		var paused int
 		if err := runtime.Service.Database.Reader.QueryRowContext(ctx, "SELECT coalesce((SELECT paused FROM root_scan_controls WHERE root_id=?),0)", root.ID).Scan(&paused); err != nil || paused == 1 {
 			continue
@@ -274,7 +303,18 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		} else if watchError == nil && root.LastError != "WATCH_EVENTS_LOST" && root.LastError != "WATCH_LIMIT" {
 			_, _ = runtime.Service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='native' WHERE id=? AND watch_mode<>'native'", root.ID)
 		}
+		// A failed or partial periodic traversal must not be scheduled again on
+		// every tick. The enqueue time is durable across process restarts; manual
+		// and watcher-triggered traversals do not advance this clock.
+		var lastPeriodic string
+		if err := runtime.Service.Database.Reader.QueryRowContext(ctx, `SELECT coalesce((SELECT created_at FROM jobs WHERE target_version=? AND job_type=? AND json_extract(payload_json,'$.periodic')=1 ORDER BY created_at DESC,id DESC LIMIT 1),'')`, root.ID, rootJobKind(root)).Scan(&lastPeriodic); err != nil {
+			continue
+		}
 		scanned, _ := time.Parse(domain.TimeLayout, root.LastScan)
+		scheduled, _ := time.Parse(domain.TimeLayout, lastPeriodic)
+		if scheduled.After(scanned) {
+			scanned = scheduled
+		}
 		due := time.Since(scanned) >= time.Duration(root.Interval)*time.Second
 		if !due && (!dirty || (time.Since(dirtyAt) < 2500*time.Millisecond && time.Since(firstDirty) < 5*time.Second)) {
 			continue
@@ -282,6 +322,21 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		// Keep a dirty event while a scan is running: it causes a barrier scan afterwards.
 		queued := false
 		err := runtime.Service.Database.Write(ctx, func(transaction *sql.Tx) error {
+			if err := activeLibrary(ctx, transaction, root.LibraryID); err != nil {
+				return err
+			}
+			if blocked, err := deletionPendingForRoot(ctx, transaction, root); err != nil {
+				return err
+			} else if blocked {
+				return nil
+			}
+			var live int
+			if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM storage_roots WHERE id=? AND status IN ('active','inaccessible')", root.ID).Scan(&live); err != nil {
+				return err
+			}
+			if live == 0 {
+				return nil
+			}
 			var count int
 			if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_type=? AND target_version=? AND status IN ('queued','running','retry_wait','paused')", rootJobKind(root), root.ID).Scan(&count); err != nil {
 				return err
@@ -289,10 +344,27 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 			if count > 0 {
 				return nil
 			}
+			// A second scheduler instance or a restart can reach this transaction
+			// after the read above. Recheck the persisted enqueue timestamp here.
+			if due {
+				var last string
+				if err := transaction.QueryRowContext(ctx, `SELECT coalesce((SELECT created_at FROM jobs WHERE target_version=? AND job_type=? AND json_extract(payload_json,'$.periodic')=1 ORDER BY created_at DESC,id DESC LIMIT 1),'')`, root.ID, rootJobKind(root)).Scan(&last); err != nil {
+					return err
+				}
+				lastAt, _ := time.Parse(domain.TimeLayout, last)
+				if time.Since(lastAt) < time.Duration(root.Interval)*time.Second {
+					return nil
+				}
+			}
 			queued = true
 			if !due && len(paths) > 0 && root.Source != "managed" {
 				id := domain.NewID()
 				_, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'scan',?,?,?,'queued',?,?)", id, root.LibraryID, root.ID, id, encode(map[string]any{"paths": paths}), now(), now())
+				return err
+			}
+			if due {
+				id := domain.NewID()
+				_, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,?,?,?,'queued',?,?)", id, root.LibraryID, rootJobKind(root), root.ID, id, encode(map[string]any{"periodic": true}), now(), now())
 				return err
 			}
 			return enqueueVerification(ctx, transaction, root)
@@ -329,7 +401,7 @@ func (service *Service) claimLane(ctx context.Context, lane string) (Job, error)
 		if policy.Paused {
 			return nil
 		}
-		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token,max_attempts,retry_delay_seconds,timeout_seconds,coalesce(json_extract(payload_json,'$.manual'),json_extract(payload_json,'$.manual_reindex'),0) FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) "+advancedJobEligibility+" ORDER BY "+advancedJobPriority+",created_at,id LIMIT 64", lane, lane, lane, now())
+		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token,max_attempts,retry_delay_seconds,timeout_seconds,coalesce(json_extract(payload_json,'$.manual'),json_extract(payload_json,'$.manual_reindex'),0) FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) "+` AND EXISTS(SELECT 1 FROM libraries WHERE id=j.library_id AND disabled_at IS NULL) `+advancedJobEligibility+" ORDER BY "+advancedJobPriority+",created_at,id LIMIT 64", lane, lane, lane, now())
 		if err != nil {
 			return err
 		}
@@ -555,6 +627,19 @@ func (service *Service) finish(ctx context.Context, job Job, cause error) error 
 		}
 		if count == 0 {
 			return nil
+		}
+		if job.Kind == "scan" && code == "USER_CANCELLED" {
+			var paused int
+			if err := transaction.QueryRowContext(ctx, "SELECT coalesce((SELECT paused FROM root_scan_controls WHERE root_id=?),0)", job.Version).Scan(&paused); err != nil {
+				return err
+			}
+			next := "superseded"
+			if paused == 1 {
+				next = "paused"
+			}
+			if _, err := transaction.ExecContext(ctx, "UPDATE root_scans SET status=?,completed_at=CASE WHEN ?='superseded' THEN ? ELSE completed_at END WHERE root_id=? AND status='running'", next, next, now(), job.Version); err != nil {
+				return err
+			}
 		}
 		if job.Kind == "materialize" && cause != nil {
 			if _, err := transaction.ExecContext(ctx, "UPDATE materializations SET state=CASE WHEN state IN ('committed','cleaned') THEN state ELSE 'failed' END,error_code=?,updated_at=? WHERE id=?", code, now(), job.Version); err != nil {

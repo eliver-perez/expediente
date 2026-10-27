@@ -1,7 +1,8 @@
 ﻿#Requires -Version 5.1
-param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor')][string]$Action,
+param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor','Port','CheckPort')][string]$Action,
       [string]$InstallRoot = $PSScriptRoot,
       [string]$PreflightBinary = '',
+      [int]$Port = 0,
       [switch]$EraseInternalData)
 $ErrorActionPreference = 'Stop'
 # PowerShell 5.1 otherwise decodes Go's UTF-8 output using the console codepage.
@@ -24,6 +25,15 @@ function Assert-AidexServiceOwnership {
     if ($Installed) {
         if ($Installed.PathName -ne (Get-AidexServiceCommand)) { throw 'Existe un servicio AIDEX con otra ruta. Requiere revisión antes de actualizar.' }
         if ($Installed.StartName -ne ('NT SERVICE\' + $ServiceName)) { throw 'La cuenta del servicio existente requiere revisión antes de actualizar.' }
+    }
+}
+function Assert-NoLegacyServices {
+    # AIBID/AIBID-Test may still have private data in their own ProgramData roots.
+    # Never delete or silently migrate another product's service or files.
+    foreach ($LegacyName in @('AIBID', 'AIBIDTest', 'AIBID-Test')) {
+        if (Get-Service -Name $LegacyName -ErrorAction SilentlyContinue) {
+            throw "Se detectó el servicio anterior $LegacyName. Desinstala esa versión con su propio desinstalador, conservando sus datos, y vuelve a ejecutar este instalador. AIDEX no elimina servicios ni documentos antiguos automáticamente."
+        }
     }
 }
 function ConvertTo-AidexNativeArgument([string]$Value) {
@@ -82,7 +92,14 @@ function Write-LauncherTarget {
     # Publish only the browser origin in Program Files. Private configuration,
     # license keys and database remain inaccessible to ordinary desktop users.
     $Configuration = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
-    @{ public_url = [string]$Configuration.public_url; service_name = $ServiceName } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallRoot 'launcher.json') -Encoding UTF8
+    $Public = @{ public_url = [string]$Configuration.public_url; service_name = $ServiceName } | ConvertTo-Json
+    $Public | Set-Content -LiteralPath (Join-Path $InstallRoot 'launcher.json') -Encoding UTF8
+    $Connection = Join-Path $DataRoot 'connection.json'
+    $Public | Set-Content -LiteralPath $Connection -Encoding UTF8
+    & icacls.exe $Connection /grant '*S-1-5-32-545:(R)' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo conceder lectura del destino público al lanzador.' }
+    New-Item -Path 'HKLM:\Software\AIDEX' -Force | Out-Null
+    Set-ItemProperty -Path 'HKLM:\Software\AIDEX' -Name Port -Value ([int](([string]$Configuration.listen_address -split ':')[-1])) -ErrorAction Stop
 }
 # The elevated installer provisions one narrowly scoped rule. The service keeps
 # its virtual account and controls exposure by binding loopback or LAN. The rule
@@ -143,9 +160,9 @@ function Remove-PackagedFiles {
 try {
     $Administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (!$Administrator) {
-        if ($Action -ne 'Admin') { throw 'Esta operación requiere una consola de administrador.' }
+        if ($Action -notin @('Admin','Port')) { throw 'Esta operación requiere una consola de administrador.' }
         # Only the interactive launcher self-elevates; installer failures remain visible.
-        Start-Process powershell.exe -Verb RunAs -ArgumentList ('-NoProfile -NoExit -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Action Admin -InstallRoot "' + $InstallRoot + '"')
+        Start-Process powershell.exe -Verb RunAs -ArgumentList ('-NoProfile -NoExit -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Action ' + $Action + ' -InstallRoot "' + $InstallRoot + '" -Port ' + $Port)
         exit 0
     }
     Assert-AidexServiceOwnership
@@ -153,7 +170,15 @@ try {
     Assert-PrivatePath $InstallRoot
     Assert-PrivatePath $Config
     switch ($Action) {
+        'CheckPort' {
+            if ($Port -lt 1 -or $Port -gt 65535) { throw 'Puerto fuera del intervalo 1 a 65535.' }
+            $Owned = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+            $Others = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue | Where-Object { !$Owned -or $_.OwningProcess -ne $Owned.ProcessId })
+            if ($Others.Count -gt 0) { throw "El puerto $Port ya está ocupado por otra aplicación. Selecciona otro puerto." }
+            Write-Host "Puerto $Port disponible o perteneciente al servicio AIDEX instalado."
+        }
         'Preflight' {
+            Assert-NoLegacyServices
             if (Test-Path $DataRoot) {
                 $Owner = (Get-Acl -LiteralPath $DataRoot).GetOwner([Security.Principal.SecurityIdentifier]).Value
                 $CurrentUser = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -194,7 +219,10 @@ try {
             $Acl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
             Set-Acl -LiteralPath $DataRoot -AclObject $Acl
             if (!(Test-Path $Config)) {
-                Invoke-Native $Binary @('init','--config',$Config,'--listen','127.0.0.1:18090','--tools',(Join-Path $InstallRoot 'tools\Library\bin'),'--tessdata',(Join-Path $InstallRoot 'tools\tessdata'),'--fontconfig',(Join-Path $InstallRoot 'tools\fonts.conf'))
+                if ($Port -lt 1 -or $Port -gt 65535) { throw 'Selecciona un puerto TCP entre 1 y 65535.' }
+                $Taken = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
+                if ($Taken.Count -gt 0) { throw "El puerto $Port está ocupado. Vuelve a ejecutar el instalador y selecciona otro." }
+                Invoke-Native $Binary @('init','--config',$Config,'--listen',("127.0.0.1:" + $Port),'--tools',(Join-Path $InstallRoot 'tools\Library\bin'),'--tessdata',(Join-Path $InstallRoot 'tools\tessdata'),'--fontconfig',(Join-Path $InstallRoot 'tools\fonts.conf'))
             }
             Invoke-Native $Binary @('configure-license','--config',$Config)
             Invoke-Native $Binary @('migrate','--config',$Config)
@@ -215,15 +243,54 @@ try {
             Set-AidexFirewall
             Start-Service $ServiceName
             (Get-Service $ServiceName).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
-            Write-Host 'AIDEX: http://127.0.0.1:18090. Puedes cerrar la consola.'
             $Configuration = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
+            Write-Host "AIDEX: $($Configuration.public_url). Puedes cerrar la consola."
             Start-Process ([string]$Configuration.public_url)
+        }
+        'Port' {
+            if (!(Test-Path $Config)) { throw 'Primero instala y configura AIDEX.' }
+            $Old = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
+            $OldPort = [int](([string]$Old.listen_address -split ':')[-1])
+            Write-Host "Puerto actual: $OldPort; acceso: $($Old.network_mode)."
+            if ($Port -eq 0) { $Entry = Read-Host 'Nuevo puerto TCP (1 a 65535; Enter para conservar)'; if (!$Entry) { exit 0 }; if ($Entry -notmatch '^[0-9]{1,5}$') { throw 'Introduce solamente un número de puerto.' }; $Port = [int]$Entry }
+            if ($Port -lt 1 -or $Port -gt 65535) { throw 'Puerto fuera del intervalo 1 a 65535.' }
+            if ($Port -eq $OldPort) { Write-Host 'El puerto ya está configurado.'; exit 0 }
+            $WasRunning = (Get-Service $ServiceName -ErrorAction SilentlyContinue).Status -eq 'Running'
+            Stop-Aidex
+            try {
+                Invoke-Native $Binary @('configure-port','--config',$Config,'--port',([string]$Port))
+                Write-LauncherTarget
+                Set-AidexFirewall
+                if ($WasRunning -or (Test-Path (Join-Path $DataRoot 'service-enabled'))) {
+                    Start-Service $ServiceName
+                    (Get-Service $ServiceName).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+                    $Ready = $false
+                    for ($Attempt = 0; $Attempt -lt 30 -and !$Ready; $Attempt++) {
+                        $Client = New-Object Net.Sockets.TcpClient
+                        try { $Client.Connect('127.0.0.1', $Port); $Ready = $true }
+                        catch { Start-Sleep -Milliseconds 250 }
+                        finally { $Client.Close() }
+                    }
+                    if (!$Ready) { throw "El servicio no respondió en el puerto $Port después de iniciar." }
+                }
+                Write-Host "AIDEX configurado en http://127.0.0.1:$Port. La regla propia del firewall fue actualizada."
+            } catch {
+                $Failure = $_
+                Write-Warning "El cambio no se completó: $Failure. Restaurando el puerto anterior."
+                Stop-Aidex
+                Invoke-Native $Binary @('configure-port','--config',$Config,'--port',([string]$OldPort))
+                Write-LauncherTarget
+                Set-AidexFirewall
+                if ($WasRunning) { Start-Service $ServiceName; (Get-Service $ServiceName).WaitForStatus('Running', [TimeSpan]::FromSeconds(60)) }
+                throw $Failure
+            }
         }
         'Doctor' { Invoke-Native $Binary @('doctor','--config',$Config,'--sample-directory',(Join-Path $InstallRoot 'docs\pdf')) }
         'Remove' {
             Stop-Aidex
             if (Test-Path $Config) { Invoke-Native $Binary @('check-state','--config',$Config) }
             Remove-AidexFirewall
+            Remove-Item -Path 'HKLM:\Software\AIDEX' -Recurse -Force -ErrorAction SilentlyContinue
             if ($EraseInternalData -and (Test-Path $Config)) {
                 Invoke-Native $Binary @('erase-internal-data','--config',$Config,'--confirm-erase-internal-data')
             }

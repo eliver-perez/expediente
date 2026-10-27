@@ -16,7 +16,7 @@ test('vistas previas: configuración, error aislado, generación, reutilización
   await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
   await page.getByLabel('Nombre de la biblioteca').fill('Previews fase 4');
   await page.getByLabel('Modalidad de biblioteca').selectOption('managed');
-  await page.getByLabel('Asignarme como gestor de esta biblioteca').check();
+
   await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Cargas', exact: true })).toBeVisible();
   await page.getByRole('tab', { name: 'Configuración', exact: true }).click();

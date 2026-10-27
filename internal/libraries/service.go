@@ -63,6 +63,9 @@ func (service *Service) write(ctx context.Context, principal domain.Principal, l
 			return err
 		}
 		if libraryID != "" {
+			if err := activeLibrary(ctx, transaction, libraryID); err != nil {
+				return err
+			}
 			_, mode, err := settingsFor(ctx, transaction, libraryID)
 			if err != nil {
 				return err
@@ -82,8 +85,10 @@ func record(ctx context.Context, transaction *sql.Tx, principal domain.Principal
 }
 
 type Library struct {
+	Archived     bool     `json:"archived"`
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
+	Description  string   `json:"description"`
 	Mode         string   `json:"mode"`
 	Revision     int64    `json:"revision"`
 	OCRLanguages string   `json:"ocr_languages"`
@@ -95,17 +100,24 @@ func (service *Service) Libraries(ctx context.Context, principal domain.Principa
 	if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
 		return nil, err
 	}
+	return service.ListLibraries(ctx, principal, false)
+}
+func (service *Service) ListLibraries(ctx context.Context, principal domain.Principal, archived bool) ([]Library, error) {
+	if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
+		return nil, err
+	}
 	result := []Library{}
-	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,name,mode,revision,ocr_languages FROM libraries WHERE disabled_at IS NULL AND (? OR EXISTS(SELECT 1 FROM library_role_assignments WHERE library_id=libraries.id AND user_id=?)) ORDER BY name,id", principal.Can("permissions.manage_global"), principal.User.ID)
+	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,name,description,mode,revision,ocr_languages FROM libraries WHERE (disabled_at IS NOT NULL)=? AND (? OR EXISTS(SELECT 1 FROM library_role_assignments WHERE library_id=libraries.id AND user_id=?)) ORDER BY name,id", archived, principal.Can("permissions.manage_global"), principal.User.ID)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var library Library
-		if err = rows.Scan(&library.ID, &library.Name, &library.Mode, &library.Revision, &library.OCRLanguages); err != nil {
+		if err = rows.Scan(&library.ID, &library.Name, &library.Description, &library.Mode, &library.Revision, &library.OCRLanguages); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		library.Archived = archived
 		result = append(result, library)
 	}
 	err = rows.Err()
@@ -119,7 +131,12 @@ func (service *Service) Libraries(ctx context.Context, principal domain.Principa
 			return nil, err
 		}
 		result[index].Permissions = permissions
-		settings, _, err := settingsFor(ctx, service.Database.Reader, result[index].ID)
+		var settings Settings
+		var raw string
+		err = service.Database.Reader.QueryRowContext(ctx, "SELECT settings_json FROM libraries WHERE id=?", result[index].ID).Scan(&raw)
+		if err == nil {
+			err = json.Unmarshal([]byte(raw), &settings)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -144,16 +161,31 @@ func (service *Service) permissions(ctx context.Context, query storage.Querier, 
 	return permissions, rows.Err()
 }
 func (service *Service) Create(ctx context.Context, principal domain.Principal, name, mode, managerID, requestID string, metadata domain.RequestMetadata) (string, error) {
+	return service.CreateWithDescription(ctx, principal, name, "", mode, managerID, requestID, metadata)
+}
+func validateDescription(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) > 500 || strings.ContainsAny(value, "<>") || strings.IndexFunc(value, func(r rune) bool { return r < 32 && r != '\n' && r != '\t' }) >= 0 {
+		return "", invalid("La descripción debe tener hasta 500 caracteres y no contener etiquetas HTML ni caracteres de control.")
+	}
+	return value, nil
+}
+func (service *Service) CreateWithDescription(ctx context.Context, principal domain.Principal, name, description, mode, managerID, requestID string, metadata domain.RequestMetadata) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || utf8.RuneCountInString(name) > 160 || len(modeCapabilities(mode)) == 0 || managerID == "" {
-		return "", invalid("Escribe un nombre y selecciona gestor. Selecciona una modalidad disponible.")
+	var err error
+	description, err = validateDescription(description)
+	if err != nil {
+		return "", err
+	}
+	if name == "" || utf8.RuneCountInString(name) > 160 || len(modeCapabilities(mode)) == 0 {
+		return "", invalid("Escribe un nombre y selecciona una modalidad disponible.")
 	}
 	if len(requestID) < 16 || len(requestID) > 100 {
 		return "", invalid("Se requiere una clave de idempotencia de 16 a 100 caracteres.")
 	}
 	identifier := domain.NewID()
-	digest := domain.Digest(name + "\n" + mode + "\n" + managerID)
-	err := service.write(ctx, principal, "", "", func(transaction *sql.Tx, current domain.Principal) error {
+	digest := domain.Digest(name + "\n" + description + "\n" + mode + "\n" + managerID)
+	err = service.write(ctx, principal, "", "", func(transaction *sql.Tx, current domain.Principal) error {
 		if !current.Can("libraries.create") || !current.Can("permissions.manage_global") {
 			return domain.Failure("FORBIDDEN", "No tienes permiso para crear bibliotecas y asignar gestores.", 403)
 		}
@@ -170,6 +202,9 @@ func (service *Service) Create(ctx context.Context, principal domain.Principal, 
 			return err
 		}
 		var enabled int
+		if managerID == "" {
+			managerID = current.User.ID
+		}
 		if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM users WHERE id=? AND disabled_at IS NULL", managerID).Scan(&enabled); err != nil {
 			return err
 		}
@@ -188,11 +223,16 @@ func (service *Service) Create(ctx context.Context, principal domain.Principal, 
 			initial.CasesEnabled = false
 			initial.StructurePattern = "{categoria}"
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO libraries(id,name,mode,settings_json,created_at,updated_at) VALUES(?,?,?,?,?,?)", identifier, name, mode, encode(initial), now(), now()); err != nil {
+		if _, err = transaction.ExecContext(ctx, "INSERT INTO libraries(id,name,description,mode,settings_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", identifier, name, description, mode, encode(initial), now(), now()); err != nil {
 			return err
 		}
 		if _, err = transaction.ExecContext(ctx, "INSERT INTO library_role_assignments(user_id,library_id,role_id) VALUES(?,?,'library_manager')", managerID, identifier); err != nil {
 			return err
+		}
+		if managerID != current.User.ID {
+			if _, err = transaction.ExecContext(ctx, "INSERT INTO library_role_assignments(user_id,library_id,role_id) VALUES(?,?,'library_manager')", current.User.ID, identifier); err != nil {
+				return err
+			}
 		}
 		if _, err = transaction.ExecContext(ctx, "INSERT INTO idempotency_requests VALUES(?,'library.create',?,?,?,'complete',?)", current.User.ID, requestID, digest, identifier, now()); err != nil {
 			return err
@@ -207,7 +247,7 @@ func (service *Service) Create(ctx context.Context, principal domain.Principal, 
 		if err = configurationSnapshot(ctx, transaction, identifier, current.User.ID); err != nil {
 			return err
 		}
-		return record(ctx, transaction, current, metadata, "library.created", identifier, "", map[string]any{"name": name, "manager_user_id": managerID})
+		return record(ctx, transaction, current, metadata, "library.created", identifier, "", map[string]any{"name": name, "manager_user_id": managerID, "creator_manager_user_id": current.User.ID})
 	})
 	return identifier, err
 }
@@ -215,7 +255,17 @@ func (service *Service) Update(ctx context.Context, principal domain.Principal, 
 	return service.UpdateConfiguration(ctx, principal, libraryID, name, languages, "", nil, revision, metadata)
 }
 func (service *Service) UpdateConfiguration(ctx context.Context, principal domain.Principal, libraryID, name, languages, mode string, settings *Settings, revision int64, metadata domain.RequestMetadata) error {
+	return service.UpdateConfigurationWithDescription(ctx, principal, libraryID, name, nil, languages, mode, settings, revision, metadata)
+}
+func (service *Service) UpdateConfigurationWithDescription(ctx context.Context, principal domain.Principal, libraryID, name string, description *string, languages, mode string, settings *Settings, revision int64, metadata domain.RequestMetadata) error {
 	name = strings.TrimSpace(name)
+	if description != nil {
+		clean, err := validateDescription(*description)
+		if err != nil {
+			return err
+		}
+		description = &clean
+	}
 	if name == "" || utf8.RuneCountInString(name) > 160 || (languages != "spa" && languages != "eng" && languages != "spa+eng") {
 		return invalid("Nombre o idioma OCR inválido.")
 	}
@@ -227,7 +277,7 @@ func (service *Service) UpdateConfiguration(ctx context.Context, principal domai
 		if err := transaction.QueryRowContext(ctx, "SELECT ocr_languages FROM libraries WHERE id=?", libraryID).Scan(&previousLanguages); err != nil {
 			return err
 		}
-		result, err := transaction.ExecContext(ctx, "UPDATE libraries SET name=?,ocr_languages=?,revision=revision+1,current_configuration_revision=current_configuration_revision+1,updated_at=? WHERE id=? AND revision=?", name, languages, now(), libraryID, revision)
+		result, err := transaction.ExecContext(ctx, "UPDATE libraries SET name=?,description=coalesce(?,description),ocr_languages=?,revision=revision+1,current_configuration_revision=current_configuration_revision+1,updated_at=? WHERE id=? AND revision=?", name, description, languages, now(), libraryID, revision)
 		if err != nil {
 			return err
 		}
@@ -280,6 +330,9 @@ func (service *Service) SetMember(ctx context.Context, principal domain.Principa
 		unique[role] = true
 	}
 	return service.Identity.AuthorizedWrite(ctx, principal, "", func(transaction *sql.Tx, current domain.Principal) error {
+		if err := activeLibrary(ctx, transaction, libraryID); err != nil {
+			return err
+		}
 		// Security administrators may restore access, but never inherit document permissions.
 		if !current.Can("permissions.manage_global") {
 			if err := service.require(ctx, transaction, current, libraryID, "permissions.manage_library"); err != nil {

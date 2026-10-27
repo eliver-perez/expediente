@@ -11,7 +11,7 @@ test('seguimiento automático, duplicados, auditoría y configuración', async (
   }
   try {
     await page.goto('/login'); await page.getByLabel('Usuario', { exact: true }).fill('admin-e2e'); await page.getByLabel('Contraseña', { exact: true }).fill('Browser-fixture-password-2026'); await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-    await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click(); await page.getByRole('button', { name: 'Nueva biblioteca' }).click(); await page.getByLabel('Nombre de la biblioteca').fill('Seguimiento E2E'); await page.getByLabel('Asignarme como gestor').check(); await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
+    await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click(); await page.getByRole('button', { name: 'Nueva biblioteca' }).click(); await page.getByLabel('Nombre de la biblioteca').fill('Seguimiento E2E');  await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
     await page.getByRole('tab', { name: 'Carpetas', exact: true }).click(); await page.getByLabel('Ruta de la carpeta en el servidor').fill(directory); await page.getByRole('button', { name: 'Inspeccionar carpeta' }).click(); await page.getByRole('button', { name: 'Registrar e indexar' }).click();
     await page.getByRole('tab', { name: 'Procesamiento', exact: true }).click();
     await expect(page.locator('.metric').filter({ hasText: 'Procesados' }).locator('strong')).toHaveText('2', { timeout: 30000 });

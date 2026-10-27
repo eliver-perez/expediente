@@ -82,6 +82,7 @@ func (service *Service) Roots(ctx context.Context, principal domain.Principal, l
 }
 
 type Plan struct {
+	Notice   string   `json:"notice,omitempty"`
 	Source   string   `json:"storage_source"`
 	ID       string   `json:"id"`
 	Relation string   `json:"relation"`
@@ -179,8 +180,37 @@ func (service *Service) PlanStorageRoot(ctx context.Context, principal domain.Pr
 		if err = transaction.QueryRowContext(ctx, "SELECT current_configuration_revision FROM libraries WHERE id=?", libraryID).Scan(&plan.Revision); err != nil {
 			return err
 		}
-		if err = service.requireRootSource(ctx, transaction, libraryID, source, related); err != nil {
-			return err
+		if relation != "equal" {
+			if err = service.requireRootSource(ctx, transaction, libraryID, source, related); err != nil {
+				return err
+			}
+		} else {
+			for _, id := range related {
+				var existing string
+				if err = transaction.QueryRowContext(ctx, "SELECT storage_source FROM storage_roots WHERE id=?", id).Scan(&existing); err != nil {
+					return err
+				}
+				if existing != source {
+					return domain.Failure("ROOT_STORAGE_OVERLAP", "Esta carpeta ya está registrada con otro origen. Revisa su configuración; no puede registrarse dos veces.", 409)
+				}
+			}
+		}
+		if relation == "equal" {
+			plan.Notice = "Esta carpeta ya está registrada. Puedes administrarla desde Configurar carpeta."
+			for _, id := range related {
+				var status string
+				if err := transaction.QueryRowContext(ctx, "SELECT status FROM storage_roots WHERE id=?", id).Scan(&status); err != nil {
+					return err
+				}
+				if status == "retired" {
+					plan.Notice = "Esta carpeta ya está registrada, pero su supervisión está detenida. Puedes reanudarla desde Configurar carpeta."
+				}
+			}
+		}
+		if source == "managed" && relation == "distinct" {
+			if err = probeManagedRoot(directory.Path); err != nil {
+				return err
+			}
 		}
 		plan.Relation = relation
 		plan.Related = related

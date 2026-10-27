@@ -10,6 +10,9 @@ import { Brand } from './Brand';
 import { Account } from './Account';
 import { License, licenseStates } from './License';
 import { Users } from './Users';
+import { Backups } from './Backups';
+import { Eula } from './Eula';
+import { About } from './About';
 import { Access, Events } from './Activity';
 
 const Dashboard = lazy(() => import('./Dashboard').then(module => ({ default: module.Dashboard })));
@@ -17,16 +20,18 @@ const Dashboard = lazy(() => import('./Dashboard').then(module => ({ default: mo
 export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [license, setLicense] = useState<LicenseSummary | null>(null);
+  const [eulaAccepted, setEulaAccepted] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [path, setPath] = useState(window.location.pathname);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [mobileMenu, setMobileMenu] = useState(false);
   const navigate = useCallback((destination: string) => { window.history.pushState({}, '', destination); setPath(destination); }, []);
   const endSession = useCallback((text: string) => { setCSRF(''); setUser(null); setNotice(text); setError(''); navigate('/login'); }, [navigate]);
   const refreshSession = useCallback(async () => {
     const session = await api<SessionResponse>('/auth/session');
-    setCSRF(session.csrf_token); setUser(session.user); setLicense(session.license ?? null);
+    setCSRF(session.csrf_token); setUser(session.user); setLicense(session.license ?? null); setEulaAccepted(session.eula_accepted);
   }, []);
   useEffect(() => {
     function sessionEnded(event: Event) {
@@ -65,32 +70,39 @@ export function App() {
   }
   if (initializing) return <main className="loading" role="status">Preparando tu espacio de trabajo…</main>;
   if (!user) return <main className="login-layout">
-    <section className="login-intro"><Brand dark variant="vertical" className="login-brand" /><div><p className="eyebrow">ESPACIO DE TRABAJO LOCAL</p><h1>Tu biblioteca digital,<br />ordenada y al alcance.</h1><p>Accede con tu cuenta personal para continuar.</p></div><p className="intro-footer">Documentos · Personas · Trazabilidad</p></section>
+    <section className="login-intro"><Brand dark variant="horizontal" className="login-brand" /><div><p className="eyebrow">ESPACIO DE TRABAJO LOCAL</p><h1>Tu biblioteca digital,<br />ordenada y al alcance.</h1><p>Accede con tu cuenta personal para continuar.</p></div><p className="intro-footer">Organiza, consulta y da seguimiento a tus expedientes.</p></section>
     <section className="login-form"><div className="login-box"><p className="eyebrow">BIENVENIDO</p><h2>Iniciar sesión</h2><p className="muted">Introduce los datos de tu cuenta.</p><Notice text={notice} kind={notice.includes('otro equipo') ? 'error' : 'success'} /><Notice text={error} />
       <form onSubmit={login} className="form-grid"><label>Usuario<input name="username" autoComplete="username" autoFocus required maxLength={80} /></label><label>Contraseña<input name="password" type="password" autoComplete="current-password" required maxLength={128} /></label><button disabled={busy}>{busy ? 'Ingresando…' : 'Entrar'}</button></form>
       <p className="login-help">Si olvidaste tu contraseña, contacta al administrador de la instalación.</p>
     </div></section>
   </main>;
   const can = (permission: string) => user.permissions.includes(permission);
+  const locked = !!license && !license.read_allowed;
   const links = [{ path: '/admin/dashboard', label: 'Dashboard', available: can('system.configure') }, { path: '/libraries', label: 'Bibliotecas', available: true }, { path: '/search', label: 'Buscar documentos', available: true }, { path: '/account', label: 'Mi cuenta', available: true },
     { path: '/admin/users', label: 'Usuarios', available: can('users.manage') },
     { path: '/admin/access', label: 'Accesos', available: can('sessions.read_all') && can('authentication_attempts.read') },
     { path: '/admin/events', label: 'Eventos', available: can('audit.read_global') },
-    { path: '/admin/errors', label: 'Sistema · Errores', available: can('system.configure') },
+    { path: '/admin/errors', label: 'Registro de errores', available: can('system.configure') },
     { path: '/admin/settings', label: 'Ajustes', available: can('system.configure') },
+    { path: '/admin/backups', label: 'Respaldos y restauración', available: can('backup.manage') || can('restore.manage') },
     { path: '/admin/license', label: 'Licencia', available: can('license.manage') }];
   let content = <Account user={user} onPasswordChanged={() => endSession('Contraseña actualizada. Inicia sesión con tu nueva contraseña.')} />;
-  if (path === '/libraries') content = <Libraries user={user} />;
+  if (!eulaAccepted) content = <Eula onAccepted={refreshSession} canAccept={can('license.manage')} />;
+  else if (path === '/admin/about') content = <About />;
+  else if (path === '/admin/eula') content = <Eula onAccepted={refreshSession} canAccept={can('license.manage')} />;
+  else if (locked && path !== '/admin/license') content = <section className="card"><h1>AIDEX no está activado</h1><p>Esta instalación necesita una licencia válida para utilizar sus bibliotecas y expedientes. Los documentos almacenados permanecen intactos.</p>{can('license.manage') ? <button onClick={() => navigate('/admin/license')}>Administrar licencia</button> : <p>Solicita al administrador que active esta instalación.</p>}</section>;
+  else if (path === '/libraries') content = <Libraries user={user} />;
   else if (path === '/search') content = <Search />;
   else if (path === '/admin/users' && can('users.manage')) content = <Users currentUser={user} refreshSession={refreshSession} />;
   else if (path === '/admin/access' && can('sessions.read_all') && can('authentication_attempts.read')) content = <Access />;
   else if (path === '/admin/events' && can('audit.read_global')) content = <Events />;
   else if (path === '/admin/dashboard' && can('system.configure')) content = <Suspense fallback={<p role="status">Preparando Dashboard…</p>}><Dashboard /></Suspense>;
   else if (path === '/admin/errors' && can('system.configure')) content = <SystemErrors />;
+  else if (path === '/admin/backups' && (can('backup.manage') || can('restore.manage'))) content = <Backups canBackup={can('backup.manage')} canRestore={can('restore.manage')} />;
   else if (isSettingsPath(path) && can('system.configure')) content = <Settings path={path} navigate={navigate} />;
   else if (path === '/admin/license' && can('license.manage')) content = <License onChange={refreshSession} />;
   else if (path.startsWith('/admin/')) content = <Notice text="No tienes permiso para consultar esta página." />;
-  return <div className="app-layout"><aside className="sidebar"><Brand dark variant="vertical" className="sidebar-brand" /><p className="nav-label">ESPACIO DE TRABAJO</p><nav aria-label="Principal">{links.filter(link => link.available).map(link => <a key={link.path} href={link.path} aria-current={(path === link.path || link.path === '/admin/settings' && isSettingsPath(path)) ? 'page' : undefined} onClick={event => { event.preventDefault(); setError(''); navigate(link.path); }}>{link.label}</a>)}</nav><div className="sidebar-footer"><span className="status-dot" /> Instalación local</div></aside>
+  return <div className="app-layout"><aside className="sidebar"><Brand dark variant="vertical" className="sidebar-brand" />{eulaAccepted && <><button className="secondary mobile-nav-toggle" type="button" aria-expanded={mobileMenu} aria-controls="main-nav" onClick={() => setMobileMenu(!mobileMenu)}>Menú</button><p className="nav-label">ESPACIO DE TRABAJO</p><nav id="main-nav" className={mobileMenu ? 'is-open' : ''} aria-label="Principal">{links.filter(link => !locked || link.path === '/admin/license').filter(link => link.available).map(link => <a key={link.path} href={link.path} aria-current={(path === link.path || link.path === '/admin/settings' && isSettingsPath(path)) ? 'page' : undefined} onClick={event => { event.preventDefault(); setError(''); setMobileMenu(false); navigate(link.path); }}>{link.label}</a>)}<a href="/admin/about" aria-current={path === '/admin/about' ? 'page' : undefined} onClick={event => { event.preventDefault(); setMobileMenu(false); navigate('/admin/about'); }}>Acerca de AIDEX</a></nav></>}</aside>
     <div className="workspace"><header className="topbar"><Brand className="topbar-brand" /><div><span className="user-name">{user.display_name}</span><button className="secondary" disabled={busy} onClick={() => void logout()}>Cerrar sesión</button></div></header><main className="main-content"><Notice text={error} />{license && (license.state !== "active" && license.state !== "development" || license.clock_warning) && <div className="license-banner" role="status">Licencia: {licenseStates[license.state] || license.state}. {license.clock_warning ? "Revisa la fecha del equipo. " : ""}{!license.write_allowed ? "Las modificaciones documentales están suspendidas. " : ""}{can("license.manage") && <a href="/admin/license" onClick={event => { event.preventDefault(); navigate("/admin/license"); }}>Administrar licencia</a>}</div>}{content}</main><footer className="workspace-footer">AIDEX · Tu biblioteca digital, ordenada y al alcance.</footer></div>
   </div>;
 }

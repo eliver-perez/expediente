@@ -8,11 +8,104 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"gestor-documental/internal/domain"
 )
+
+func TestCaseExercisesAndRealDocumentStatistics(t *testing.T) {
+	s, p, dir := fixture(t)
+	ctx := context.Background()
+	lib := managedLibrary(t, s, p, "hybrid")
+	var revision int64
+	requireNoError(t, s.Database.Reader.QueryRow("SELECT revision FROM libraries WHERE id=?", lib).Scan(&revision))
+	settings := defaultSettings()
+	settings.ExerciseEnabled = true
+	requireNoError(t, s.UpdateConfiguration(ctx, p, lib, "Organización", "spa", "hybrid", &settings, revision, domain.RequestMetadata{}))
+	category, kind := organizationCatalog(t, s, p, lib, true, false)
+	versionTwo, err := s.SaveTemplate(ctx, p, lib, "", "Plantilla de dos", []RequirementInput{{CategoryID: category, TypeID: kind, Count: 2, Mandatory: true}}, 0, domain.RequestMetadata{})
+	requireNoError(t, err)
+	versionOne, err := s.SaveTemplate(ctx, p, lib, "", "Plantilla de uno", []RequirementInput{{CategoryID: category, TypeID: kind, Count: 1, Mandatory: true}}, 0, domain.RequestMetadata{})
+	requireNoError(t, err)
+	_, err = s.SaveCase(ctx, p, lib, "", Case{Identifier: "INCOMPLETO", Exercise: "1995", TemplateVersionID: versionTwo}, 0, domain.RequestMetadata{})
+	requireNoError(t, err)
+	completeID, err := s.SaveCase(ctx, p, lib, "", Case{Identifier: "COMPLETO", Exercise: "2026", TemplateVersionID: versionOne}, 0, domain.RequestMetadata{})
+	requireNoError(t, err)
+	_, err = s.SaveCase(ctx, p, lib, "", Case{Identifier: "SIN-PLANTILLA", Exercise: "2026"}, 0, domain.RequestMetadata{})
+	requireNoError(t, err)
+	path := filepath.Join(dir, "linked", "one.pdf")
+	copyFixture(t, path, "native.pdf")
+	root := addRoot(t, s, p, lib, filepath.Dir(path))
+	scan(t, s, root)
+	var docID string
+	requireNoError(t, s.Database.Reader.QueryRow("SELECT id FROM documents WHERE library_id=? AND original_filename='one.pdf'", lib).Scan(&docID))
+	doc, err := s.Document(ctx, p, docID)
+	requireNoError(t, err)
+	requireNoError(t, s.Classify(ctx, p, docID, "associate", Classification{CaseID: completeID, CategoryID: category, TypeID: kind}, doc.Revision, domain.RequestMetadata{}))
+	_, err = s.Database.Writer.Exec("UPDATE documents SET approval_status='approved' WHERE id=?", docID)
+	requireNoError(t, err)
+	stats, err := s.CaseStatistics(ctx, p, lib, "")
+	requireNoError(t, err)
+	if stats.Totals.Total != 3 || stats.Totals.Evaluable != 2 || stats.Totals.Complete != 1 || stats.Totals.Incomplete != 1 || stats.Totals.WithoutTemplate != 1 || stats.Totals.Required != 3 || stats.Totals.Fulfilled != 1 {
+		t.Fatalf("unexpected statistics: %+v", stats.Totals)
+	}
+	if stats.Totals.CompletePercent == nil || *stats.Totals.CompletePercent != 50 || stats.Totals.ProgressPercent == nil || *stats.Totals.ProgressPercent < 33 || *stats.Totals.ProgressPercent > 34 {
+		t.Fatal("percentages conflated", stats.Totals)
+	}
+	years, err := s.CaseExercises(ctx, p, lib)
+	requireNoError(t, err)
+	if len(years) != 2 || years[0] != "2026" || years[1] != "1995" {
+		t.Fatal("stored exercises", years)
+	}
+	filtered, err := s.Cases(ctx, p, lib, "", "", "2026", "complete")
+	requireNoError(t, err)
+	if len(filtered.Items) != 1 || filtered.Items[0].ID != completeID {
+		t.Fatal("filtered cases", filtered)
+	}
+	_, err = s.Database.Writer.Exec("UPDATE physical_files SET availability='missing' WHERE id=(SELECT physical_file_id FROM documents WHERE id=?)", docID)
+	requireNoError(t, err)
+	stats, err = s.CaseStatistics(ctx, p, lib, "2026")
+	requireNoError(t, err)
+	if stats.Totals.Complete != 0 || stats.Totals.Unavailable != 1 {
+		t.Fatal("unavailable evidence counted", stats.Totals)
+	}
+	for _, year := range []string{"20012", "20X6", "202", "２０２６"} {
+		if _, err = s.SaveCase(ctx, p, lib, "", Case{Identifier: "BAD-" + year, Exercise: year}, 0, domain.RequestMetadata{}); err == nil {
+			t.Fatal("invalid exercise saved", year)
+		}
+	}
+	future := strconv.Itoa(time.Now().Year() + 1)
+	if _, err = s.SaveCase(ctx, p, lib, "", Case{Identifier: "FUTURE", Exercise: future}, 0, domain.RequestMetadata{}); failureCode(err) != "FUTURE_EXERCISE_CONFIRMATION" {
+		t.Fatal("future year not warned", err)
+	}
+	_, err = s.SaveCase(ctx, p, lib, "", Case{Identifier: "FUTURE", Exercise: future, ConfirmFuture: true}, 0, domain.RequestMetadata{})
+	requireNoError(t, err)
+}
+
+func TestCaseStatisticsGroupsVersionsOfOneTemplate(t *testing.T) {
+	s, p, _ := fixture(t)
+	ctx := context.Background()
+	lib := managedLibrary(t, s, p, "managed")
+	category, kind := organizationCatalog(t, s, p, lib, true, false)
+	first, err := s.SaveTemplate(ctx, p, lib, "", "Requisitos", []RequirementInput{{CategoryID: category, TypeID: kind, Count: 1, Mandatory: true}}, 0, domain.RequestMetadata{})
+	requireNoError(t, err)
+	templates, err := s.Templates(ctx, p, lib)
+	requireNoError(t, err)
+	second, err := s.SaveTemplate(ctx, p, lib, templates[0].ID, "", []RequirementInput{{CategoryID: category, TypeID: kind, Count: 2, Mandatory: true}}, 1, domain.RequestMetadata{})
+	requireNoError(t, err)
+	for _, item := range []struct{ name, version string }{{"UNO", first}, {"DOS", second}} {
+		_, err = s.SaveCase(ctx, p, lib, "", Case{Identifier: item.name, TemplateVersionID: item.version}, 0, domain.RequestMetadata{})
+		requireNoError(t, err)
+	}
+	stats, err := s.CaseStatistics(ctx, p, lib, "")
+	requireNoError(t, err)
+	if len(stats.ByTemplate) != 1 || stats.ByTemplate[0].Total != 2 || stats.ByTemplate[0].Required != 3 {
+		t.Fatal("template versions were counted as separate templates", stats.ByTemplate)
+	}
+}
 
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
@@ -212,7 +305,7 @@ func TestH4ClassificationScopeMultiplicityAndProgress(t *testing.T) {
 	requireNoError(t, err)
 	_, err = service.Database.Writer.Exec("UPDATE physical_files SET availability='missing' WHERE id=?", linked.FileID)
 	requireNoError(t, err)
-	checkProgress(100, 1) // Linked approval remains valid while its original is missing.
+	checkProgress(0, 0) // An unavailable linked original cannot satisfy a mandatory requirement.
 	_, err = service.Database.Writer.Exec("UPDATE document_types SET allows_multiple=0 WHERE id=?", kind)
 	requireNoError(t, err)
 	uniqueVersion, err := service.SaveTemplate(ctx, principal, libraryID, "", "Único", []RequirementInput{{CategoryID: category, TypeID: kind, Count: 1, Mandatory: true}}, 0, domain.RequestMetadata{})

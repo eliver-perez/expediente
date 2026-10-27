@@ -103,9 +103,12 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 			return err
 		}
 		var previousID, checkpoint string
-		lookup := transaction.QueryRowContext(ctx, "SELECT id,checkpoint_json FROM root_scans WHERE root_id=? AND status='running' AND configuration_revision=?", root.ID, root.Revision).Scan(&previousID, &checkpoint)
+		lookup := transaction.QueryRowContext(ctx, "SELECT id,checkpoint_json FROM root_scans WHERE root_id=? AND status IN ('running','paused') AND configuration_revision=? ORDER BY started_at DESC LIMIT 1", root.ID, root.Revision).Scan(&previousID, &checkpoint)
 		if lookup == nil {
 			scanID = previousID
+			if _, err := transaction.ExecContext(ctx, "UPDATE root_scans SET status='running' WHERE id=? AND status='paused'", scanID); err != nil {
+				return err
+			}
 			var decodeError error
 			pending, decodeError = decodeStrings(checkpoint)
 			if decodeError != nil {

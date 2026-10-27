@@ -10,7 +10,7 @@ test('fase 5: filtros por formato, contexto y reindexación sin duplicados', asy
   await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
   await page.getByLabel('Nombre de la biblioteca').fill('Búsqueda fase 5');
   await page.getByLabel('Modalidad de biblioteca').selectOption('managed');
-  await page.getByLabel('Asignarme como gestor de esta biblioteca').check();
+
   await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
   await page.getByRole('tab', { name: 'Configuración', exact: true }).click();
   await page.getByLabel('Heredar formatos de indexación', { exact: true }).uncheck();
@@ -44,7 +44,7 @@ test('fase 5: filtros por formato, contexto y reindexación sin duplicados', asy
   const id = documents.items[0].id;
   const before = await (await page.request.get(`/api/v1/documents/${id}`)).json();
   await dialog.getByRole('button', { name: 'Reindexar documento', exact: true }).click();
-  await expect(dialog.getByText('Reindexación completada. La ficha y el texto están actualizados.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Notificaciones' }).getByText('Reindexación completada. La ficha y el texto están actualizados.', { exact: true })).toBeVisible();
   const after = await (await page.request.get(`/api/v1/documents/${id}`)).json();
   expect(after.id).toBe(before.id);
   expect(after.sha256).toBe(before.sha256);

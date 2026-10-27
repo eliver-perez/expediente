@@ -15,26 +15,27 @@ import (
 // A closed set of structured fields prevents exception text, filenames, request
 // bodies, headers, credentials and document content from entering support logs.
 type Context struct {
-	LibraryID  string `json:"library_id,omitempty"`
-	RootID     string `json:"root_id,omitempty"`
-	JobID      string `json:"job_id,omitempty"`
-	DocumentID string `json:"document_id,omitempty"`
-	RequestID  string `json:"request_id,omitempty"`
-	Operation  string `json:"operation,omitempty"`
-	Attempt    int    `json:"attempt,omitempty"`
-	HTTPStatus int    `json:"http_status,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+	LibraryID   string `json:"library_id,omitempty"`
+	RootID      string `json:"root_id,omitempty"`
+	JobID       string `json:"job_id,omitempty"`
+	DocumentID  string `json:"document_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Operation   string `json:"operation,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
+	HTTPStatus  int    `json:"http_status,omitempty"`
 }
 
 var identifier = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
 func (c Context) Safe() Context {
-	for _, value := range []*string{&c.LibraryID, &c.RootID, &c.JobID, &c.DocumentID, &c.RequestID} {
+	for _, value := range []*string{&c.OperationID, &c.LibraryID, &c.RootID, &c.JobID, &c.DocumentID, &c.RequestID} {
 		if !identifier.MatchString(*value) {
 			*value = ""
 		}
 	}
 	switch c.Operation {
-	case "scan", "extract", "ocr", "materialize", "verify_managed", "preview", "http", "watch", "startup":
+	case "selective_cleanup", "scan", "extract", "ocr", "materialize", "verify_managed", "preview", "http", "watch", "startup":
 	default:
 		c.Operation = ""
 	}

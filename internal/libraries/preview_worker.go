@@ -95,7 +95,7 @@ func (service *Service) claimPreview(ctx context.Context) (previewJob, PreviewSe
 		if paused {
 			return nil
 		}
-		err = tx.QueryRowContext(ctx, `SELECT id,document_id,content_version_id,source_hash,generator_version,requested_by FROM preview_cache WHERE status='queued' ORDER BY created_at,id LIMIT 1`).Scan(&job.ID, &job.DocumentID, &job.Version, &job.Hash, &job.Generator, &job.RequestedBy)
+		err = tx.QueryRowContext(ctx, `SELECT id,document_id,content_version_id,source_hash,generator_version,requested_by FROM preview_cache WHERE status='queued' AND EXISTS(SELECT 1 FROM documents d JOIN libraries b ON b.id=d.library_id WHERE d.id=preview_cache.document_id AND b.disabled_at IS NULL) ORDER BY created_at,id LIMIT 1`).Scan(&job.ID, &job.DocumentID, &job.Version, &job.Hash, &job.Generator, &job.RequestedBy)
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -135,7 +135,7 @@ func (service *Service) recoverPreviews(ctx context.Context) error {
 		}
 		var count int
 		id := strings.TrimSuffix(entry.Name(), ".preview")
-		if err = service.Database.Reader.QueryRowContext(ctx, "SELECT count(*) FROM preview_cache WHERE id=? AND status='ready'", id).Scan(&count); err != nil {
+		if err = service.Database.Reader.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM preview_cache WHERE id=? AND status='ready')+(SELECT count(*) FROM deletion_cleanup WHERE kind='preview' AND locator=?)", id, entry.Name()).Scan(&count); err != nil {
 			return err
 		}
 		if count == 0 {

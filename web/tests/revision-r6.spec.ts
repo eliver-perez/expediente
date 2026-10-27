@@ -21,7 +21,7 @@ test('intervalos, páginas acotadas, vistas y confirmación sin borrar originale
     await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click();
     await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
     await page.getByLabel('Nombre de la biblioteca').fill('Revisión R6');
-    await page.getByLabel('Asignarme como gestor').check();
+
     await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
     await page.getByRole('tab', { name: 'Carpetas', exact: true }).click();
     await page.getByLabel('Ruta de la carpeta en el servidor').fill(directory);

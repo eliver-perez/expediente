@@ -1,9 +1,10 @@
+import { useToastState } from './feedback';
 import { useEffect, useState } from 'react';
 import { api, message } from './api';
 import { Notice } from './components';
 interface Settings { enabled:boolean;maximum_cache_mb:number;maximum_idle_days:number;maximum_source_mb:number;automatic_cleanup:boolean;converter_path:string;revision:number;used_bytes:number;entries:number;converter_available:boolean }
 export function PreviewSettings(){
- const [settings,setSettings]=useState<Settings|null>(null);const [error,setError]=useState('');const [success,setSuccess]=useState('');const [busy,setBusy]=useState(false);const [confirm,setConfirm]=useState(false);
+ const [settings,setSettings]=useState<Settings|null>(null);const [error,setError]=useState('');const [success,setSuccess]=useToastState();const [busy,setBusy]=useState(false);const [confirm,setConfirm]=useState(false);
  async function load(){setSettings(await api<Settings>('/system/previews'));}
  useEffect(()=>{void load().catch(cause=>setError(message(cause)));},[]);
  async function save(){if(!settings)return;setBusy(true);setError('');setSuccess('');try{setSettings(await api<Settings>('/system/previews',{method:'PUT',body:{enabled:settings.enabled,maximum_cache_mb:settings.maximum_cache_mb,maximum_idle_days:settings.maximum_idle_days,maximum_source_mb:settings.maximum_source_mb,automatic_cleanup:settings.automatic_cleanup,converter_path:settings.converter_path,revision:settings.revision}}));setSuccess('Configuración de vistas previas guardada.');}catch(cause){setError(message(cause));}finally{setBusy(false);}}

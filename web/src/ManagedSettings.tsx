@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { Accordion } from './Accordion';
 import { useState } from 'react';
 import { api, message } from './api';
@@ -7,11 +8,11 @@ import { modeLabel } from './organizationTypes';
 
 export function ManagedSettings({ library, refresh }: { library: Library; refresh: () => void }) {
   const [settings, setSettings] = useState(library.settings); const [mode, setMode] = useState(library.mode);
-  const [error, setError] = useState(''); const [success, setSuccess] = useState(''); const [preview, setPreview] = useState(''); const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(''); const [success, setSuccess] = useToastState(); const [preview, setPreview] = useState(''); const [busy, setBusy] = useState(false);
   const roots = usePage<Root>(`/libraries/${library.id}/roots`);
   return <section className="card"><h2>Configuración de biblioteca</h2><Notice text={error || roots.error} /><Notice text={success} kind="success" />
-    <form className="form-grid" onSubmit={async event => { event.preventDefault(); const data = new FormData(event.currentTarget); setBusy(true); setError(''); try { await api(`/libraries/${library.id}`, { method: 'PATCH', revision: library.revision, body: { name: data.get('name'), ocr_languages: library.ocr_languages, mode, settings } }); refresh(); setSuccess('Configuración guardada.'); } catch (error) { setError(message(error)); } finally { setBusy(false); } }}>
-      <fieldset className="settings-section"><legend>Configuración general</legend><div className="editor-grid"><label>Nombre de la biblioteca<input name="name" defaultValue={library.name} maxLength={160} required /></label></div>
+    <form className="form-grid" onSubmit={async event => { event.preventDefault(); const data = new FormData(event.currentTarget); setBusy(true); setError(''); try { await api(`/libraries/${library.id}`, { method: 'PATCH', revision: library.revision, body: { name: data.get('name'), description: data.get('description'), ocr_languages: library.ocr_languages, mode, settings } }); refresh(); setSuccess('Configuración guardada.'); } catch (error) { setError(message(error)); } finally { setBusy(false); } }}>
+      <fieldset className="settings-section"><legend>Configuración general</legend><div className="editor-grid"><label>Nombre de la biblioteca<input name="name" defaultValue={library.name} maxLength={160} required /></label></div><label>Descripción de la biblioteca (opcional)<textarea name="description" defaultValue={library.description} maxLength={500} rows={3} /></label>
       <label>Modalidad<select value={mode} onChange={event => setMode(event.target.value)}><option value={library.mode}>{modeLabel[library.mode]}</option>{library.mode !== 'hybrid' && <option value="hybrid">Híbrida</option>}</select></label>
       {mode !== library.mode && <p className="notice success">La ampliación conserva archivos, texto extraído, permisos e historial.</p>}
       </fieldset>

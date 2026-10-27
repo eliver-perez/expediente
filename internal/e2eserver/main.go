@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"gestor-documental/internal/backups"
 	"gestor-documental/internal/config"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/httpapi"
@@ -101,6 +102,13 @@ func run() error {
 	if _, err := service.SetGlobalRoles(context.Background(), principal, principal.User.ID, principal.User.Revision, []string{"installation_admin", "access_auditor"}, domain.RequestMetadata{RequestID: domain.NewID()}); err != nil {
 		return err
 	}
+	backupService, err := backups.New(database, configuration)
+	if err != nil {
+		return err
+	}
+	if err = backupService.ApplyPending(context.Background(), service.License); err != nil {
+		return err
+	}
 	runtime, err := libraries.New(service).Start(context.Background())
 	if err != nil {
 		return err
@@ -108,7 +116,7 @@ func run() error {
 	defer runtime.Close()
 	access := network.New(configurationPath, configuration)
 	if err = access.Start(func(active config.Config) http.Handler {
-		return httpapi.New(service, active, slog.Default()).WithNetwork(access).Handler()
+		return httpapi.New(service, active, slog.Default()).WithNetwork(access).WithBackups(backupService).Handler()
 	}); err != nil {
 		return err
 	}

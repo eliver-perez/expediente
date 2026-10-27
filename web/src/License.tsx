@@ -1,8 +1,10 @@
+import { toast, useToastState } from './feedback';
 import { newRequestID } from './requestID';
 import { Accordion } from './Accordion';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, formatDate, importLicense, message, type LicenseSummary } from './api';
 import { Notice } from './components';
+import { LicenseKeyField, validLicenseKey } from './LicenseKeyField';
 
 export interface LicenseStatus extends LicenseSummary {
   license_type: string; license_id: string; activation_id: string; license_revision: number;
@@ -14,15 +16,16 @@ export interface LicenseStatus extends LicenseSummary {
   pending_operations: { request_id: string; action: string; created_at: string }[];
 }
 interface Artifact { id: string; direction: string; action: string; request_id: string; created_at: string; sha256: string }
-export const licenseStates: Record<string, string> = { active: 'Activa', grace: 'En periodo de tolerancia', expired: 'Vencida · solo lectura', revoked: 'Revocada o desactivada · solo lectura', invalid: 'Requiere recuperación', unactivated: 'Activación pendiente', development: 'Desarrollo sin licencia comercial' };
+export const licenseStates: Record<string, string> = { active: 'Activa', grace: 'En periodo de tolerancia', expired: 'Vencida · solo lectura', revoked: 'Revocada · solo lectura', deactivated: 'Desactivada · acceso bloqueado', invalid: 'Requiere recuperación', unactivated: 'Activación pendiente', development: 'Desarrollo sin licencia comercial' };
 const features: Record<string, string> = { linked_libraries: 'Bibliotecas vinculadas', managed_libraries: 'Bibliotecas administradas', ocr: 'Extracción y OCR', expedientes: 'Expedientes', review_workflow: 'Revisión y aprobación' };
 const actions: Record<string, string> = { activate: 'Activación', renew: 'Renovación', refresh: 'Renovación', deactivate: 'Desactivación', offline_import: 'Importación' };
 export function License({ onChange }: { onChange: () => Promise<void> }) {
   const [status, setStatus] = useState<LicenseStatus | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
-  const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useToastState();
   const [action, setAction] = useState('activate'); const [confirm, setConfirm] = useState(false);
   const [requestID, setRequestID] = useState<string>(() => newRequestID());
+  const [keyValue, setKeyValue] = useState('');
   const offlineIDs = useRef<Record<string, string>>({});
   const restoredRequest = useRef(false);
   const reload = useCallback(async () => {
@@ -31,7 +34,7 @@ export function License({ onChange }: { onChange: () => Promise<void> }) {
     if (!restoredRequest.current) {
       restoredRequest.current = true;
       const pending = license.pending_operations[0];
-      if (pending) { setRequestID(pending.request_id); setAction(pending.action); setNotice('Hay una solicitud pendiente. Puedes reintentarla; para activar, introduce la misma clave de licencia.'); }
+      if (pending) { setRequestID(pending.request_id); setAction(pending.action); toast('Hay una solicitud pendiente. Puedes reintentarla; para activar, introduce la misma clave de licencia.', 'info'); }
     }
   }, []);
   useEffect(() => { const load = () => { void reload().catch(cause => setError(message(cause))); }; load(); const timer = window.setInterval(load, 30_000); return () => window.clearInterval(timer); }, [reload]);
@@ -41,11 +44,11 @@ export function License({ onChange }: { onChange: () => Promise<void> }) {
     catch (cause) { setError(message(cause)); } finally { setBusy(false); }
   }
   async function online(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const form = event.currentTarget; const key = new FormData(form).get('license_key');
-    form.reset();
+    event.preventDefault();
+    if (busy || action === 'activate' && !validLicenseKey(keyValue)) { setError('Introduce un código completo 3-4-4-4 antes de contactar al servidor.'); return; }
     await run(async () => {
-      await api(`/license/${action}`, { method: 'POST', body: { request_id: requestID, license_key: action === 'activate' ? key : '', confirm } });
-      setRequestID(newRequestID()); setConfirm(false);
+      await api(`/license/${action}`, { method: 'POST', body: { request_id: requestID, license_key: action === 'activate' ? keyValue : '', confirm } });
+      setRequestID(newRequestID()); setConfirm(false); setKeyValue('');
     }, action === 'deactivate' ? 'El servidor confirmó la desactivación. Tus documentos se conservan.' : 'La licencia se verificó y quedó guardada.');
   }
   async function offline(selected: string) {
@@ -67,6 +70,7 @@ export function License({ onChange }: { onChange: () => Promise<void> }) {
       <section className="card"><div className="section-heading"><div><h2>Estado de la instalación</h2><span className={`badge ${status.write_allowed ? 'positive' : ''}`} data-testid="license-state">{status.state === 'active' ? (status.license_type === 'perpetual' ? 'Perpetua activa' : 'Suscripción activa') : licenseStates[status.state] || status.state}</span></div><button className="secondary" disabled={busy} onClick={() => void run(reload, '')}>Actualizar estado</button></div>
         {status.development && <p className="muted">Esta compilación de desarrollo permite pruebas sin licencia. Al importar o activar una licencia se aplicarán sus condiciones.</p>}
         {(status.state === 'expired' || status.state === 'revoked') && <p>La consulta y descarga de documentos siguen disponibles según los permisos de cada usuario. Las modificaciones están suspendidas.</p>}
+        {status.state === 'deactivated' && <p>El acceso a bibliotecas, expedientes y documentos está bloqueado. Los archivos permanecen intactos.</p>}
         {status.state === 'grace' && <p>Renueva antes del {formatDate(status.grace_until)} para continuar modificando documentos.</p>}
         <Notice text={status.clock_warning ? 'Se detectó un retroceso del reloj. Revisa la fecha del equipo; la tolerancia no se prolonga por este cambio.' : ''} />
         <Notice text={status.diagnostic === 'ACTIVATION_DEACTIVATED' ? 'Esta instalación fue desactivada. Puedes activarla de nuevo con una licencia disponible.' : status.diagnostic ? 'No se pudo verificar la identidad o la licencia guardada. Consulta Identificación para soporte antes de intentar recuperarla.' : ''} />
@@ -81,9 +85,9 @@ export function License({ onChange }: { onChange: () => Promise<void> }) {
         {!status.online_configured && <p className="muted">No hay un servidor de licencias configurado. Puedes utilizar archivos sin conexión.</p>}
         {status.pending_operations.length > 0 && <label>Retomar solicitud pendiente<select aria-label="Retomar solicitud pendiente" value={status.pending_operations.some(item => item.request_id === requestID) ? requestID : ''} disabled={busy} onChange={event => { const pending = status.pending_operations.find(item => item.request_id === event.target.value); if (pending) { setRequestID(pending.request_id); setAction(pending.action); setConfirm(false); } }}><option value="">Seleccionar solicitud</option>{status.pending_operations.map(item => <option key={item.request_id} value={item.request_id}>{actions[item.action]} · {formatDate(item.created_at)}</option>)}</select></label>}
         <form className="form-grid" onSubmit={online}><label>Operación<select aria-label="Operación" value={action} disabled={busy} onChange={event => { if (event.target.value !== action) { setAction(event.target.value); setRequestID(newRequestID()); setConfirm(false); } }}><option value="activate">Activar con clave de licencia</option><option value="refresh">Renovar / consultar con el servidor</option><option value="deactivate">Desactivar esta instalación</option></select></label>
-          {action === 'activate' && <label>Clave de licencia<input aria-label="Clave de licencia" aria-describedby="license-key-help" type="text" name="license_key" autoComplete="off" autoCapitalize="none" spellCheck={false} required maxLength={1024} disabled={busy || !status.online_configured} /><small id="license-key-help">Pega la clave completa y revísala antes de activar. Se envía únicamente al activar y el campo se vacía al enviarla.</small></label>}
-          {action === 'deactivate' && <label className="checkbox-label"><input type="checkbox" checked={confirm} required onChange={event => setConfirm(event.target.checked)} />Confirmo la desactivación. La instalación quedará en consulta hasta recibir una nueva activación.</label>}
-          <button disabled={busy || !status.online_configured || (action !== 'activate' && !status.activation_id)}>{busy ? 'Procesando…' : actions[action] + ' en línea'}</button>
+          {action === 'activate' && <LicenseKeyField disabled={busy || !status.online_configured} value={keyValue} onChange={setKeyValue} />}
+          {action === 'deactivate' && <label className="checkbox-label"><input type="checkbox" checked={confirm} required onChange={event => setConfirm(event.target.checked)} />Confirmo la desactivación. Esta instalación dejará de permitir la consulta documental; los archivos permanecerán intactos.</label>}
+          <button disabled={busy || !status.online_configured || action === 'activate' && !validLicenseKey(keyValue) || action !== 'activate' && !status.activation_id}>{busy ? 'Procesando…' : actions[action] + ' en línea'}</button>
           <small>Si falla la conexión, el botón reintenta la misma solicitud.</small><button type="button" className="secondary" disabled={busy} onClick={() => { setRequestID(newRequestID()); setNotice('Se preparó una nueva solicitud.'); }}>Preparar otra solicitud</button>
         </form>
       </section><section className="card"><h2>Operar sin conexión</h2><p className="muted">Descarga una solicitud y entrégala al proveedor. Después importa el archivo de licencia que recibas.</p>

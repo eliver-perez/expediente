@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, message, type Page } from './api';
+import { toast } from './feedback';
 
 export function Notice({ text, kind = 'error' }: { text: string; kind?: 'error' | 'success' }) {
-  return text ? <div className={`notice ${kind}`} role={kind === 'error' ? 'alert' : 'status'}>{text}</div> : null;
+  useEffect(() => { if (text && kind === 'success') toast(text); }, [text, kind]);
+  return text && kind !== 'success' ? <div className={`notice ${kind}`} role="alert">{text}</div> : null;
 }
 
 export function usePage<T>(endpoint: string, enabled = true) {

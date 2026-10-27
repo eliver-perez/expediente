@@ -3,6 +3,7 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,6 +18,7 @@ type Case struct {
 	LibraryID         string `json:"library_id"`
 	Identifier        string `json:"identifier"`
 	Exercise          string `json:"exercise"`
+	ConfirmFuture     bool   `json:"confirm_future,omitempty"`
 	TemplateVersionID string `json:"template_version_id"`
 	Initialized       bool   `json:"requirements_initialized"`
 	Revision          int64  `json:"revision"`
@@ -43,7 +45,7 @@ func (service *Service) Case(ctx context.Context, principal domain.Principal, id
 	}
 	return item, nil
 }
-func (service *Service) Cases(ctx context.Context, principal domain.Principal, libraryID, query, cursor string) (Page[Case], error) {
+func (service *Service) Cases(ctx context.Context, principal domain.Principal, libraryID, query, cursor string, exerciseFilter ...string) (Page[Case], error) {
 	result := Page[Case]{Items: []Case{}}
 	if err := service.Read(ctx, principal, libraryID, "documents.read"); err != nil {
 		return result, err
@@ -51,12 +53,39 @@ func (service *Service) Cases(ctx context.Context, principal domain.Principal, l
 	if utf8.RuneCountInString(query) > 160 {
 		return result, invalid("Identificador demasiado largo.")
 	}
-	scope := principal.User.ID + ":cases:" + libraryID + ":" + query
+	exercise := ""
+	if len(exerciseFilter) > 0 {
+		exercise = exerciseFilter[0]
+	}
+	status := ""
+	if len(exerciseFilter) > 1 {
+		status = exerciseFilter[1]
+	}
+	if status != "" && status != "complete" && status != "incomplete" && status != "empty" && status != "no_template" {
+		return result, invalid("Estado de expediente inválido.")
+	}
+	if exercise != "" && (len(exercise) != 4 || strings.IndexFunc(exercise, func(r rune) bool { return r < '0' || r > '9' }) != -1) {
+		return result, invalid("Ejercicio inválido.")
+	}
+	scope := principal.User.ID + ":cases:" + libraryID + ":" + query + ":" + exercise + ":" + status
 	after, err := parseListCursor(cursor, scope)
 	if err != nil {
 		return result, err
 	}
-	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT "+caseColumns+" FROM cases WHERE library_id=? AND deleted_at IS NULL AND instr(identifier_key,?)>0 AND (?='' OR created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51", libraryID, searchKey(query), after.Time, after.Time, after.Time, after.ID)
+	statement := "SELECT " + caseColumns + " FROM cases WHERE library_id=? AND deleted_at IS NULL AND instr(identifier_key,?)>0 AND (?='' OR exercise=?) AND (?='' OR created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51"
+	args := []any{libraryID, searchKey(query), exercise, exercise, after.Time, after.Time, after.Time, after.ID}
+	if status != "" {
+		predicate := map[string]string{
+			"complete":    "coalesce(req.expected,0)>0 AND req.fulfilled>=req.expected",
+			"incomplete":  "coalesce(req.expected,0)>0 AND req.fulfilled<req.expected",
+			"empty":       "NOT EXISTS(SELECT 1 FROM documents d WHERE d.case_id=c.id AND d.deleted_at IS NULL AND d.approval_status<>'cancelled')",
+			"no_template": "coalesce(req.expected,0)=0",
+		}[status]
+		statement = `WITH ` + caseStatsValidDocs + `, req AS (SELECT r.case_id,sum(r.required_count) expected,sum(min(r.required_count,coalesce(v.valid_count,0))) fulfilled FROM case_requirements r LEFT JOIN valid_docs v ON v.case_id=r.case_id AND v.document_type_id=r.document_type_id WHERE r.library_id=? AND r.mandatory=1 GROUP BY r.case_id)
+		SELECT c.id,c.library_id,c.identifier,coalesce(c.exercise,''),coalesce(c.template_version_id,''),c.requirements_initialized_at IS NOT NULL,c.revision,c.created_at FROM cases c LEFT JOIN req ON req.case_id=c.id WHERE c.library_id=? AND c.deleted_at IS NULL AND instr(c.identifier_key,?)>0 AND (?='' OR c.exercise=?) AND (` + predicate + `) AND (?='' OR c.created_at<? OR (c.created_at=? AND c.id<?)) ORDER BY c.created_at DESC,c.id DESC LIMIT 51`
+		args = append([]any{libraryID, libraryID}, args...)
+	}
+	rows, err := service.Database.Reader.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return result, err
 	}
@@ -130,8 +159,17 @@ func initializeRequirements(ctx context.Context, transaction *sql.Tx, caseID, li
 func (service *Service) SaveCase(ctx context.Context, principal domain.Principal, libraryID, caseID string, input Case, revision int64, metadata domain.RequestMetadata) (string, error) {
 	input.Identifier = strings.TrimSpace(input.Identifier)
 	input.Exercise = strings.TrimSpace(input.Exercise)
-	if !validName(input.Identifier) || utf8.RuneCountInString(input.Exercise) > 40 {
+	if !validName(input.Identifier) {
 		return "", invalid("Identificador o ejercicio inválido.")
+	}
+	if input.Exercise != "" {
+		if len(input.Exercise) != 4 || strings.IndexFunc(input.Exercise, func(r rune) bool { return r < '0' || r > '9' }) != -1 {
+			return "", invalid("El ejercicio debe contener exactamente cuatro dígitos.")
+		}
+		year, _ := strconv.Atoi(input.Exercise)
+		if year > time.Now().Year() && !input.ConfirmFuture {
+			return "", domain.Failure("FUTURE_EXERCISE_CONFIRMATION", "Confirma que deseas guardar un ejercicio futuro.", 422)
+		}
 	}
 	creating := caseID == ""
 	if creating {
@@ -252,7 +290,7 @@ func (service *Service) Requirements(ctx context.Context, principal domain.Princ
 	required, fulfilled := 0, 0
 	for index := range result.Items {
 		requirement := &result.Items[index]
-		rows, err = service.Database.Reader.QueryContext(ctx, "SELECT d.approval_status,count(*),sum(CASE WHEN f.availability='available' AND coalesce(sr.status,'')<>'inaccessible' THEN 1 ELSE 0 END),sum(CASE WHEN f.availability IN ('missing','unknown') OR sr.status='inaccessible' THEN 1 ELSE 0 END),sum(CASE WHEN d.approval_status='approved' AND (f.storage_source='linked' OR (f.availability='available' AND coalesce(sr.status,'')<>'inaccessible' AND f.integrity_status='verified')) THEN 1 ELSE 0 END) FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN physical_file_locations fl ON fl.id=f.primary_location_id LEFT JOIN storage_roots sr ON sr.id=fl.root_id WHERE d.case_id=? AND d.document_type_id=? AND d.deleted_at IS NULL AND d.approval_status<>'cancelled' AND "+visibleDocumentSQL+" GROUP BY d.approval_status", caseID, requirement.TypeID, principal.User.ID, principal.User.ID)
+		rows, err = service.Database.Reader.QueryContext(ctx, "SELECT d.approval_status,count(*),sum(CASE WHEN f.availability='available' AND coalesce(sr.status,'')<>'inaccessible' THEN 1 ELSE 0 END),sum(CASE WHEN f.availability IN ('missing','unknown') OR sr.status='inaccessible' THEN 1 ELSE 0 END),sum(CASE WHEN d.approval_status='approved' AND f.availability='available' AND coalesce(sr.status,'')<>'inaccessible' AND (f.storage_source='linked' OR f.integrity_status='verified') THEN 1 ELSE 0 END) FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN physical_file_locations fl ON fl.id=f.primary_location_id LEFT JOIN storage_roots sr ON sr.id=fl.root_id WHERE d.case_id=? AND d.document_type_id=? AND d.deleted_at IS NULL AND d.approval_status<>'cancelled' AND "+visibleDocumentSQL+" GROUP BY d.approval_status", caseID, requirement.TypeID, principal.User.ID, principal.User.ID)
 		if err != nil {
 			return result, err
 		}

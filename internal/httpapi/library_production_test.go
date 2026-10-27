@@ -10,10 +10,10 @@ import (
 )
 
 func TestProductionBuildBlocksDocumentWritesAndKeepsSecurityAvailable(t *testing.T) {
-	fixture := newHTTPFixture(t)
+	fixture := newHTTPFixtureWithLicense(t, false)
 	cookie, session := fixture.login(t, "admin", testPassword)
 	response := fixture.request("POST", "/search", `{"query":"private"}`, cookie, session.CSRFToken)
-	if response.Code != 403 || !strings.Contains(response.Body.String(), "LICENSE_RECOVERY_REQUIRED") {
+	if response.Code != 403 || !strings.Contains(response.Body.String(), "EULA_ACCEPTANCE_REQUIRED") {
 		t.Fatalf("document gate: %d %s", response.Code, response.Body.String())
 	}
 	principal, err := fixture.service.Authenticate(context.Background(), cookie.Value, false, domain.RequestMetadata{})
@@ -30,8 +30,8 @@ func TestProductionBuildBlocksDocumentWritesAndKeepsSecurityAvailable(t *testing
 		t.Fatal(err)
 	}
 	runtime.Close()
-	response = fixture.request("GET", "/account", "", cookie, "")
+	response = fixture.request("GET", "/license", "", cookie, "")
 	if response.Code != 200 {
-		t.Fatal("recovery administration blocked")
+		t.Fatal("license recovery blocked")
 	}
 }

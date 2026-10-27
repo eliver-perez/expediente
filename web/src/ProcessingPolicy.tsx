@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { useEffect, useState } from 'react';
 import { api, message } from './api';
 import { Notice } from './components';
@@ -6,7 +7,7 @@ interface Policy { paused: boolean; maximum_attempts: number; retry_delay_second
 export function ProcessingPolicy() {
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [draft, setDraft] = useState<Policy | null>(null);
-  const [error, setError] = useState(''); const [success, setSuccess] = useState(''); const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(''); const [success, setSuccess] = useToastState(); const [busy, setBusy] = useState(false);
   async function load() { const value = await api<Policy>('/system/processing-policy'); setPolicy(value); setDraft(value); }
   useEffect(() => { void load().catch(cause => setError(message(cause))); }, []);
   async function save(value: Policy) {

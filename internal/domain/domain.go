@@ -70,6 +70,7 @@ type Principal struct {
 	CredentialVersion int64
 	CSRFTokenDigest   string
 	ExpiresAt         string
+	LastActivityAt    string
 }
 
 func (principal Principal) Can(permission string) bool {

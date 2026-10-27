@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -31,6 +32,11 @@ func fixture(t *testing.T) *Service {
 	path := filepath.Join(directory, "config.json")
 	if err = config.InitializeWith(path, func(value *config.Config) { *value = configuration }); err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		if err = os.WriteFile(filepath.Join(directory, "connection.json"), []byte(`{"public_url":"`+configuration.PublicURL+`","service_name":"AIDEX"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	service := New(path, configuration)
 	if err = service.Start(func(active config.Config) http.Handler {
@@ -128,6 +134,60 @@ func TestLocalLANPersistsAndReturnsWithoutRestartingApplication(t *testing.T) {
 	}
 	defer restarted.Close(context.Background())
 	assertServing(t, restarted, "lan")
+}
+
+func TestPortChangeKeepsOldRequestAndRejectsOccupiedPort(t *testing.T) {
+	s := fixture(t)
+	old := s.configuration.PublicURL
+	reserved, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	occupied := reserved.Addr().(*net.TCPAddr).Port
+	if err = s.ApplyPort("local", occupied, revision(s.configuration)); err == nil {
+		t.Fatal("accepted occupied port")
+	}
+	if s.configuration.PublicURL != old {
+		t.Fatal("changed URL on failure")
+	}
+	reserved.Close()
+	if err = s.ApplyPort("local", occupied, revision(s.configuration)); err != nil {
+		t.Fatal(err)
+	}
+	if s.configuration.PublicURL == old {
+		t.Fatal("port unchanged")
+	}
+	assertServing(t, s, "local")
+	if err = s.ApplyPort("lan", occupied, revision(s.configuration)); err != nil {
+		t.Fatal(err)
+	}
+	assertServing(t, s, "lan")
+}
+
+func TestConfigureStoppedPreservesOtherConfiguration(t *testing.T) {
+	s := fixture(t)
+	path, original := s.path, s.configuration
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := reserved.Addr().(*net.TCPAddr).Port
+	if _, err = ConfigureStopped(path, port); err == nil {
+		t.Fatal("accepted occupied port")
+	}
+	reserved.Close()
+	updated, err := ConfigureStopped(path, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.PublicURL != "http://127.0.0.1:"+strconv.Itoa(port) || updated.StateDirectory != original.StateDirectory {
+		t.Fatal("configuration not preserved")
+	}
 }
 
 func TestBindConflictRestoresLocalConfiguration(t *testing.T) {

@@ -23,7 +23,12 @@ func openApplication() string {
 	if err != nil {
 		return "No se pudo localizar AIDEX. Vuelve a ejecutar el instalador."
 	}
-	file, err := os.Open(filepath.Join(filepath.Dir(executable), "launcher.json"))
+	publicPath := filepath.Join(filepath.Dir(executable), "launcher.json")
+	if commonData := os.Getenv("ProgramData"); commonData != "" {
+		candidate := filepath.Join(commonData, "AIDEX", "connection.json")
+		if _, statErr := os.Lstat(candidate); statErr == nil { publicPath = candidate }
+	}
+	file, err := os.Open(publicPath)
 	if err != nil {
 		return "Falta la dirección de AIDEX. Ejecuta «Configurar AIDEX» desde Inicio."
 	}

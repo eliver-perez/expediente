@@ -7,6 +7,19 @@ test('licencias: simulador HTTPS, archivos sin conexión y recuperación de solo
   await page.getByRole('link', { name: 'Licencia', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Licencia de AIDEX' })).toBeVisible();
   const online = page.getByRole('heading', { name: 'Activación y renovación en línea' }).locator('..');
+  const keyField = page.getByLabel('Clave de licencia', { exact: true });
+  await keyField.fill('k7m9r3x6tvp8chd');
+  await expect(keyField).toHaveValue('K7M-9R3X-6TVP-8CHD');
+  await keyField.press('End'); await keyField.press('Backspace');
+  await expect(page.getByRole('button', { name: 'Activación en línea', exact: true })).toBeDisabled();
+  await keyField.press('d');
+  await expect(keyField).toHaveValue('K7M-9R3X-6TVP-8CHD');
+  await keyField.evaluate((field: HTMLInputElement) => field.setSelectionRange(5, 6));
+  await keyField.press('t');
+  await expect(keyField).toHaveValue('K7M-9T3X-6TVP-8CHD');
+  await keyField.fill('AIDEX-K7M-9R3X-6TVP-8CHD');
+  await expect(page.getByRole('button', { name: 'Activación en línea', exact: true })).toBeDisabled();
+  await expect(page.getByText('No se aceptan I, L, O, 0 ni 1.', { exact: false })).toBeVisible();
   async function activate(key: string) {
     await page.getByLabel('Operación', { exact: true }).selectOption('activate');
     await page.getByLabel('Clave de licencia', { exact: true }).fill(key);
@@ -17,11 +30,11 @@ test('licencias: simulador HTTPS, archivos sin conexión y recuperación de solo
     await page.getByLabel('Confirmo la desactivación.', { exact: false }).check();
     await page.getByRole('button', { name: 'Desactivación en línea', exact: true }).click();
     await expect(page.getByText('El servidor confirmó la desactivación. Tus documentos se conservan.')).toBeVisible();
-    await expect(page.getByTestId('license-state')).toHaveText('Revocada o desactivada · solo lectura');
+    await expect(page.getByTestId('license-state')).toHaveText('Desactivada · acceso bloqueado');
     await expect(page.getByRole('list', { name: 'Estado de los módulos' }).getByText('Suspendido', { exact: true })).toHaveCount(5);
     await expect(page.getByRole('list', { name: 'Estado de los módulos' }).getByText('Habilitado', { exact: true })).toHaveCount(0);
   }
-  await activate('DEMO-PERPETUAL');
+  await activate('K7M-9R3X-6TVP-8CHD');
   await expect(page.getByRole('alert')).toContainText('No fue posible contactar de forma segura');
   const pending = await (await page.request.get('/api/v1/license')).json();
   expect(pending.pending_operations).toHaveLength(1);
@@ -29,7 +42,7 @@ test('licencias: simulador HTTPS, archivos sin conexión y recuperación de solo
   await page.reload();
   await expect(page.getByText('Hay una solicitud pendiente.', { exact: false })).toBeVisible();
   await expect(page.getByLabel('Retomar solicitud pendiente', { exact: true })).toHaveValue(requestID);
-  await activate('DEMO-PERPETUAL'); await expect(page.getByTestId('license-state')).toHaveText('Perpetua activa');
+  await activate('K7M-9R3X-6TVP-8CHD'); await expect(page.getByTestId('license-state')).toHaveText('Perpetua activa');
   expect((await (await page.request.get('/api/v1/license')).json()).pending_operations).toHaveLength(0);
   await expect(page.getByLabel('Clave de licencia', { exact: true })).toHaveValue('');
   await expect(page.getByText('Perpetua · uso sin vencimiento', { exact: true })).toBeVisible();
@@ -54,14 +67,14 @@ test('licencias: simulador HTTPS, archivos sin conexión y recuperación de solo
   await expect(page.getByRole('list', { name: 'Estado de los módulos' }).getByText('Suspendido', { exact: true })).toHaveCount(5);
   await expect(page.getByText('Los datos siguientes corresponden a la última licencia registrada.', { exact: false })).toBeVisible();
   await page.screenshot({ path: 'test-results/r5-license-deactivated.png', fullPage: true });
-  await activate('DEMO-EXPIRED'); await expect(page.getByTestId('license-state')).toHaveText('Vencida · solo lectura');
+  await activate('X7M-9R3X-6TVP-8CHD'); await expect(page.getByTestId('license-state')).toHaveText('Vencida · solo lectura');
   await expect(page.getByRole('list', { name: 'Estado de los módulos' }).getByText('Suspendido', { exact: true })).toHaveCount(5);
   const session = await (await page.request.get('/api/v1/auth/session')).json();
   const blocked = await page.request.post('/api/v1/libraries', { headers: { Origin: 'http://127.0.0.1:8099', 'X-CSRF-Token': session.csrf_token, 'Idempotency-Key': 'license-browser-read-only' }, data: { name: 'No debe crearse', mode: 'linked', manager_user_id: session.user.id } });
   expect(blocked.status()).toBe(403); expect((await blocked.json()).error.code).toBe('LICENSE_READ_ONLY');
   await expect(online).toBeVisible();
   await page.screenshot({ path: 'test-results/h6-license-read-only.png', fullPage: true });
-  await deactivate(); await activate('DEMO-PERPETUAL'); await expect(page.getByTestId('license-state')).toHaveText('Perpetua activa');
+  await deactivate(); await activate('K7M-9R3X-6TVP-8CHD'); await expect(page.getByTestId('license-state')).toHaveText('Perpetua activa');
   await expect(page.getByRole('list', { name: 'Estado de los módulos' }).getByText('Habilitado', { exact: true })).toHaveCount(5);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();

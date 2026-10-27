@@ -22,7 +22,7 @@ test('fase 3: pausa persistente, límites, Word con párrafos vacíos y Excel co
   await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
   await page.getByLabel('Nombre de la biblioteca').fill('Robustez fase 3');
   await page.getByLabel('Modalidad de biblioteca').selectOption('managed');
-  await page.getByLabel('Asignarme como gestor de esta biblioteca').check();
+
   await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
   await page.getByRole('tab', { name: 'Configuración', exact: true }).click();
   await page.getByLabel('Heredar formatos de indexación', { exact: true }).uncheck();

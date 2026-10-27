@@ -19,7 +19,19 @@ func rootJobKind(root Root) string {
 	}
 	return "scan"
 }
+func deletionPendingForRoot(ctx context.Context, q interface{ QueryRowContext(context.Context, string, ...any) *sql.Row }, root Root) (bool, error) {
+	var count int
+	err := q.QueryRowContext(ctx, "SELECT count(*) FROM entity_deletions WHERE execution_status IN ('pending','running') AND ((kind='library' AND entity_id=?) OR (kind='root' AND entity_id=?))", root.LibraryID, root.ID).Scan(&count)
+	return count > 0, err
+}
 func enqueueVerification(ctx context.Context, transaction *sql.Tx, root Root) error {
+	blocked, err := deletionPendingForRoot(ctx, transaction, root)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return domain.Failure("DELETION_ALREADY_RUNNING", "Esta biblioteca o carpeta tiene una eliminación en proceso.", 409)
+	}
 	if root.Source != "managed" {
 		return enqueueScan(ctx, transaction, root.LibraryID, root.ID)
 	}
@@ -31,7 +43,7 @@ func enqueueVerification(ctx context.Context, transaction *sql.Tx, root Root) er
 		return nil
 	}
 	identifier := domain.NewID()
-	_, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'verify_managed',?,?,'{}','queued',?,?)", identifier, root.LibraryID, root.ID, identifier, now(), now())
+	_, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'verify_managed',?,?,'{}','queued',?,?)", identifier, root.LibraryID, root.ID, identifier, now(), now())
 	return err
 }
 
@@ -242,7 +254,7 @@ func (service *Service) cleanExpiredUploads(ctx context.Context) error {
 	if err := service.Identity.License.CheckFeatures(ctx, "managed_libraries"); err != nil {
 		return err
 	}
-	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT u.id,u.document_id,u.private_temporary_locator,d.library_id,coalesce(d.case_id,'') FROM upload_items u JOIN documents d ON d.id=u.document_id JOIN physical_files f ON f.id=d.physical_file_id WHERE u.retain_until IS NOT NULL AND u.retain_until<=? AND u.status IN ('staged','retained') AND d.approval_status IN ('rejected','cancelled') AND f.primary_location_id IS NULL LIMIT 100", now())
+	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT u.id,u.document_id,u.private_temporary_locator,d.library_id,coalesce(d.case_id,'') FROM upload_items u JOIN documents d ON d.id=u.document_id JOIN physical_files f ON f.id=d.physical_file_id WHERE EXISTS(SELECT 1 FROM libraries b WHERE b.id=d.library_id AND b.disabled_at IS NULL) AND u.retain_until IS NOT NULL AND u.retain_until<=? AND u.status IN ('staged','retained') AND d.approval_status IN ('rejected','cancelled') AND f.primary_location_id IS NULL LIMIT 100", now())
 	if err != nil {
 		return err
 	}
@@ -268,6 +280,13 @@ func (service *Service) cleanExpiredUploads(ctx context.Context) error {
 		// Hold the writer while rechecking and unlinking this one owned filename;
 		// submission/cancellation cannot race retention and the operation is idempotent.
 		err = service.Database.Write(ctx, func(transaction *sql.Tx) error {
+			var active int
+			if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM libraries WHERE id=? AND disabled_at IS NULL", item.LibraryID).Scan(&active); err != nil {
+				return err
+			}
+			if active == 0 {
+				return nil
+			}
 			_, mode, err := settingsFor(ctx, transaction, item.LibraryID)
 			if err != nil {
 				return err

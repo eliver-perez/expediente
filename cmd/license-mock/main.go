@@ -34,7 +34,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("use init|serve|issue|vectors --directory PRIVATE_DIR [--listen 127.0.0.1:9443] [--request FILE.licreq --out FILE.lic --key DEMO-PERPETUAL]")
+		return fmt.Errorf("use init|serve|issue|vectors --directory PRIVATE_DIR [--listen 127.0.0.1:9443] [--request FILE.licreq --out FILE.lic --key K7M-9R3X-6TVP-8CHD]")
 	}
 	command := os.Args[1]
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -42,7 +42,7 @@ func run() error {
 	listen := flags.String("listen", "127.0.0.1:9443", "Loopback HTTPS address")
 	requestPath := flags.String("request", "", "Offline request")
 	output := flags.String("out", "", "Response file or vector directory")
-	key := flags.String("key", "DEMO-PERPETUAL", "Public demonstration scenario, never a real key")
+	key := flags.String("key", "K7M-9R3X-6TVP-8CHD", "Public demonstration scenario, never a real key")
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
 	}

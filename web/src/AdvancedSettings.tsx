@@ -1,3 +1,4 @@
+import { useToastState } from './feedback';
 import { useEffect, useState } from 'react';
 import { api, message } from './api';
 import { Notice } from './components';
@@ -18,7 +19,7 @@ export function AdvancedSettings({libraryID,changed}:{libraryID?:string;changed?
  const endpoint=libraryID?`/libraries/${libraryID}/advanced-settings`:'/system/advanced';
  const [saved,setSaved]=useState<Configuration|null>(null),[policy,setPolicy]=useState<Policy|null>(null),[overrides,setOverrides]=useState<Overrides>({});
  const [extensionsText,setExtensionsText]=useState('');
- const [error,setError]=useState(''),[success,setSuccess]=useState(''),[busy,setBusy]=useState(false),[revision,setRevision]=useState(0);
+ const [error,setError]=useState(''),[success,setSuccess]=useToastState(),[busy,setBusy]=useState(false),[revision,setRevision]=useState(0);
  function receive(value:Configuration){setSaved(value);setPolicy(value.effective);setOverrides(value.overrides);setExtensionsText(value.effective.ignored_extensions.join(', '))}
  useEffect(()=>{const controller=new AbortController();api<Configuration>(endpoint,{signal:controller.signal}).then(receive).catch(cause=>{if(!controller.signal.aborted)setError(message(cause))});return()=>controller.abort()},[endpoint,revision]);
  function change(key:Key,value:Policy[Key]){setPolicy(previous=>previous&&({...previous,[key]:value}));setOverrides(previous=>({...previous,[key]:value}))}

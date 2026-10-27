@@ -11,6 +11,9 @@ func licenseBlocked(err error) bool {
 	return err != nil && strings.HasPrefix(failureCode(err), "LICENSE_")
 }
 func (service *Service) jobLicense(ctx context.Context, query storage.Querier, job Job) error {
+	if err := activeLibrary(ctx, query, job.LibraryID); err != nil {
+		return err
+	}
 	if job.Kind == "verify_managed" {
 		return service.Identity.License.Check(ctx, licensing.VerifyIntegrity)
 	}
