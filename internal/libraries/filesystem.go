@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"gestor-documental/internal/domain"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"unicode"
 )
 
@@ -31,7 +34,10 @@ func inspectDirectory(path string) (directoryInfo, error) {
 	}
 	defer directory.Close()
 	info, err := directory.Stat()
-	if err != nil || !info.IsDir() {
+	if err != nil {
+		return result, directoryFailure(path, err)
+	}
+	if !info.IsDir() {
 		return result, invalid("Selecciona una carpeta legible.")
 	}
 	entries, err := directory.ReadDir(128)
@@ -40,7 +46,7 @@ func inspectDirectory(path string) (directoryInfo, error) {
 	}
 	identity, _, err := physicalIdentity(directory)
 	if err != nil {
-		return result, err
+		return result, directoryFailure(path, err)
 	}
 	result = directoryInfo{Path: canonical, Identity: identity, CaseSensitive: true}
 	// Probe entries inside the selected directory, not its parent volume. If the
@@ -69,6 +75,13 @@ func inspectDirectory(path string) (directoryInfo, error) {
 		}
 	}
 	return result, nil
+}
+
+// CheckLinkedDirectory repeats the complete read probe in the service process
+// after a local administrator changes a folder ACL.
+func CheckLinkedDirectory(path string) error {
+	_, err := inspectDirectory(path)
+	return err
 }
 func within(parent, child string, caseSensitive bool) bool {
 	if !caseSensitive {
@@ -144,13 +157,35 @@ func volumeKey(identity string) string {
 }
 
 func directoryFailure(path string, err error) error {
+	shared := strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//")
+	// Preserve the OS error number for support without logging a private path.
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		slog.Warn("directory inspection failed", "os", runtime.GOOS, "errno", uint64(errno), "network_path", shared)
+	}
 	if errors.Is(err, os.ErrPermission) {
-		return domain.Failure("ROOT_PERMISSION_DENIED", "AIDEX no tiene permisos para acceder a esta ubicación. Revisa los permisos de la cuenta del servicio en la carpeta y, si es compartida, en el recurso de red.", 422)
+		if runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM) {
+			return domain.Failure("ROOT_PRIVACY_DENIED", "macOS denegó el acceso del servicio AIDEX a esta ubicación. Revisa Privacidad y seguridad para el proceso del servicio; autorizar el navegador no le concede acceso.", 422)
+		}
+		message := "La cuenta del servicio AIDEX no puede leer esta carpeta. Comprueba que tenga permiso de lectura y recorrido en esta ruta y sus carpetas superiores."
+		if runtime.GOOS == "darwin" {
+			message = "El servicio AIDEX (_aidex) no puede leer esta carpeta. Comprueba los permisos de la ruta y sus carpetas superiores."
+		} else if runtime.GOOS == "windows" {
+			message = `El servicio AIDEX (NT SERVICE\AIDEX) no puede leer esta carpeta. Concede lectura y recorrido a esa cuenta en la ruta y sus carpetas superiores.`
+			if shared {
+				message = "El servicio AIDEX no puede leer este recurso de red. Revisa tanto los permisos del recurso compartido como los de Seguridad para la identidad con la que accede el servicio; la sesión del usuario del navegador no le concede acceso."
+			}
+		}
+		return domain.Failure("ROOT_PERMISSION_DENIED", message, 422)
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return domain.Failure("ROOT_NOT_FOUND", "No se encontró la carpeta indicada. Comprueba que la ruta sea correcta y esté disponible para el equipo donde corre AIDEX.", 422)
+		message := "No se encontró la carpeta indicada. Comprueba que la ruta exista en el equipo donde corre AIDEX."
+		if shared {
+			message = "No se encontró la ruta de red. Comprueba el nombre del equipo, el recurso compartido y las carpetas desde el equipo donde corre AIDEX."
+		}
+		return domain.Failure("ROOT_NOT_FOUND", message, 422)
 	}
-	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") {
+	if shared {
 		return domain.Failure("ROOT_NETWORK_UNAVAILABLE", "No se pudo acceder a la ruta de red. Comprueba la disponibilidad del equipo y el acceso de la cuenta del servicio.", 422)
 	}
 	return domain.Failure("ROOT_READ_FAILED", "No se pudo leer la carpeta. Comprueba su disponibilidad y vuelve a intentarlo; si persiste, consulta Registro de errores.", 422)

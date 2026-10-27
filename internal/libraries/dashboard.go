@@ -3,7 +3,10 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"gestor-documental/internal/domain"
+	"log/slog"
+	"os"
 	"time"
 )
 
@@ -28,6 +31,23 @@ const dashboardFiles = `WITH base AS (
  WHEN job_status='cancelled' THEN 'cancelled'
  WHEN extraction_freshness='current' THEN CASE WHEN result='complete_with_warnings' THEN 'completed_with_warnings' ELSE 'completed' END
  ELSE 'pending' END AS state FROM base) `
+
+// Reuse one materialized document view for totals and groups. Separate statements
+// used to repeat the per-file job and OCR lookups for each chart on every request.
+const dashboardSummary = dashboardFiles + `SELECT count(*),
+ coalesce(sum(created_at>=? AND created_at<=?),0),coalesce(sum(created_at>=? AND created_at<=?),0),
+ coalesce(sum(created_at>=? AND created_at<=?),0),coalesce(sum(storage_source='linked'),0),
+ coalesce(sum(storage_source='managed'),0),coalesce(sum(extraction_freshness='current'),0),
+ coalesce(sum(extraction_freshness='current' AND ocr),0),
+ (SELECT coalesce(json_group_array(json_object('key',format,'count',n)),'[]') FROM
+  (SELECT format,count(*) n FROM files GROUP BY format ORDER BY n DESC,format)),
+ (SELECT coalesce(json_group_array(json_object('key',state,'count',n)),'[]') FROM
+  (SELECT state,count(*) n FROM files GROUP BY state ORDER BY n DESC,state)),
+ (SELECT coalesce(json_group_array(json_object('key',approval_status,'count',n)),'[]') FROM
+  (SELECT approval_status,count(*) n FROM files GROUP BY approval_status ORDER BY n DESC,approval_status)),
+ (SELECT json_array(count(*),coalesce(sum(copies),0),coalesce(sum(copies-1),0)) FROM
+  (SELECT count(*) copies FROM files WHERE hash<>'' GROUP BY hash HAVING count(*)>1))
+ FROM files`
 
 type MetricGroup struct {
 	Key   string `json:"key"`
@@ -127,6 +147,16 @@ func (s *Service) Dashboard(ctx context.Context, p domain.Principal) (Dashboard,
 	if err := systemAccess(p); err != nil {
 		return result, err
 	}
+	started, previous := time.Now(), time.Now()
+	var poolMS, summaryMS, queueMS, cacheMS, policyMS, attemptsMS, errorsMS, dailyMS, commitMS int64
+	mark := func(target *int64) { *target = time.Since(previous).Milliseconds(); previous = time.Now() }
+	defer func() {
+		if time.Since(started) >= 2*time.Second || os.Getenv("AIDEX_DIAG_TIMINGS") == "1" {
+			slog.Warn("dashboard timing", "total_ms", time.Since(started).Milliseconds(), "pool_ms", poolMS,
+				"summary_ms", summaryMS, "queue_ms", queueMS, "cache_ms", cacheMS, "policy_ms", policyMS,
+				"attempts_ms", attemptsMS, "errors_ms", errorsMS, "daily_ms", dailyMS, "commit_ms", commitMS)
+		}
+	}()
 	instant := s.Identity.Now()
 	day := time.Date(instant.Year(), instant.Month(), instant.Day(), 0, 0, 0, 0, instant.Location())
 	week := day.AddDate(0, 0, -(int(day.Weekday())+6)%7)
@@ -138,55 +168,96 @@ func (s *Service) Dashboard(ctx context.Context, p domain.Principal) (Dashboard,
 		return result, err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, dashboardFiles+`SELECT count(*),coalesce(sum(created_at>=? AND created_at<=?),0),coalesce(sum(created_at>=? AND created_at<=?),0),coalesce(sum(created_at>=? AND created_at<=?),0),coalesce(sum(storage_source='linked'),0),coalesce(sum(storage_source='managed'),0),coalesce(sum(extraction_freshness='current'),0),coalesce(sum(extraction_freshness='current' AND ocr),0) FROM files`, domain.Timestamp(day), result.Generated, domain.Timestamp(week), result.Generated, domain.Timestamp(month), result.Generated).Scan(&result.Total, &result.Today, &result.Week, &result.Month, &result.Linked, &result.Managed, &result.Indexed, &result.OCR)
+	mark(&poolMS)
+	var formats, states, approval, duplicates string
+	err = tx.QueryRowContext(ctx, dashboardSummary, domain.Timestamp(day), result.Generated, domain.Timestamp(week), result.Generated, domain.Timestamp(month), result.Generated).Scan(&result.Total, &result.Today, &result.Week, &result.Month, &result.Linked, &result.Managed, &result.Indexed, &result.OCR, &formats, &states, &approval, &duplicates)
 	if err != nil {
 		return result, err
 	}
-	if result.Formats, err = metricGroups(ctx, tx, dashboardFiles+"SELECT format,count(*) FROM files GROUP BY format ORDER BY count(*) DESC,format"); err != nil {
+	if err = json.Unmarshal([]byte(formats), &result.Formats); err != nil {
 		return result, err
 	}
-	if result.States, err = metricGroups(ctx, tx, dashboardFiles+"SELECT state,count(*) FROM files GROUP BY state ORDER BY count(*) DESC,state"); err != nil {
+	if err = json.Unmarshal([]byte(states), &result.States); err != nil {
 		return result, err
 	}
-	if result.Approval, err = metricGroups(ctx, tx, dashboardFiles+"SELECT approval_status,count(*) FROM files GROUP BY approval_status ORDER BY count(*) DESC,approval_status"); err != nil {
+	if err = json.Unmarshal([]byte(approval), &result.Approval); err != nil {
 		return result, err
 	}
-	if err = tx.QueryRowContext(ctx, dashboardFiles+`SELECT count(*),coalesce(sum(copies),0),coalesce(sum(copies-1),0) FROM (SELECT count(*) AS copies FROM files WHERE hash<>'' GROUP BY hash HAVING count(*)>1)`).Scan(&result.DuplicateGroups, &result.DuplicateFiles, &result.ExtraCopies); err != nil {
+	var duplicateCounts [3]int
+	if err = json.Unmarshal([]byte(duplicates), &duplicateCounts); err != nil {
 		return result, err
 	}
+	result.DuplicateGroups, result.DuplicateFiles, result.ExtraCopies = duplicateCounts[0], duplicateCounts[1], duplicateCounts[2]
+	mark(&summaryMS)
 	if result.Queue, err = metricGroups(ctx, tx, `SELECT status,count(*) FROM jobs j JOIN libraries b ON b.id=j.library_id WHERE b.disabled_at IS NULL AND status IN ('queued','retry_wait','paused','running') GROUP BY status UNION ALL SELECT 'preview_'||status,count(*) FROM preview_cache WHERE status IN ('queued','generating') GROUP BY status`); err != nil {
 		return result, err
 	}
+	mark(&queueMS)
 	if err = tx.QueryRowContext(ctx, `SELECT (SELECT coalesce(sum(size_bytes),0) FROM preview_cache),(SELECT count(*) FROM preview_cache WHERE status='ready'),maximum_cache_mb FROM preview_settings WHERE singleton=1`).Scan(&result.CacheBytes, &result.CacheEntries, &result.CacheLimitMB); err != nil {
 		return result, err
 	}
+	mark(&cacheMS)
 	if err = tx.QueryRowContext(ctx, `SELECT paused FROM processing_policy WHERE singleton=1`).Scan(&result.Paused); err != nil {
 		return result, err
 	}
+	mark(&policyMS)
 	// Final successful attempts only, with valid recorded times. Excludes interrupted
 	// or failed attempts and time spent waiting in the queue before acquisition.
 	if err = tx.QueryRowContext(ctx, `SELECT count(*),avg((julianday(a.finished_at)-julianday(a.started_at))*86400) FROM job_attempts a JOIN jobs j ON j.id=a.job_id AND j.fencing_token=a.fencing_token JOIN libraries b ON b.id=j.library_id WHERE b.disabled_at IS NULL AND j.job_type='extract' AND j.status='succeeded' AND coalesce(a.error_code,'')='' AND a.finished_at>=? AND a.finished_at<=? AND julianday(a.finished_at)>=julianday(a.started_at)`, domain.Timestamp(instant.Add(-24*time.Hour)), result.Generated).Scan(&result.TimingSamples, &result.AverageSeconds); err != nil {
 		return result, err
 	}
+	mark(&attemptsMS)
 	if result.Recent, err = recentDiagnostics(ctx, tx); err != nil {
 		return result, err
 	}
+	mark(&errorsMS)
 	if result.Daily, err = dashboardDays(ctx, tx, instant); err != nil {
 		return result, err
 	}
-	return result, tx.Commit()
+	mark(&dailyMS)
+	err = tx.Commit()
+	mark(&commitMS)
+	return result, err
 }
 func (s *Service) DashboardLibraries(ctx context.Context, p domain.Principal, cursor string) (Page[DashboardLibrary], error) {
 	result := Page[DashboardLibrary]{Items: []DashboardLibrary{}}
 	if err := systemAccess(p); err != nil {
 		return result, err
 	}
+	started, previous := time.Now(), time.Now()
+	var poolMS, queryMS, cursorMS int64
+	mark := func(target *int64) { *target = time.Since(previous).Milliseconds(); previous = time.Now() }
+	defer func() {
+		if time.Since(started) >= 2*time.Second || os.Getenv("AIDEX_DIAG_TIMINGS") == "1" {
+			slog.Warn("dashboard libraries timing", "total_ms", time.Since(started).Milliseconds(),
+				"pool_ms", poolMS, "query_ms", queryMS, "cursor_ms", cursorMS)
+		}
+	}()
 	scope := p.User.ID + ":dashboard-libraries"
 	after, err := parseListCursor(cursor, scope)
 	if err != nil {
 		return result, err
 	}
-	rows, err := s.Database.Reader.QueryContext(ctx, dashboardFiles+`SELECT b.id,b.name,b.mode,count(f.id),coalesce(sum(f.extraction_freshness='current'),0),coalesce(sum(f.state='error'),0) FROM libraries b LEFT JOIN files f ON f.library_id=b.id WHERE b.disabled_at IS NULL AND (?='' OR b.created_at<? OR (b.created_at=? AND b.id<?)) GROUP BY b.id ORDER BY b.created_at DESC,b.id DESC LIMIT 26`, after.Time, after.Time, after.Time, after.ID)
+	connection, err := s.Database.Reader.Conn(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer connection.Close()
+	mark(&poolMS)
+	// Only the requested page needs document counts. The complete dashboard view
+	// also probes OCR and processing policy, neither of which affects these cards.
+	rows, err := connection.QueryContext(ctx, `WITH page AS MATERIALIZED (
+ SELECT b.id,b.name,b.mode,b.created_at FROM libraries b
+ WHERE b.disabled_at IS NULL AND (?='' OR b.created_at<? OR (b.created_at=? AND b.id<?))
+ ORDER BY b.created_at DESC,b.id DESC LIMIT 26
+) SELECT b.id,b.name,b.mode,count(d.id),
+ coalesce(sum(f.extraction_freshness='current'),0),
+ coalesce(sum(CASE WHEN j.status='failed' AND NOT (coalesce(v.index_block_reason,'')<>'' AND f.extraction_freshness<>'current') THEN 1 ELSE 0 END),0)
+ FROM page b LEFT JOIN documents d ON d.library_id=b.id AND d.deleted_at IS NULL
+ LEFT JOIN physical_files f ON f.id=d.physical_file_id
+ LEFT JOIN content_versions v ON v.id=f.current_content_version_id
+ LEFT JOIN jobs j ON j.id=(SELECT id FROM jobs WHERE physical_file_id=f.id AND target_version=f.current_content_version_id AND job_type='extract' ORDER BY created_at DESC,id DESC LIMIT 1)
+ GROUP BY b.id ORDER BY b.created_at DESC,b.id DESC`, after.Time, after.Time, after.Time, after.ID)
 	if err != nil {
 		return result, err
 	}
@@ -202,14 +273,16 @@ func (s *Service) DashboardLibraries(ctx context.Context, p domain.Principal, cu
 		return result, err
 	}
 	rows.Close()
+	mark(&queryMS)
 	if len(result.Items) > 25 {
 		result.Items = result.Items[:25]
 		last := result.Items[24]
 		var created string
-		if err = s.Database.Reader.QueryRowContext(ctx, "SELECT created_at FROM libraries WHERE id=?", last.ID).Scan(&created); err != nil {
+		if err = connection.QueryRowContext(ctx, "SELECT created_at FROM libraries WHERE id=?", last.ID).Scan(&created); err != nil {
 			return result, err
 		}
 		result.Next = nextListCursor(scope, created, last.ID)
 	}
+	mark(&cursorMS)
 	return result, nil
 }

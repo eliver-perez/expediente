@@ -54,6 +54,12 @@ Function .onInit
     ${If} $0 != ""
         StrCpy $INSTDIR $0
     ${EndIf}
+    ReadRegStr $1 HKLM "Software\Classes\aidex-auth\shell\open\command" ""
+    ${If} $1 != ""
+    ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        MessageBox MB_ICONSTOP "Otro programa registra el protocolo local aidex-auth. Se conserva ese registro; AIDEX no se instalará sobre él."
+        Abort
+    ${EndIf}
     ReadRegStr $SelectedPort HKLM "Software\AIDEX" "Port"
     ${If} $SelectedPort == ""
         StrCpy $SelectedPort "18090"
@@ -182,6 +188,17 @@ Section "Instalar"
     Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"
     CreateShortCut "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk" "$INSTDIR\AIDEX.exe"
     CreateShortCut "$DESKTOP\AIDEX.lnk" "$INSTDIR\AIDEX.exe"
+    ; The browser sends only a one-use random ticket to the local launcher.
+    ; The launcher invokes the installed utility with UAC; no path is accepted
+    ; from the URL, and the service API itself never modifies ACLs.
+    ReadRegStr $1 HKLM "Software\Classes\aidex-auth\shell\open\command" ""
+    ${If} $1 != ""
+    ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        Abort "Otro programa registra el protocolo de autorización aidex-auth. No se reemplazó su registro."
+    ${EndIf}
+    WriteRegStr HKLM "Software\Classes\aidex-auth" "" "AIDEX - autorización local de carpetas"
+    WriteRegStr HKLM "Software\Classes\aidex-auth" "URL Protocol" ""
+    WriteRegStr HKLM "Software\Classes\aidex-auth\shell\open\command" "" '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayName" "AIDEX"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayVersion" "${VERSION}"
@@ -200,6 +217,10 @@ Section "Uninstall"
     Call un.ReadAidexLog
     ${If} $0 != 0
         Abort "No se pudo completar la preparación de la desinstalación. Consulta el detalle; se conserva el programa."
+    ${EndIf}
+    ReadRegStr $1 HKLM "Software\Classes\aidex-auth\shell\open\command" ""
+    ${If} $1 == '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        DeleteRegKey HKLM "Software\Classes\aidex-auth"
     ${EndIf}
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX"
     Delete "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk"

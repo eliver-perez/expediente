@@ -21,8 +21,11 @@ if ($Issues.Count -gt 0) {
 }
 if ($null -eq $Ast.ParamBlock) { throw 'Installer parameter block was not recognized.' }
 $Parameters = @($Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-$RequiredParameters = if ($Kind -eq 'Transport') { @('ManageScript','Action','InstallRoot','LogPath','TimeoutSeconds') } else { @('Action','InstallRoot','PreflightBinary','EraseInternalData') }
+$RequiredParameters = if ($Kind -eq 'Transport') { @('ManageScript','Action','InstallRoot','LogPath','TimeoutSeconds') } else { @('Action','InstallRoot','PreflightBinary','EraseInternalData','Ticket') }
 foreach ($Required in $RequiredParameters) {
     if ($Required -notin $Parameters) { throw "Missing installer parameter: $Required" }
+}
+if ($Kind -eq 'Manage' -and (!$Text.Contains("'AuthorizeFolder'") -or !$Text.Contains('/local-folder-authorizations/'))) {
+    throw 'Missing local folder authorization workflow in the packaged utility.'
 }
 Write-Host "Windows PowerShell payload: encoding, syntax and parameters OK (parser $($PSVersionTable.PSVersion))"

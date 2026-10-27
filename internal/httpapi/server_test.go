@@ -187,6 +187,9 @@ func TestEulaAcceptanceAndDeactivatedSessionCannotReadDocuments(t *testing.T) {
 	if response := fixture.request("GET", "/libraries", "", cookie, ""); response.Code != 403 || !strings.Contains(response.Body.String(), "EULA_ACCEPTANCE_REQUIRED") {
 		t.Fatal("documentary API available before accepting EULA", response.Code, response.Body.String())
 	}
+	if response := fixture.request("GET", "/license", "", cookie, ""); response.Code != 200 {
+		t.Fatal("license management blocked before EULA acceptance", response.Code, response.Body.String())
+	}
 	if response := fixture.request("POST", "/eula/accept", `{"version":"bad","sha256":"bad","accept":true}`, cookie, session.CSRFToken); response.Code != 422 {
 		t.Fatal(response.Code)
 	}

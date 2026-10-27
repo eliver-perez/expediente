@@ -43,6 +43,10 @@ def check_docs(directory):
         if 'third-party' in path.parts:
             continue  # Supplier recipes/licenses retain upstream names and links.
         text = path.read_text(encoding='utf-8')
+        if path.name == 'PRUEBAS-WINDOWS-1.0.0.md':
+            legacy_list = '`AIBID`, `AIBIDTest` o `AIBID-Test`'
+            assert text.count(legacy_list) == 1
+            text = text.replace(legacy_list, 'servicios anteriores')
         assert not re.search(r'AIDEX (?:2\.0|Pruebas|Test|RC)', text)
         assert not re.search(r'a' + r'ibid', text, re.I)
         for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
@@ -54,6 +58,22 @@ def check_docs(directory):
 def check_identity(name, data):
     former = bytes([97, 105, 98, 105, 100])
     assert former not in name.lower().encode(), name
+    if name in ('manage.ps1', '$PLUGINSDIR/manage.ps1'):
+        # The installer must reject a pre-existing legacy service without
+        # deleting its data. These names are allowed only in that exact guard.
+        start = data.index(b'function Assert-NoLegacyServices {')
+        end = data.index(b'function ConvertTo-AidexNativeArgument', start)
+        guard = data[start:end]
+        assert guard.count(b"@('AIBID', 'AIBIDTest', 'AIBID-Test')") == 1
+        assert b'Get-Service -Name $LegacyName' in guard
+        assert b'throw "Se detect' in guard
+        data = data[:start] + data[end:]
+    if name in ('docs/PRUEBAS-WINDOWS-1.0.0.md', '$PLUGINSDIR/docs/PRUEBAS-WINDOWS-1.0.0.md'):
+        # The operator guide names legacy services solely to explain the
+        # installer's preservation/stop behavior during migration.
+        legacy_list = b'`AIBID`, `AIBIDTest` o `AIBID-Test`'
+        assert data.count(legacy_list) == 1
+        data = data.replace(legacy_list, b'previous services')
     # Exact pinned supplier data: numeric Unicode conversion tables and Gaelic
     # translations of "alphabet" contain incidental matches, unrelated to branding.
     supplier = {
@@ -163,6 +183,9 @@ def main():
             assert hashlib.sha256(path.read_bytes()).hexdigest() == item['sha256']
         builder.check_windows_icon(manifest.parent / 'aidex-server.exe')
         builder.check_windows_icon(manifest.parent / 'AIDEX.exe', gui=True)
+        installer_source = (builder.ROOT / 'packaging/windows/installer.nsi').read_text(encoding='utf-8-sig')
+        assert 'Software\\Classes\\aidex-auth\\shell\\open\\command' in installer_source
+        assert 'DeleteRegKey HKLM "Software\\Classes\\aidex-auth"' in installer_source
         builder.check_pe_imports(manifest.parent / 'tools/Library/bin')
         assert not (manifest.parent / 'gestor-documental.exe').exists()
         check_docs(manifest.parent / 'docs')

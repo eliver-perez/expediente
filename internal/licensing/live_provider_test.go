@@ -116,7 +116,7 @@ func TestLiveProvider(t *testing.T) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cleanupCancel()
 		result, err := client.Online(cleanupCtx, "deactivate", domain.NewID(), "", nil, metadata())
-		if err != nil || result.State != "revoked" || result.WriteAllowed || result.Diagnostic != "ACTIVATION_DEACTIVATED" {
+		if err != nil || result.State != "deactivated" || result.WriteAllowed || result.ReadAllowed || result.Diagnostic != "ACTIVATION_DEACTIVATED" {
 			t.Error("temporary installation requires confirmed release; error code:", errorCode(err))
 		} else {
 			t.Log("PASS cleanup: temporary activation deactivated and slot released")
@@ -135,7 +135,7 @@ func TestLiveProvider(t *testing.T) {
 	}
 	id := strings.TrimSpace(string(idBytes))
 	initial := status()
-	if id == "" || initial.State == "revoked" {
+	if id == "" || initial.State == "revoked" || initial.State == "deactivated" {
 		id = domain.NewID()
 		writeRequestID(id)
 	}
@@ -283,26 +283,30 @@ func TestLiveProvider(t *testing.T) {
 		t.Fatal("deactivation failed; error code:", errorCode(err))
 	}
 	needsRelease = false
-	if state.State != "revoked" || state.WriteAllowed || !state.ReadAllowed || state.Diagnostic != "ACTIVATION_DEACTIVATED" {
-		t.Fatal("deactivation state inconsistent")
+	if state.State != "deactivated" || state.WriteAllowed || state.ReadAllowed || state.Diagnostic != "ACTIVATION_DEACTIVATED" {
+		t.Fatal("deactivation state inconsistent", state.State, state.ReadAllowed, state.WriteAllowed, state.Diagnostic)
 	}
 	if replay, err := online("deactivate", deactivateID, ""); err != nil || replay.WriteAllowed {
 		t.Fatal("deactivation replay failed")
 	}
 	rejectImport("deactivated signed license", compact, "ACTIVATION_DEACTIVATED")
 	reopen(ProviderOptions())
-	if state = status(); state.State != "revoked" || state.WriteAllowed {
+	if state = status(); state.State != "deactivated" || state.WriteAllowed || state.ReadAllowed {
 		t.Fatal("deactivation not persistent")
 	}
-	t.Log("PASS confirmed deactivation, read-only state, idempotent replay, anti-reactivation floor and restart")
-	// Invalid key test is made only while this installation is deactivated.
-	if _, err := online("activate", domain.NewID(), "AIDEX-INVALID-QA-"+domain.NewID()); errorCode(err) != "LICENSE_NOT_FOUND" {
-		t.Fatal("invalid product key unexpected result:", errorCode(err))
+	t.Log("PASS confirmed deactivation, blocked document access, idempotent replay, anti-reactivation floor and restart")
+	// Invalid keys cannot revive a deactivated installation. A malformed code
+	// must fail locally; a well-formed unknown code is rejected by the provider.
+	if _, err := online("activate", domain.NewID(), "not-a-product-code"); errorCode(err) != "LICENSE_KEY_INVALID" {
+		t.Fatal("malformed product key unexpected result:", errorCode(err))
+	}
+	if _, err := online("activate", domain.NewID(), "ZZZ-ZZZZ-ZZZZ-ZZZZ"); errorCode(err) != "LICENSE_NOT_FOUND" {
+		t.Fatal("unknown product key unexpected result:", errorCode(err))
 	}
 	if status().WriteAllowed {
 		t.Fatal("invalid product key enabled installation")
 	}
-	t.Log("PASS provider rejected invalid product key with LICENSE_NOT_FOUND")
+	t.Log("PASS local syntax rejection and provider rejection of unknown product key")
 	id = domain.NewID()
 	writeRequestID(id)
 	state, err = online("activate", id, productKey)
@@ -333,7 +337,7 @@ func TestLiveProvider(t *testing.T) {
 	needsRelease = false
 	reopen(ProviderOptions())
 	final := status()
-	if final.State != "revoked" || final.WriteAllowed || !final.ReadAllowed || final.Diagnostic != "ACTIVATION_DEACTIVATED" {
+	if final.State != "deactivated" || final.WriteAllowed || final.ReadAllowed || final.Diagnostic != "ACTIVATION_DEACTIVATED" {
 		t.Fatal("final deactivation not persistent")
 	}
 	// Journal/artifacts must not retain the commercial credential.

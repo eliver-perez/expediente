@@ -8,6 +8,34 @@ async function login(page: Page) {
   await expect(page.getByRole('heading', { name: 'Mi cuenta', exact: true })).toBeVisible();
 }
 
+test('El CLUF pendiente persiste ante rutas directas y permite activar o rechazar', async ({ page }) => {
+  await page.route('**/api/v1/auth/session', async route => {
+    const response = await route.fetch();
+    const session = await response.json();
+    await route.fulfill({ response, json: { ...session, eula_accepted: false } });
+  });
+  await page.route('**/api/v1/eula', async route => {
+    const response = await route.fetch();
+    const contract = await response.json();
+    await route.fulfill({ response, json: { ...contract, accepted: false } });
+  });
+  await page.goto('/login');
+  await page.getByLabel('Usuario', { exact: true }).fill('admin-e2e');
+  await page.getByLabel('Contraseña', { exact: true }).fill('Browser-fixture-password-2026');
+  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Contrato de licencia de AIDEX' })).toBeVisible();
+  await expect(page.locator('.eula-text')).not.toContainText('## 18.');
+  await page.goto('/libraries');
+  await expect(page.getByRole('heading', { name: 'Contrato de licencia de AIDEX' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Bibliotecas', exact: true })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Administrar licencia' }).click();
+  await expect(page.getByRole('heading', { name: 'Licencia de AIDEX' })).toBeVisible();
+  await page.getByRole('link', { name: 'Leer contrato' }).click();
+  await expect(page.getByRole('button', { name: 'Rechazar y cerrar sesión' })).toBeVisible();
+  await page.getByRole('button', { name: 'Rechazar y cerrar sesión' }).click();
+  await expect(page.getByRole('heading', { name: 'Iniciar sesión' })).toBeVisible();
+});
+
 test('Acerca de AIDEX muestra el CLUF completo sin aceptarlo al consultarlo', async ({ page }) => {
   await login(page);
   await page.getByRole('link', { name: 'Acerca de AIDEX' }).click();

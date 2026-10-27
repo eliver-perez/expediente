@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"gestor-documental/internal/backups"
@@ -38,6 +40,8 @@ type Server struct {
 	secure         bool
 	trustedProxies []netip.Prefix
 	network        *network.Service
+	folderAuthMu   sync.Mutex
+	folderAuth     map[string]*folderAuthorization
 }
 
 func (server *Server) WithBackups(service *backups.Service) *Server {
@@ -52,7 +56,7 @@ func (server *Server) WithNetwork(service *network.Service) *Server {
 
 func New(service *identity.Service, configuration config.Config, logger *slog.Logger) *Server {
 	publicURL, _ := url.Parse(configuration.PublicURL)
-	server := &Server{libraries: libraries.New(service), identity: service, configuration: configuration, logger: logger, publicHost: publicURL.Host, secure: publicURL.Scheme == "https"}
+	server := &Server{libraries: libraries.New(service), identity: service, configuration: configuration, logger: logger, publicHost: publicURL.Host, secure: publicURL.Scheme == "https", folderAuth: make(map[string]*folderAuthorization)}
 	for _, cidr := range configuration.TrustedProxies {
 		prefix, err := netip.ParsePrefix(cidr)
 		if err == nil {
@@ -79,6 +83,9 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/eula", server.protected("", true, server.eulaGet))
 	mux.HandleFunc("GET /api/v1/about", server.protected("", true, server.about))
 	mux.HandleFunc("POST /api/v1/eula/accept", server.protected("license.manage", true, server.eulaAccept))
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations", server.protected("system.configure", true, server.startFolderAuthorization))
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/claim", server.claimFolderAuthorization)
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/finish", server.finishFolderAuthorization)
 	mux.HandleFunc("GET /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
 	mux.HandleFunc("POST /api/v1/system/previews/clear", server.protected("system.configure", true, server.clearPreviews))
@@ -210,7 +217,8 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 			server.fail(writer, request, domain.Failure("HTTPS_REQUIRED", "Se requiere una conexión HTTPS.", 403))
 			return
 		}
-		if request.Method != "GET" && request.Method != "HEAD" {
+		localFolderHandoff := runtime.GOOS == "windows" && strings.HasPrefix(request.URL.Path, "/api/v1/local-folder-authorizations/") && localOnly(request)
+		if request.Method != "GET" && request.Method != "HEAD" && !localFolderHandoff {
 			expectedOrigin := server.configuration.PublicURL
 			if server.configuration.NetworkMode == "lan" {
 				expectedOrigin = "http://" + request.Host
@@ -295,7 +303,7 @@ func (server *Server) fail(writer http.ResponseWriter, request *http.Request, er
 		server.logger.Error("request failed", "request_id", metadata(request).RequestID, "error_type", fmt.Sprintf("%T", err))
 	}
 	// An older in-flight request must not delete a cookie issued by a newer login.
-	if failure.Status >= 500 || failure.Code == "ROOT_PERMISSION_DENIED" || failure.Code == "ROOT_NOT_FOUND" || failure.Code == "ROOT_NETWORK_UNAVAILABLE" || failure.Code == "ROOT_READ_FAILED" {
+	if failure.Status >= 500 || failure.Code == "ROOT_PERMISSION_DENIED" || failure.Code == "ROOT_PRIVACY_DENIED" || failure.Code == "ROOT_NOT_FOUND" || failure.Code == "ROOT_NETWORK_UNAVAILABLE" || failure.Code == "ROOT_READ_FAILED" {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = diagnostics.Record(ctx, server.identity.Database, "http", failure.Code, diagnostics.Context{RequestID: metadata(request).RequestID, Operation: "http", HTTPStatus: failure.Status})

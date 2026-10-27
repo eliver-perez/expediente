@@ -74,6 +74,13 @@ func TestObservabilityDashboardCountsDatesAndPublishedContent(t *testing.T) {
 	if len(libraries.Items) != 2 {
 		t.Fatal(libraries)
 	}
+	byID := map[string]DashboardLibrary{}
+	for _, item := range libraries.Items {
+		byID[item.ID] = item
+	}
+	if byID[managed].Total != 5 || byID[managed].Indexed != 2 || byID[managed].Errors != 1 || byID[linked].Total != 1 {
+		t.Fatal("library cards disagree with dashboard", libraries.Items)
+	}
 	raw, _ := json.Marshal(report)
 	if strings.Contains(string(raw), "private-") || strings.Contains(string(raw), "Contenido idéntico") {
 		t.Fatal("document content leaked")

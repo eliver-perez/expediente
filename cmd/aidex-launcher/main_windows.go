@@ -6,16 +6,57 @@ import (
 	"golang.org/x/sys/windows"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 )
 
 func main() {
+	if len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "aidex-auth://") {
+		if message := openFolderAuthorization(os.Args[1]); message != "" {
+			showMessage(message)
+			os.Exit(1)
+		}
+		return
+	}
 	if message := openApplication(); message != "" {
-		text, _ := windows.UTF16PtrFromString(message)
-		caption, _ := windows.UTF16PtrFromString("AIDEX")
-		_, _ = windows.MessageBox(0, text, caption, windows.MB_OK|windows.MB_ICONINFORMATION)
+		showMessage(message)
 		os.Exit(1)
 	}
+}
+
+func showMessage(message string) {
+	text, _ := windows.UTF16PtrFromString(message)
+	caption, _ := windows.UTF16PtrFromString("AIDEX")
+	_, _ = windows.MessageBox(0, text, caption, windows.MB_OK|windows.MB_ICONINFORMATION)
+}
+
+var folderTicket = regexp.MustCompile(`^aidex-auth://authorize/([a-f0-9]{64})/?$`)
+
+func openFolderAuthorization(value string) string {
+	parts := folderTicket.FindStringSubmatch(value)
+	if parts == nil {
+		return "La solicitud de autorización de carpeta no es válida."
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return "No se pudo localizar la utilidad instalada de AIDEX."
+	}
+	root := filepath.Dir(executable)
+	script := filepath.Join(root, "manage.ps1")
+	if _, err := os.Stat(script); err != nil {
+		return "Falta la utilidad de administración de AIDEX. Reinstala el programa."
+	}
+	// Only a random ticket crosses the browser/protocol boundary; the elevated
+	// utility obtains the immutable requested path directly from the local service.
+	powershell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	verb, _ := windows.UTF16PtrFromString("runas")
+	program, _ := windows.UTF16PtrFromString(powershell)
+	arguments, _ := windows.UTF16PtrFromString(`-NoProfile -ExecutionPolicy Bypass -File "` + script + `" -Action AuthorizeFolder -InstallRoot "` + root + `" -Ticket ` + parts[1])
+	if err := windows.ShellExecute(0, verb, program, arguments, nil, windows.SW_SHOWNORMAL); err != nil {
+		return "No se pudo abrir la autorización de Windows. Vuelve a intentarlo desde este equipo."
+	}
+	return ""
 }
 
 func openApplication() string {
@@ -26,7 +67,9 @@ func openApplication() string {
 	publicPath := filepath.Join(filepath.Dir(executable), "launcher.json")
 	if commonData := os.Getenv("ProgramData"); commonData != "" {
 		candidate := filepath.Join(commonData, "AIDEX", "connection.json")
-		if _, statErr := os.Lstat(candidate); statErr == nil { publicPath = candidate }
+		if _, statErr := os.Lstat(candidate); statErr == nil {
+			publicPath = candidate
+		}
 	}
 	file, err := os.Open(publicPath)
 	if err != nil {

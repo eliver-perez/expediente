@@ -3,8 +3,8 @@ import { confirmAction } from './feedback';
 import { useToastState } from './feedback';
 import { Accordion } from './Accordion';
 import { RootInterval } from './RootInterval';
-import { useEffect, useState, type FormEvent } from 'react';
-import { api, formatDate, message } from './api';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { api, APIError, formatDate, message } from './api';
 import { Notice, usePage } from './components';
 import { diagnosticLabel, type Library, type Root, type RootPlan } from './libraryTypes';
 
@@ -17,13 +17,50 @@ export function Roots({ library, refresh }: { library: Library; refresh: () => v
     return () => clearTimeout(timer);
   }, [roots.busy, roots.reload]);
   const [plan, setPlan] = useState<RootPlan | null>(null);
+  const [serverOS, setServerOS] = useState('');
+  const [accessIssue, setAccessIssue] = useState<{ path: string; source: string; code: string } | null>(null);
+  const [launchURL, setLaunchURL] = useState('');
+  const accessDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { void api<{ os: string }>('/about').then(result => setServerOS(result.os)).catch(() => {}); }, []);
+  useEffect(() => { if (accessIssue && !accessDialog.current?.open) accessDialog.current?.showModal(); else if (!accessIssue && accessDialog.current?.open) accessDialog.current?.close(); }, [accessIssue]);
   const [retirement, setRetirement] = useState<{ plan_id: string; root_id: string; reference_count: number; affected_case_count: number } | null>(null);
   const [error, setError] = useState(''); const [success, setSuccess] = useToastState(); const [busy, setBusy] = useState(false);
   async function operation(action: () => Promise<unknown>, text: string) { if (busy) return; setBusy(true); setError(''); setSuccess(''); try { await action(); roots.reload(); refresh(); setSuccess(text); } catch (error) { setError(message(error)); } finally { setBusy(false); } }
-  function inspect(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); void operation(async () => setPlan(await api<RootPlan>(`/libraries/${library.id}/root-plans`, { method: 'POST', body: { server_path: data.get('server_path'), storage_source: data.get('source') || 'linked' } })), 'Carpeta inspeccionada. Revisa el resultado antes de confirmar.'); }
+  async function inspectPath(path: string, source: string) {
+    if (busy) return;
+    setBusy(true); setError(''); setSuccess('');
+    try {
+      setPlan(await api<RootPlan>(`/libraries/${library.id}/root-plans`, { method: 'POST', body: { server_path: path, storage_source: source } }));
+      setAccessIssue(null); setLaunchURL(''); setSuccess('Carpeta inspeccionada. Revisa el resultado antes de confirmar.'); roots.reload(); refresh();
+    } catch (cause) {
+      if (cause instanceof APIError && (cause.code === 'ROOT_PERMISSION_DENIED' || cause.code === 'ROOT_PRIVACY_DENIED')) {
+        setAccessIssue({ path, source, code: cause.code }); setLaunchURL('');
+      } else setError(message(cause));
+    } finally { setBusy(false); }
+  }
+  function inspect(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); void inspectPath(String(data.get('server_path') || ''), String(data.get('source') || 'linked')); }
+  async function authorizeFolder() {
+    if (!accessIssue || busy) return;
+    setBusy(true); setError('');
+    try {
+      const result = await api<{ launch_url: string }>('/local-folder-authorizations', { method: 'POST', body: { library_id: library.id, server_path: accessIssue.path, storage_source: accessIssue.source } });
+      setLaunchURL(result.launch_url);
+      window.location.href = result.launch_url;
+    } catch (cause) { setError(message(cause)); }
+    finally { setBusy(false); }
+  }
   const parent = plan ? roots.items.find(root => root.id === plan.related_root_ids[0]) : undefined;
   const prefix = parent?.server_path && plan ? plan.server_path.replaceAll('\\', '/').slice(parent.server_path.replaceAll('\\', '/').length + 1) : '';
   return <><Notice text={error || roots.error} /><Notice text={success} kind="success" />
+    <dialog ref={accessDialog} className="contract-dialog folder-access-dialog" aria-labelledby="folder-access-title" onCancel={() => setAccessIssue(null)}>
+      <header><h2 id="folder-access-title">Autorizar acceso a carpeta</h2><button type="button" className="secondary" onClick={() => setAccessIssue(null)}>Cerrar</button></header>
+      <p>El servicio AIDEX no puede leer <strong className="path-text">{accessIssue?.path}</strong>.</p>
+      {serverOS === 'windows' ? accessIssue?.path.startsWith('\\\\') ? <p>Es una carpeta compartida de otro equipo. AIDEX no cambiará los permisos de ese servidor. Autoriza allí la lectura para la identidad que usa el servicio y comprueba después el acceso.</p> : accessIssue?.source === 'linked' ? <><p>Desde este mismo equipo, un administrador de Windows puede conceder a <code>NT SERVICE\AIDEX</code> solo lectura y recorrido en la carpeta elegida y su contenido. Se mostrará la ruta y el alcance antes de UAC. No se modifican otras carpetas ni se concede escritura.</p><button disabled={busy} onClick={() => void authorizeFolder()}>Autorizar acceso</button>{launchURL && <p>Si Windows no abrió la utilidad, <a href={launchURL}>abrir autorización local</a>. Después usa «Comprobar acceso».</p>}</> : <p>Este destino administrado necesita permisos de escritura. La autorización automática de solo lectura no es suficiente; solicita al administrador que configure los permisos de ese destino.</p>
+        : serverOS === 'darwin' && accessIssue?.code === 'ROOT_PRIVACY_DENIED' ? <><p>En la Mac donde corre el servicio, abre Privacidad y seguridad → Acceso total al disco. Autoriza el ejecutable <code>/Library/Application Support/AIDEX/bin/aidex-server</code> que ejecuta el LaunchDaemon como <code>_aidex</code>; autorizar el navegador no sirve. Si tu versión de macOS no permite añadir ese componente, utiliza una ubicación no protegida por privacidad con lectura para <code>_aidex</code>.</p><button onClick={() => { window.location.href = 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles'; }}>Abrir ajustes de privacidad</button></>
+        : <p>El administrador debe conceder lectura y recorrido al usuario del servicio en esta carpeta y sus directorios superiores. En Linux comprueba las ACL de la ruta exacta para <code>aidex</code>; no es necesario abrir permisos para todos los usuarios.</p>}
+      <div className="actions"><button className="secondary" disabled={busy} onClick={() => accessIssue && void inspectPath(accessIssue.path, accessIssue.source)}>Comprobar acceso</button></div>
+      <Notice text={error} />
+    </dialog>
     <section className="card"><div className="section-heading"><div><h2>Carpetas de la biblioteca</h2><p className="muted">Las vinculadas se consultan sin mover originales. Las administradas guardan los documentos confirmados y verifican su integridad.</p></div><button className="secondary" onClick={roots.reload}>Actualizar raíces</button></div>
       {roots.items.length === 0 && <p className="empty-state">Añade la primera carpeta para comenzar a indexar.</p>}
       {roots.items.filter(root => root.status !== 'superseded').map(root => <div className="root-row" key={root.id}><strong className="path-text">{root.server_path || 'Carpeta vinculada'}</strong><div className="document-badges"><span className="badge">{root.storage_source === 'managed' ? 'Destino administrado' : 'Vinculada'}</span><span className={`badge ${root.status === 'active' ? 'positive' : ''}`}>{({ active: 'Activa', inaccessible: 'Sin acceso', disabled: 'Pausada', retired: 'Retirada' } as Record<string, string>)[root.status]}</span><span className="muted">{root.storage_source === 'managed' ? root.watch_mode === 'paused' ? 'Verificación pausada' : 'Verificación periódica' : root.watch_mode === 'native' ? 'Vigilancia nativa' : root.watch_mode === 'paused' ? 'Vigilancia pausada' : 'Reconciliación periódica'}</span></div><small>Última comprobación: {formatDate(root.last_scan_at || null)}</small>{root.last_scan_result && <small>Último recorrido: {({running:'En curso',complete:'Terminado',partial:'Terminado con incidencias',failed:'Con errores',superseded:'Sustituido'} as Record<string,string>)[root.last_scan_result] || 'Interrumpido'} · {formatDate(root.last_scan_completed_at || null)} · {root.last_scan_changes} altas o cambios de contenido</small>}{root.last_error_code && <p className="diagnostic">{diagnosticLabel[root.last_error_code] || root.last_error_code}</p>}

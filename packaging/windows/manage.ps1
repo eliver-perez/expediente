@@ -1,8 +1,9 @@
 ﻿#Requires -Version 5.1
-param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor','Port','CheckPort')][string]$Action,
+param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor','Port','CheckPort','AuthorizeFolder')][string]$Action,
       [string]$InstallRoot = $PSScriptRoot,
       [string]$PreflightBinary = '',
       [int]$Port = 0,
+      [string]$Ticket = '',
       [switch]$EraseInternalData)
 $ErrorActionPreference = 'Stop'
 # PowerShell 5.1 otherwise decodes Go's UTF-8 output using the console codepage.
@@ -157,6 +158,40 @@ function Remove-PackagedFiles {
     Remove-Item -LiteralPath $Manifest
     # Leave directories in place; the installer only removes empty top-level folders.
 }
+function Authorize-AidexFolder {
+    if ($Ticket -cnotmatch '^[a-f0-9]{64}$') { throw 'Solicitud de autorización inválida.' }
+    if (!(Test-Path -LiteralPath $Config -PathType Leaf)) { throw 'No se encontró la configuración de AIDEX.' }
+    $Service = Get-Service -Name $ServiceName -ErrorAction Stop
+    if ($Service.Status -ne 'Running') { throw 'El servicio AIDEX debe estar iniciado para verificar el acceso.' }
+    $Settings = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
+    $Listen = [string]$Settings.listen_address
+    if ($Listen -notmatch '^(127\.0\.0\.1|0\.0\.0\.0):([0-9]{1,5})$') { throw 'Puerto local de AIDEX no válido.' }
+    $LocalPort = [int]$Matches[2]
+    if ($LocalPort -lt 1 -or $LocalPort -gt 65535) { throw 'Puerto local de AIDEX no válido.' }
+    $Endpoint = "http://127.0.0.1:$LocalPort/api/v1/local-folder-authorizations/$Ticket"
+    $Request = Invoke-RestMethod -Method Post -Uri "$Endpoint/claim" -TimeoutSec 10 -ErrorAction Stop
+    $Target = [string]$Request.server_path
+    try {
+        if ($Request.scope -ne 'linked-read-traverse' -or $Target -cnotmatch '^[A-Za-z]:\\[^\\]' -or $Target.Length -gt 1024) { throw 'La solicitud contiene una ruta o alcance no válido.' }
+        $Full = [IO.Path]::GetFullPath($Target)
+        if ($Full.Length -le 3 -or $Full.StartsWith('\\') -or !(Test-Path -LiteralPath $Full -PathType Container)) { throw 'La carpeta local seleccionada ya no existe.' }
+        Assert-PrivatePath $Full
+        Add-Type -AssemblyName System.Windows.Forms
+        $Text = "AIDEX solicita lectura y recorrido, con herencia normal, únicamente sobre esta carpeta y su contenido:`n`n$Full`n`nNo se concederá escritura ni Control total. ¿Autorizar al servicio NT SERVICE\AIDEX?"
+        $Choice = [System.Windows.Forms.MessageBox]::Show($Text, 'Autorizar acceso de AIDEX', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning, [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
+        if ($Choice -ne [System.Windows.Forms.DialogResult]::Yes) { throw 'Autorización cancelada por el administrador.' }
+        $ServiceSID = (New-Object Security.Principal.NTAccount('NT SERVICE', $ServiceName)).Translate([Security.Principal.SecurityIdentifier]).Value
+        & icacls.exe $Full /grant ('*' + $ServiceSID + ':(OI)(CI)(RX)') | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Windows no pudo conceder lectura y recorrido a la carpeta.' }
+    } finally {
+        # The service, not this elevated process, decides whether the ACL worked.
+        try {
+            $Result = Invoke-RestMethod -Method Post -Uri "$Endpoint/finish" -TimeoutSec 10 -ErrorAction Stop
+            if ($Result.accessible) { Write-Host 'Acceso verificado por el servicio AIDEX.' }
+            else { Write-Warning 'El servicio todavía no puede leer la carpeta o algún elemento requerido. Revisa los permisos heredados.' }
+        } catch { Write-Warning 'No se pudo completar la comprobación desde el servicio. Usa Comprobar acceso en AIDEX.' }
+    }
+}
 try {
     $Administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (!$Administrator) {
@@ -286,6 +321,7 @@ try {
             }
         }
         'Doctor' { Invoke-Native $Binary @('doctor','--config',$Config,'--sample-directory',(Join-Path $InstallRoot 'docs\pdf')) }
+        'AuthorizeFolder' { Authorize-AidexFolder }
         'Remove' {
             Stop-Aidex
             if (Test-Path $Config) { Invoke-Native $Binary @('check-state','--config',$Config) }

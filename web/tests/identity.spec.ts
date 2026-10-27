@@ -51,6 +51,19 @@ test('administrar usuarios, cambiar contraseña, ver auditoría y denegar privil
   await personalContext.close();
 });
 
+test('nombre visible admite caracteres internacionales sin perder el formulario', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Usuarios', exact: true }).click();
+  await page.getByRole('button', { name: 'Nuevo usuario' }).click();
+  const name = page.getByLabel('Nombre visible', { exact: true });
+  for (const value of ['María José Núñez', "O'Connor & Asociados", '李 小龙 😀']) {
+    await name.fill(value);
+    await page.getByLabel('Nombre de usuario', { exact: true }).focus();
+    await expect(name).toHaveValue(value);
+    await expect(page.getByRole('heading', { name: 'Crear usuario' })).toBeVisible();
+  }
+});
+
 test('login adaptable en móvil y error de acceso sin enumeración', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/login');
