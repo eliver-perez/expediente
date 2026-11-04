@@ -110,7 +110,7 @@ test('Etapa 1: catálogos, plantilla versionada, tarjetas y diseño responsive',
   await expect(page.locator('.template-summary-card.blue strong')).toHaveText('4');
   await expect(page.locator('.template-summary-card.green strong')).toHaveText('1');
   await expect(page.locator('.template-summary-card.amber strong')).toHaveText('1');
-  await page.getByRole('button', { name: 'Quitar Contrato firmado de la plantilla' }).click();
+  await page.getByRole('button', { name: 'Remover Contrato firmado de la plantilla' }).click();
   await expect(page.locator('.template-summary-card.teal strong')).toHaveText('1');
   await page.getByRole('button', { name: 'Agregar Contrato firmado' }).click();
   await page.locator('.template-requirement-row').filter({ hasText: 'Contrato firmado' }).getByLabel('Obligatorio').uncheck();
@@ -140,7 +140,7 @@ test('Etapa 1: catálogos, plantilla versionada, tarjetas y diseño responsive',
   await expect(page.locator('.template-version').filter({ hasText: 'Versión 1' })).toContainText('Contrato firmado');
   await page.getByRole('button', { name: 'Crear nueva versión de Expediente de obra' }).click();
   await expect(page.getByRole('heading', { name: 'Nueva versión de Expediente de obra' })).toBeVisible();
-  await page.getByRole('button', { name: 'Quitar Contrato firmado de la plantilla' }).click();
+  await page.getByRole('button', { name: 'Remover Contrato firmado de la plantilla' }).click();
   await page.getByRole('button', { name: 'Guardar nueva versión' }).click();
   await expect(page.getByRole('heading', { name: 'Crear plantilla' })).toBeVisible();
   const templateCard = page.locator('.template-accordion').filter({ hasText: 'Expediente de obra' });

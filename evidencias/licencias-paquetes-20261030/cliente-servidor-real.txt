@@ -1,0 +1,10 @@
+PHPUnit 12.5.36 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.5.7
+Configuration: /private/tmp/aidex-license-review-rjbsrh8f/server/phpunit.xml
+
+.                                                                   1 / 1 (100%)
+
+Time: 00:11.955, Memory: 18.00 MB
+
+[30;42mOK (1 test, 28 assertions)[0m

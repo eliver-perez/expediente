@@ -8,6 +8,7 @@ import (
 	"gestor-documental/db"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"modernc.org/sqlite"
@@ -137,8 +138,8 @@ func TestEmptyMigrationRollbackAndRefusalWithEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.RollbackEmpty(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := database.RollbackEmpty(context.Background()); err == nil {
+		t.Fatal("rollback accepted for a schema newer than the initial H2 schema")
 	}
 	database.Close()
 	database, err = Open(context.Background(), directory)
@@ -215,7 +216,17 @@ func TestUpgradePreservesPopulatedH2AndRefusesDestructiveRollback(t *testing.T) 
 		t.Fatal("rollback destroyed populated H2")
 	}
 	var migrations, evidence int
-	if err = database.Reader.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 19 {
+	entries, err := db.Migrations.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".up.sql") {
+			expected++
+		}
+	}
+	if err = database.Reader.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != expected {
 		t.Fatal("partial down migration", err)
 	}
 	if err = database.Reader.QueryRow("SELECT count(*) FROM audit_events WHERE id='old-audit'").Scan(&evidence); err != nil || evidence != 1 {

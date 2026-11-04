@@ -48,7 +48,7 @@ test('vistas previas: configuración, error aislado, generación, reutilización
     await page.getByRole('tab', { name: 'Cargas', exact: true }).click();
     await page.getByRole('table', { name: 'Historial de cargas' }).getByRole('button').first().click();
     for (const format of ['docx', 'xlsx']) {
-      await page.getByRole('button', { name: `Ver detalles de sample.${format}`, exact: true }).click();
+      await page.getByRole('button', { name: `Visualizar sample.${format}`, exact: true }).click();
       const preview = dialog.getByRole('region', { name: 'Vista previa del documento' });
       const frame = preview.locator('iframe');
       await expect(frame).toBeVisible({ timeout: 30000 });
@@ -60,7 +60,7 @@ test('vistas previas: configuración, error aislado, generación, reutilización
       await expect(preview).toHaveClass(/generated-preview-expanded/);
       await page.screenshot({ path: `test-results/v2-phase4-${format}.png`, fullPage: true });
       await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
-      await page.getByRole('button', { name: `Ver detalles de sample.${format}`, exact: true }).click();
+      await page.getByRole('button', { name: `Visualizar sample.${format}`, exact: true }).click();
       await expect(frame).toHaveAttribute('src',url!);
       await dialog.getByRole('button', { name: 'Cerrar ficha' }).click();
     }

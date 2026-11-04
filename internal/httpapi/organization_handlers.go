@@ -13,7 +13,15 @@ import (
 
 func (server *Server) organizationRoutes(mux *http.ServeMux) {
 	routes := map[string]authorizedHandler{
-		"GET /api/v1/libraries/{library}/categories": server.catalogList, "POST /api/v1/libraries/{library}/categories": server.catalogSave, "PATCH /api/v1/categories/{entry}": server.catalogSave,
+		"POST /api/v1/documents/{document}/request-incorporation": server.requestIncorporation,
+		"GET /api/v1/documents/{document}/corrections":            server.documentCorrections,
+		"POST /api/v1/documents/{document}/corrections":           server.documentCorrections,
+		"GET /api/v1/libraries/{library}/corrections":             server.libraryCorrections,
+		"POST /api/v1/corrections/{correction}/approve":           server.decideCorrection,
+		"POST /api/v1/corrections/{correction}/reject":            server.decideCorrection,
+		"GET /api/v1/documents/{document}/versions":               server.documentVersions,
+		"POST /api/v1/documents/{document}/replacements":          server.documentVersions,
+		"GET /api/v1/libraries/{library}/categories":              server.catalogList, "POST /api/v1/libraries/{library}/categories": server.catalogSave, "PATCH /api/v1/categories/{entry}": server.catalogSave,
 		"GET /api/v1/libraries/{library}/document-types": server.catalogList, "POST /api/v1/libraries/{library}/document-types": server.catalogSave, "PATCH /api/v1/document-types/{entry}": server.catalogSave,
 		"GET /api/v1/libraries/{library}/templates": server.templateList, "POST /api/v1/libraries/{library}/templates": server.templateSave, "POST /api/v1/templates/{template}/versions": server.templateSave,
 		"GET /api/v1/libraries/{library}/cases": server.caseList, "POST /api/v1/libraries/{library}/cases": server.caseSave, "GET /api/v1/cases/{case}": server.getCase, "PATCH /api/v1/cases/{case}": server.caseSave,

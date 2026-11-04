@@ -10,6 +10,8 @@ import (
 )
 
 type Workflow struct {
+	CanPrepare      bool             `json:"can_prepare"`
+	Prepared        bool             `json:"prepared"`
 	Processing      bool             `json:"processing"`
 	RequiresReview  bool             `json:"requires_review"`
 	CanSubmit       bool             `json:"can_submit"`
@@ -17,6 +19,7 @@ type Workflow struct {
 	CanApprove      bool             `json:"can_approve"`
 	CanReject       bool             `json:"can_reject"`
 	CanRetry        bool             `json:"can_retry"`
+	ActionHint      string           `json:"action_hint"`
 	Review          *Review          `json:"review"`
 	Materialization *Materialization `json:"materialization"`
 }
@@ -34,11 +37,27 @@ func (service *Service) Workflow(ctx context.Context, principal domain.Principal
 	result.RequiresReview = requiresReview(settings, document.Source)
 	editable := document.Approval == "draft" || document.Approval == "rejected" || document.Approval == "needs_review" || document.Approval == "pending_review"
 	readable := document.Availability == "staged" || document.Availability == "available"
+	classified := !settings.RequireClassification || classificationComplete(document, settings)
 	can := func(permission string) bool {
 		return service.require(ctx, service.Database.Reader, principal, document.LibraryID, permission) == nil
 	}
-	result.CanSubmit = editable && readable && result.RequiresReview && can("documents.submit")
-	result.CanFinalize = editable && document.Approval != "pending_review" && readable && !result.RequiresReview && can("documents.finalize")
+	result.CanSubmit = editable && readable && classified && result.RequiresReview && can("documents.submit")
+	result.CanFinalize = editable && document.Approval != "pending_review" && readable && classified && !result.RequiresReview && can("documents.finalize")
+	if document.Availability == "staged" && document.Source == "managed" {
+		if err = service.Database.Reader.QueryRowContext(ctx, "SELECT ready_for_incorporation FROM upload_items WHERE document_id=?", documentID).Scan(&result.Prepared); err != nil {
+			return result, err
+		}
+	}
+	result.CanPrepare = editable && !result.CanFinalize && document.Approval != "pending_review" && document.Availability == "staged" && document.CreatedBy == principal.User.ID && !result.RequiresReview && !settings.RequireClassification && !classificationComplete(document, settings) && !result.Prepared && can("documents.submit")
+	if editable && readable && !result.CanSubmit && !result.CanFinalize && document.Approval != "pending_review" {
+		if !classified {
+			result.ActionHint = "Completa expediente, categoría y tipo para continuar."
+		} else if result.RequiresReview {
+			result.ActionHint = "Este origen requiere revisión. Solicita a un Colaborador o Gestor con permiso de envío que presente el documento."
+		} else {
+			result.ActionHint = "Este origen permite confirmación directa. Un Gestor de la biblioteca debe confirmar el documento."
+		}
+	}
 	review, err := scanReview(service.Database.Reader.QueryRowContext(ctx, "SELECT "+reviewColumns+reviewJoins+" WHERE r.document_id=? ORDER BY r.requested_at DESC,r.id DESC LIMIT 1", documentID))
 	if err != nil && err != sql.ErrNoRows {
 		return result, err

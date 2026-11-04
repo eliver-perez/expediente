@@ -121,6 +121,11 @@ td.agent { max-width: 250px; color: var(--muted); font-size: 11px; }
 .document-summary { flex: 1; min-width: 0; }
 button.document-title { padding: 0; font-size: 15px; font-weight: 650; text-align: left; overflow-wrap: anywhere; }
 button.compact, .button-link { font-size: 12px; padding: 8px 12px; }
+.icon-label-button, .icon-only-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; vertical-align: middle; }
+.icon-label-button svg, .icon-only-button svg { width: 16px; height: 16px; flex: none; }
+.icon-only-button { width: 34px; height: 34px; padding: 7px; }
+button.remove-button { color: #963838; border-color: #e1c7c7; background: #fffafa; }
+button.remove-button:hover { color: #7c2424; background: #f9eeee; border-color: #d5aaaa; }
 .button-link { border: 1px solid var(--line); border-radius: 5px; color: var(--accent); text-decoration: none; display: inline-block; }
 button.snippet { display: block; width: 100%; padding: 9px 12px; margin-top: 8px; border-left: 2px solid #c5d7c7; border-radius: 0 4px 4px 0; background: #f7f9f5; text-align: left; color: #4b6157; font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
 .page-number { color: var(--accent); margin-right: 9px; font-weight: 700; }
@@ -499,8 +504,11 @@ button.library-card-main:focus-visible { outline: 3px solid #60aa94; outline-off
 @keyframes dashboard-loading { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 .contract-dialog > footer { display: flex; justify-content: end; }
 .folder-access-dialog { width: min(700px, calc(100vw - 24px)); }
+.folder-access-dialog.macos-folder-access { width: min(660px, calc(100vw - 24px)); }
 .folder-access-dialog .path-text { overflow-wrap: anywhere; }
 .folder-access-dialog .actions { margin-top: 1rem; }
+.folder-access-actions { flex-wrap: wrap; align-items: center; gap: 8px; }
+.folder-access-dialog .folder-access-scope, .folder-access-dialog .folder-privacy-help { font-size: 13px; line-height: 1.5; margin: .7rem 0; }
 @media (max-width: 700px) {
   .mobile-nav-toggle { display: block; width: 100%; }
   .sidebar nav { display: none; flex-direction: column; margin-top: 8px; }

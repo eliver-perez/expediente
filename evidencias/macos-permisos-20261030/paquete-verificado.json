@@ -1,0 +1,19 @@
+{
+  "result": "PASS",
+  "package": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-macos-permisos-20261030/AIDEX-1.0.0-macOS-arm64.pkg",
+  "size_bytes": 10109351,
+  "sha256": "c8454f72419e421d7e8bd622906cc2ffef02befd1cdb97505dc200d05d0ef23a",
+  "manifest_files_verified": 41,
+  "version": "AIDEX 1.0.0 (production; darwin/arm64)",
+  "architecture": "arm64",
+  "program_arguments_count": 4,
+  "native_imports": [
+    "proc_pidpath",
+    "acl_set_fd_np",
+    "syslog"
+  ],
+  "packaged_helper_native_traversal_probe": "PASS: access and actual denial, current user",
+  "signature": "ad-hoc verified",
+  "actual_privileged_authorization": false,
+  "actual_service_uid_document_incorporation": false
+}

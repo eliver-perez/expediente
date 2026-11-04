@@ -24,6 +24,14 @@ if [ "$1" = configure ]; then
         if [ -f "$DATA/service-enabled" ]; then
             systemctl enable --now "$UNIT"
             systemctl is-active --quiet "$UNIT"
+            port=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["listen_address"].rsplit(":",1)[1])' "$CONFIG")
+            attempt=0
+            while [ "$attempt" -lt 30 ]; do
+                if python3 -c 'import json,sys,urllib.request; sys.exit(0 if json.load(urllib.request.urlopen("http://127.0.0.1:%s/health/live"%sys.argv[1],timeout=1)).get("product")=="AIDEX" else 1)' "$port" >/dev/null 2>&1; then break; fi
+                attempt=$((attempt + 1))
+                sleep 1
+            done
+            [ "$attempt" -lt 30 ] || { echo "AIDEX no respondió en el puerto $port. Se conservaron los datos; revisa journalctl -u aidex.service." >&2; exit 1; }
         fi
     fi
     echo 'Instalado AIDEX. Ejecuta sudo aidex-admin para crear el administrador e iniciar el servicio.'

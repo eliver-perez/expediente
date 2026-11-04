@@ -294,8 +294,9 @@ func (s *Service) generate(ctx context.Context, op Operation, password string) e
 	}
 	// The archive still uses format/schema 15. EULA/deletion execution state is
 	// installation-local, the library description is a portable column, and
-	// migration 19 adds indexes only. Import accepts older library headers.
-	if schema < 15 || schema > 19 {
+	// migrations 19 and 20 change indexes and installation-local global roles.
+	// Import accepts older library headers.
+	if schema < 15 || schema > 20 {
 		archive.Close()
 		plain.Close()
 		return fmt.Errorf("schema version incompatible: %d", schema)

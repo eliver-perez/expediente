@@ -6,6 +6,7 @@ import { DocumentViewer } from './Documents';
 import { formatDate } from './api';
 import { availabilityLabel, type Document, type Library } from './libraryTypes';
 import { formatSize } from './ExplorerEntries';
+import { VisualizeButton } from './ActionButtons';
 
 interface Group { sha256: string; count: number; size_bytes: number; library_count: number }
 interface Summary { groups: number; files: number }
@@ -28,7 +29,7 @@ function DuplicateFiles({ library, group }: { library: Library; group: Group }) 
   const documents = useCursorPage<Document>(`/libraries/${library.id}/duplicates/${group.sha256}`);
   const [selected, setSelected] = useState<Document | null>(null);
   return <section aria-label="Archivos del grupo"><h3>{group.count} archivos con el mismo contenido</h3><Accordion title="Ver huella completa del grupo"><p className="path-text">SHA-256: {group.sha256}</p></Accordion><Notice text={documents.error} />
-    <div className="duplicate-files">{documents.items.map(document => <article className="duplicate-file" key={document.id}><button className="text-button document-title" onClick={() => setSelected(document)}>{document.title || document.original_filename}</button><p>{document.library_name || library.name}</p><p className="path-text">{document.original_path || document.relative_path || 'Ubicación privada'}</p><small>{formatSize(document.size_bytes)} · {formatDate(document.modified_at || null)} · {availabilityLabel[document.availability]}</small><button className="secondary compact" onClick={() => setSelected(document)}>Ver ficha</button></article>)}</div>
+    <div className="duplicate-files">{documents.items.map(document => <article className="duplicate-file" key={document.id}><button className="text-button document-title" onClick={() => setSelected(document)}>{document.title || document.original_filename}</button><p>{document.library_name || library.name}</p><p className="path-text">{document.original_path || document.relative_path || 'Ubicación privada'}</p><small>{formatSize(document.size_bytes)} · {formatDate(document.modified_at || null)} · {availabilityLabel[document.availability]}</small><VisualizeButton onClick={() => setSelected(document)} /></article>)}</div>
     {documents.busy && <p role="status">Consultando archivos…</p>}<CursorControls page={documents} label="Archivos" />
     {selected && <DocumentViewer document={selected} close={() => setSelected(null)} changed={documents.reload} canRemove={false} />}
   </section>;

@@ -99,7 +99,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if _, err := service.SetGlobalRoles(context.Background(), principal, principal.User.ID, principal.User.Revision, []string{"installation_admin", "access_auditor"}, domain.RequestMetadata{RequestID: domain.NewID()}); err != nil {
+	if _, err := service.SetGlobalRoles(context.Background(), principal, principal.User.ID, principal.User.Revision, []string{"installation_admin", "access_auditor", "event_auditor"}, domain.RequestMetadata{RequestID: domain.NewID()}); err != nil {
 		return err
 	}
 	backupService, err := backups.New(database, configuration)

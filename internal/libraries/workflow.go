@@ -62,20 +62,72 @@ func (service *Service) validateWorkflowClassification(ctx context.Context, quer
 			return err
 		}
 	}
-	if document.CategoryID == "" || document.TypeID == "" || (settings.CasesEnabled && document.CaseID == "") {
+	if settings.RequireClassification && !classificationComplete(document, settings) {
 		return domain.Failure("CLASSIFICATION_REQUIRED", "Completa expediente, categoría y tipo antes de continuar.", 422)
 	}
 	var valid int
-	if err := query.QueryRowContext(ctx, "SELECT count(*) FROM document_types t JOIN categories c ON c.id=t.category_id WHERE t.id=? AND c.id=? AND t.library_id=? AND t.archived_at IS NULL AND c.archived_at IS NULL AND (t.requires_descriptive_title=0 OR length(trim(?))>0)", document.TypeID, document.CategoryID, document.LibraryID, document.Title).Scan(&valid); err != nil {
-		return err
-	}
-	if valid != 1 {
-		return invalid("Revisa la clasificación y el título del documento.")
+	if document.TypeID != "" {
+		if err := query.QueryRowContext(ctx, "SELECT count(*) FROM document_types t JOIN categories c ON c.id=t.category_id WHERE t.id=? AND c.id=? AND t.library_id=? AND t.archived_at IS NULL AND c.archived_at IS NULL AND (t.requires_descriptive_title=0 OR length(trim(?))>0)", document.TypeID, document.CategoryID, document.LibraryID, document.Title).Scan(&valid); err != nil {
+			return err
+		}
+		if valid != 1 {
+			return invalid("Revisa la clasificación y el título del documento.")
+		}
 	}
 	if document.Availability != "staged" && document.Availability != "available" {
 		return domain.Failure("DOCUMENT_UNAVAILABLE", "Verifica el original antes de continuar.", 409)
 	}
 	return nil
+}
+
+func classificationComplete(document Document, settings Settings) bool {
+	return document.CategoryID != "" && document.TypeID != "" && (!settings.CasesEnabled || document.CaseID != "")
+}
+
+// La clasificación opcional no publica borradores privados: en confirmación
+// directa, el autor debe presentar explícitamente la carga al Gestor.
+func (service *Service) RequestIncorporation(ctx context.Context, p domain.Principal, documentID string, revision int64, meta domain.RequestMetadata) error {
+	d, err := service.Document(ctx, p, documentID)
+	if err != nil {
+		return err
+	}
+	return service.write(ctx, p, d.LibraryID, "documents.submit", func(tx *sql.Tx, current domain.Principal) error {
+		d, err := workflowDocument(ctx, tx, current, documentID)
+		if err != nil {
+			return err
+		}
+		if d.CreatedBy != current.User.ID || d.Source != "managed" || d.Availability != "staged" || (d.Approval != "draft" && d.Approval != "rejected") {
+			return notFound()
+		}
+		settings, _, err := settingsFor(ctx, tx, d.LibraryID)
+		if err != nil {
+			return err
+		}
+		if settings.RequireClassification || requiresReview(settings, d.Source) {
+			return invalid("Esta biblioteca requiere clasificación o envío a revisión.")
+		}
+		var ready bool
+		if err = tx.QueryRowContext(ctx, "SELECT ready_for_incorporation FROM upload_items WHERE document_id=?", documentID).Scan(&ready); err != nil {
+			return err
+		}
+		if ready && (d.Revision == revision || d.Revision == revision+1) {
+			return nil
+		}
+		if d.Revision != revision {
+			return conflict()
+		}
+		result, err := tx.ExecContext(ctx, "UPDATE upload_items SET ready_for_incorporation=1,retain_until=NULL WHERE document_id=? AND status='staged'", documentID)
+		if err != nil {
+			return err
+		}
+		if count, err := result.RowsAffected(); err != nil || count != 1 {
+			return invalid("La carga temporal ya no está disponible para solicitar incorporación.")
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE documents SET revision=revision+1 WHERE id=?", documentID); err != nil {
+			return err
+		}
+		return workflowEvent(ctx, tx, current, d, meta, "document.incorporation_requested", map[string]any{"classification_required": false, "approval_granted": false})
+	})
 }
 func (service *Service) SubmitReview(ctx context.Context, principal domain.Principal, documentID, assignedTo string, revision int64, metadata domain.RequestMetadata) (string, error) {
 	document, err := service.Document(ctx, principal, documentID)

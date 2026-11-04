@@ -15,7 +15,7 @@ $Issues = $null
 $Ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$Tokens, [ref]$Issues)
 if ($Issues.Count -gt 0) {
     foreach ($Issue in $Issues) {
-        Write-Host ("Line {0}: {1}: {2}" -f $Issue.Extent.StartLineNumber, $Issue.ErrorId, $Issue.Message)
+        [Console]::WriteLine(("Line {0}: {1}: {2}" -f $Issue.Extent.StartLineNumber, $Issue.ErrorId, $Issue.Message))
     }
     throw 'Invalid PowerShell installer payload.'
 }
@@ -28,4 +28,7 @@ foreach ($Required in $RequiredParameters) {
 if ($Kind -eq 'Manage' -and (!$Text.Contains("'AuthorizeFolder'") -or !$Text.Contains('/local-folder-authorizations/'))) {
     throw 'Missing local folder authorization workflow in the packaged utility.'
 }
-Write-Host "Windows PowerShell payload: encoding, syntax and parameters OK (parser $($PSVersionTable.PSVersion))"
+if ($Kind -eq 'Manage' -and (!$Text.Contains('$ServiceAccount = (Get-CimInstance Win32_Service') -or !$Text.Contains(':(OI)(CI)(RX)') -or !$Text.Contains(':(X)') -or !$Text.Contains('if (!$Result.accessible)'))) {
+    throw 'The packaged utility does not verify the service identity, minimal ACL or service-side access.'
+}
+[Console]::WriteLine("Windows PowerShell payload: encoding, syntax and parameters OK (parser $($PSVersionTable.PSVersion))")

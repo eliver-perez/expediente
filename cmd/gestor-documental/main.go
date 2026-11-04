@@ -112,6 +112,37 @@ func run(ctx context.Context, ready func()) error {
 	if *initialState != "" || *initialListen != "" || *initialTools != "" || *initialTessdata != "" || *initialFontconfig != "" {
 		return fmt.Errorf("state/listen/tools/tessdata only apply to init")
 	}
+	if command == "recover-macos-installation" {
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("la recuperación del instalador requiere macOS")
+		}
+		removed, err := maintenance.RecoverMacOSInstallerResidues(*configurationPath)
+		for _, path := range removed {
+			fmt.Printf("[AIDEX recuperación] residuo retirado=%q\n", path)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Printf("[AIDEX recuperación] inventario validado; residuos retirados=%d; instalación nueva permitida\n", len(removed))
+		return nil
+	}
+	if command == "erase-macos-installation" {
+		if runtime.GOOS != "darwin" || !*confirmErase {
+			return fmt.Errorf("la eliminación completa requiere macOS y confirmación explícita")
+		}
+		preserved, err := maintenance.EraseMacOSInstallation(*configurationPath)
+		if err != nil {
+			if preserved != "" {
+				fmt.Fprintln(os.Stderr, "Documentos conservados en:", preserved)
+			}
+			return err
+		}
+		fmt.Println("Eliminación completa de datos internos verificada.")
+		if preserved != "" {
+			fmt.Println("Documentos y archivos no reconocidos conservados en:", preserved)
+		}
+		return nil
+	}
 	if command == "erase-internal-data" {
 		if !*confirmErase {
 			return fmt.Errorf("se requiere confirmar la eliminación de los datos internos; los documentos físicos se conservan")

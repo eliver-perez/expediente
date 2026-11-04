@@ -14,21 +14,22 @@ func (server *Server) libraryRoutes(mux *http.ServeMux) {
 	server.organizationRoutes(mux)
 	server.workflowRoutes(mux)
 	routes := map[string]authorizedHandler{
-		"GET /api/v1/libraries/{library}/file-skips":      server.processingTable,
-		"GET /api/v1/libraries/{library}/job-history":     server.processingTable,
-		"GET /api/v1/deletions":                           server.deletionList,
-		"POST /api/v1/libraries/{library}/archive":        server.libraryLifecycle,
-		"POST /api/v1/libraries/{library}/restore":        server.libraryLifecycle,
-		"POST /api/v1/roots/{root}/resume":                server.resumeRoot,
-		"POST /api/v1/libraries/{library}/deletion-plans": server.planEntityDeletion,
-		"POST /api/v1/roots/{root}/deletion-plans":        server.planEntityDeletion,
-		"GET /api/v1/deletions/{operation}":               server.entityDeletion,
-		"POST /api/v1/deletions/{operation}/confirm":      server.entityDeletion,
-		"POST /api/v1/deletions/{operation}/retry":        server.entityDeletion,
-		"GET /api/v1/deletions/{operation}/manifest":      server.deletionManifest,
-		"GET /api/v1/libraries/{library}/file-settings":   server.fileConfiguration,
-		"PUT /api/v1/libraries/{library}/file-settings":   server.fileConfiguration,
-		"GET /api/v1/libraries/{library}":                 server.getLibrary, "GET /api/v1/jobs/{job}": server.getJob, "POST /api/v1/storage/path-inspections": server.inspectPath,
+		"GET /api/v1/libraries/{library}/file-skips":          server.processingTable,
+		"GET /api/v1/libraries/{library}/job-history":         server.processingTable,
+		"GET /api/v1/deletions":                               server.deletionList,
+		"POST /api/v1/libraries/{library}/archive":            server.libraryLifecycle,
+		"POST /api/v1/libraries/{library}/restore":            server.libraryLifecycle,
+		"PUT /api/v1/libraries/{library}/managed-destination": server.managedDestination,
+		"POST /api/v1/roots/{root}/resume":                    server.resumeRoot,
+		"POST /api/v1/libraries/{library}/deletion-plans":     server.planEntityDeletion,
+		"POST /api/v1/roots/{root}/deletion-plans":            server.planEntityDeletion,
+		"GET /api/v1/deletions/{operation}":                   server.entityDeletion,
+		"POST /api/v1/deletions/{operation}/confirm":          server.entityDeletion,
+		"POST /api/v1/deletions/{operation}/retry":            server.entityDeletion,
+		"GET /api/v1/deletions/{operation}/manifest":          server.deletionManifest,
+		"GET /api/v1/libraries/{library}/file-settings":       server.fileConfiguration,
+		"PUT /api/v1/libraries/{library}/file-settings":       server.fileConfiguration,
+		"GET /api/v1/libraries/{library}":                     server.getLibrary, "GET /api/v1/jobs/{job}": server.getJob, "POST /api/v1/storage/path-inspections": server.inspectPath,
 		"GET /api/v1/libraries/{library}/folders": server.libraryFolders,
 		"GET /api/v1/search-events":               server.searchEvents, "GET /api/v1/libraries/{library}/member-candidates": server.memberCandidates,
 		"GET /api/v1/libraries": server.listLibraries, "POST /api/v1/libraries": server.createLibrary, "PATCH /api/v1/libraries/{library}": server.updateLibrary,
@@ -233,7 +234,7 @@ func (server *Server) explorer(writer http.ResponseWriter, request *http.Request
 		}
 		limit = parsed
 	}
-	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{Format: query.Get("format"), DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
+	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{Classification: query.Get("classification_status"), Format: query.Get("format"), DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
 	result, err := server.libraries.Search(request.Context(), principal, input, metadata(request), input.Query != "")
 	server.libraryResult(writer, request, 200, result, err)
 }
@@ -431,4 +432,21 @@ func (server *Server) duplicateDocuments(w http.ResponseWriter, r *http.Request,
 func (server *Server) reindexDocument(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
 	identifier, err := server.libraries.ReindexDocument(request.Context(), principal, request.PathValue("document"), request.Header.Get("Idempotency-Key"), metadata(request))
 	server.libraryResult(writer, request, 202, map[string]string{"id": identifier}, err)
+}
+
+func (server *Server) managedDestination(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	var input struct {
+		RootID string `json:"root_id"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	revision, err := expectedRevision(r)
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	err = server.libraries.SetManagedDestination(r.Context(), p, r.PathValue("library"), input.RootID, revision, metadata(r))
+	server.libraryResult(w, r, 204, nil, err)
 }

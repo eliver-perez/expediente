@@ -382,7 +382,7 @@ func TestAuditRolePaginationAndImmutableEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fixture.service.SetGlobalRoles(context.Background(), principal, principal.User.ID, principal.User.Revision, []string{"installation_admin", "access_auditor"}, domain.RequestMetadata{RequestID: "fixture-role-change"})
+	_, err = fixture.service.SetGlobalRoles(context.Background(), principal, principal.User.ID, principal.User.Revision, []string{"installation_admin", "event_auditor"}, domain.RequestMetadata{RequestID: "fixture-role-change"})
 	if err != nil {
 		t.Fatal(err)
 	}

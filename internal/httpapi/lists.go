@@ -217,7 +217,7 @@ func (server *Server) events(writer http.ResponseWriter, request *http.Request, 
 }
 
 func (server *Server) event(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
-	rows, err := server.identity.Database.Reader.QueryContext(request.Context(), "SELECT id,occurred_at,actor_kind,actor_user_id,session_id,observed_ip,request_id,event_type,details_json FROM audit_events WHERE id=? AND library_id IS NULL", request.PathValue("id"))
+	rows, err := server.identity.Database.Reader.QueryContext(request.Context(), "SELECT id,occurred_at,actor_kind,actor_user_id,actor_name,session_id,observed_ip,request_id,event_type,library_id,library_name,document_id,document_name,details_json,search_details_json FROM "+auditTable+" WHERE id=?", request.PathValue("id"))
 	if err != nil {
 		server.fail(writer, request, err)
 		return

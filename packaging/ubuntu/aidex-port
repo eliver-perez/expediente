@@ -24,7 +24,7 @@ if [ "$was_running" -eq 1 ]; then
     if systemctl start "$UNIT"; then
         attempt=0
         while [ "$attempt" -lt 30 ]; do
-            if python3 -c 'import sys,urllib.request; urllib.request.urlopen("http://127.0.0.1:%s/health/live"%sys.argv[1],timeout=1).close()' "$new_port" >/dev/null 2>&1; then ready=1; break; fi
+            if python3 -c 'import json,sys,urllib.request; sys.exit(0 if json.load(urllib.request.urlopen("http://127.0.0.1:%s/health/live"%sys.argv[1],timeout=1)).get("product")=="AIDEX" else 1)' "$new_port" >/dev/null 2>&1; then ready=1; break; fi
             attempt=$((attempt + 1))
             sleep 1
         done

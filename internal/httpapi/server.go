@@ -83,8 +83,9 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/eula", server.protected("", true, server.eulaGet))
 	mux.HandleFunc("GET /api/v1/about", server.protected("", true, server.about))
 	mux.HandleFunc("POST /api/v1/eula/accept", server.protected("license.manage", true, server.eulaAccept))
-	mux.HandleFunc("POST /api/v1/local-folder-authorizations", server.protected("system.configure", true, server.startFolderAuthorization))
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations", server.protected("", true, server.startFolderAuthorization))
 	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/claim", server.claimFolderAuthorization)
+	mux.HandleFunc("GET /api/v1/local-folder-authorizations/{ticket}/describe", server.describeFolderAuthorization)
 	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/finish", server.finishFolderAuthorization)
 	mux.HandleFunc("GET /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
@@ -93,7 +94,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/documents/{document}/preview", server.protected("", true, server.documentPreview))
 	mux.HandleFunc("GET /api/v1/documents/{document}/preview/content", server.protected("", true, server.previewContent))
 	mux.HandleFunc("GET /health/live", func(writer http.ResponseWriter, request *http.Request) {
-		writeJSON(writer, 200, map[string]string{"status": "ok"})
+		writeJSON(writer, 200, map[string]string{"status": "ok", "product": "AIDEX"})
 	})
 	mux.HandleFunc("POST /api/v1/auth/login", server.login)
 	mux.HandleFunc("GET /api/v1/auth/session", server.protected("", false, server.session))
@@ -217,7 +218,7 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 			server.fail(writer, request, domain.Failure("HTTPS_REQUIRED", "Se requiere una conexión HTTPS.", 403))
 			return
 		}
-		localFolderHandoff := runtime.GOOS == "windows" && strings.HasPrefix(request.URL.Path, "/api/v1/local-folder-authorizations/") && localOnly(request)
+		localFolderHandoff := (runtime.GOOS == "windows" || runtime.GOOS == "darwin") && strings.HasPrefix(request.URL.Path, "/api/v1/local-folder-authorizations/") && localOnly(request)
 		if request.Method != "GET" && request.Method != "HEAD" && !localFolderHandoff {
 			expectedOrigin := server.configuration.PublicURL
 			if server.configuration.NetworkMode == "lan" {

@@ -180,10 +180,16 @@ func (service *Service) beginApproval(ctx context.Context, transaction *sql.Tx, 
 				return "", err
 			}
 		}
+		if err := service.completeReplacement(ctx, transaction, principal, document.ID); err != nil {
+			return "", err
+		}
 		return "", workflowEvent(ctx, transaction, principal, document, metadata, "document.approved", map[string]any{"decision_kind": kind, "review_id": reviewID})
 	}
 	if settings.ManagedRootID == "" {
 		return "", domain.Failure("MANAGED_ROOT_REQUIRED", "Selecciona un destino administrado en Configuración.", 422)
+	}
+	if err := validateManagedDestination(ctx, transaction, document.LibraryID, settings.ManagedRootID); err != nil {
+		return "", err
 	}
 	root, err := scanRoot(transaction.QueryRowContext(ctx, "SELECT "+rootColumns+" FROM storage_roots WHERE id=? AND library_id=? AND storage_source='managed' AND status='active'", settings.ManagedRootID, document.LibraryID))
 	if err == sql.ErrNoRows {
@@ -623,6 +629,9 @@ func (service *Service) commitMaterialization(ctx context.Context, job Job, oper
 			}
 		}
 		if _, err := transaction.ExecContext(ctx, "UPDATE materializations SET state='committed',published_identity=?,error_code='',updated_at=? WHERE id=?", identity, now(), operation.ID); err != nil {
+			return err
+		}
+		if err := service.completeReplacement(ctx, transaction, principal, operation.DocumentID); err != nil {
 			return err
 		}
 		return workflowEvent(ctx, transaction, principal, Document{ID: operation.DocumentID, LibraryID: operation.LibraryID, CaseID: caseID}, domain.RequestMetadata{}, "document.approved", map[string]any{"decision_kind": operation.DecisionKind, "operation_id": operation.ID, "content_version_id": operation.VersionID, "configuration_revision": operation.ConfigurationRevision})

@@ -61,11 +61,14 @@ func TestAuditCombinedFiltersSortingAndScope(t *testing.T) {
 	if mismatched.Code != 400 {
 		t.Fatal("cursor crossed filter scope")
 	}
-	global := fixture.request("GET", "/audit-events?q=review-", "", cookie, "")
+	if _, err := fixture.service.SetGlobalRoles(context.Background(), principal, principal.User.ID, principal.User.Revision, []string{"installation_admin", "event_auditor"}, domain.RequestMetadata{}); err != nil {
+		t.Fatal(err)
+	}
+	global := fixture.request("GET", "/audit-events?q=review-&limit=50", "", cookie, "")
 	var globalPage page
 	_ = json.Unmarshal(global.Body.Bytes(), &globalPage)
-	if len(globalPage.Items) != 0 {
-		t.Fatal("global audit leaked library records")
+	if global.Code != 200 || len(globalPage.Items) != 30 {
+		t.Fatal("event auditor cannot view library records", global.Code, len(globalPage.Items))
 	}
 	denied := fixture.request("GET", "/libraries/unassigned/audit-options", "", cookie, "")
 	if denied.Code != 404 {

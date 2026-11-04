@@ -1,4 +1,5 @@
 export interface LibrarySettings {
+  require_classification: boolean; review_classification: boolean;
   review_managed: boolean; review_linked: boolean; retention_days: number;
   identifier_label: string; exercise_enabled: boolean; cases_enabled: boolean;
   structure_pattern: string; filename_pattern: string; filename_prefix: string; default_managed_root_id: string;

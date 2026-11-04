@@ -1,21 +1,44 @@
-#!/bin/sh
-set -eu
+#!/bin/bash
+set -Eeuo pipefail
 umask 077
+. "$(dirname "$0")/installer-common.sh"
+aidex_stage validar-rutas
 . "$(dirname "$0")/profile.sh"
 aidex_select_profile
-if /usr/bin/dscl . -read /Users/$ACCOUNT >/dev/null 2>&1; then
-    [ "$(/usr/bin/dscl . -read /Users/$ACCOUNT NFSHomeDirectory)" = "NFSHomeDirectory: $BASE/data" ] || exit 1
-    [ "$(/usr/bin/dscl . -read /Users/$ACCOUNT UserShell)" = 'UserShell: /usr/bin/false' ] || exit 1
+aidex_stage validar-cuenta-existente
+if aidex_has_record /Users "$ACCOUNT"; then
+    ACCOUNT_HOME=$(aidex_directory_value "/Users/$ACCOUNT" NFSHomeDirectory)
+    [ "$ACCOUNT_HOME" = "$BASE/data" ] || aidex_fail 'El directorio de la cuenta _aidex no corresponde a esta instalación; no se modificó la cuenta.'
+    ACCOUNT_SHELL=$(aidex_directory_value "/Users/$ACCOUNT" UserShell)
+    [ "$ACCOUNT_SHELL" = /usr/bin/false ] || aidex_fail 'La cuenta _aidex no tiene el shell de servicio esperado; requiere revisión.'
+    ACCOUNT_GID=$(aidex_directory_value "/Users/$ACCOUNT" PrimaryGroupID)
+    GROUP_GID=$(aidex_directory_value "/Groups/$ACCOUNT" PrimaryGroupID)
+    [ "$ACCOUNT_GID" = "$GROUP_GID" ] || aidex_fail 'El grupo de _aidex no coincide; no se cambiaron UID ni GID.'
 else
-    # Allocate an unused local system UID and GID; never reuse another account.
-    /usr/bin/dscl . -read /Groups/$ACCOUNT >/dev/null 2>&1 && exit 1
-    ID=400
-    while /usr/bin/dscl . -search /Users UniqueID "$ID" | /usr/bin/grep -q . || /usr/bin/dscl . -search /Groups PrimaryGroupID "$ID" | /usr/bin/grep -q .; do
-        ID=$((ID + 1))
-        [ "$ID" -lt 500 ] || exit 1
-    done
-    /usr/bin/dscl . -create /Groups/$ACCOUNT
-    /usr/bin/dscl . -create /Groups/$ACCOUNT PrimaryGroupID "$ID"
+    aidex_stage crear-cuenta-servicio
+    if aidex_has_record /Groups "$ACCOUNT"; then
+        # Recuperar el grupo creado antes de una interrupción, únicamente si
+        # no comparte su identidad con ningún otro usuario o grupo.
+        ID=$(aidex_directory_value "/Groups/$ACCOUNT" PrimaryGroupID)
+        case "$ID" in ''|*[!0-9]*) aidex_fail 'El grupo parcial _aidex no tiene un GID válido.';; esac
+        [ "$ID" -ge 400 ] && [ "$ID" -lt 500 ] || aidex_fail 'GID del grupo parcial fuera del intervalo reservado.'
+        USED_UID=$(/usr/bin/dscl . -search /Users UniqueID "$ID")
+        USED_GID=$(/usr/bin/dscl . -search /Users PrimaryGroupID "$ID")
+        MATCHED_GROUPS=$(/usr/bin/dscl . -search /Groups PrimaryGroupID "$ID" | /usr/bin/awk '{print $1}')
+        [ -z "$USED_UID" ] && [ -z "$USED_GID" ] && [ "$MATCHED_GROUPS" = "$ACCOUNT" ] || aidex_fail 'La identidad del grupo parcial está en uso; se requiere revisión.'
+    else
+        # Reservar una identidad libre sin cambiar las cuentas existentes.
+        ID=400
+        while :; do
+            USED_UID=$(/usr/bin/dscl . -search /Users UniqueID "$ID")
+            USED_GID=$(/usr/bin/dscl . -search /Groups PrimaryGroupID "$ID")
+            [ -n "$USED_UID$USED_GID" ] || break
+            ID=$((ID + 1))
+            [ "$ID" -lt 500 ] || aidex_fail 'No hay una identidad de servicio libre en el intervalo 400–499.'
+        done
+        /usr/bin/dscl . -create /Groups/$ACCOUNT
+        /usr/bin/dscl . -create /Groups/$ACCOUNT PrimaryGroupID "$ID"
+    fi
     /usr/bin/dscl . -create /Users/$ACCOUNT
     /usr/bin/dscl . -create /Users/$ACCOUNT UniqueID "$ID"
     /usr/bin/dscl . -create /Users/$ACCOUNT PrimaryGroupID "$ID"
@@ -25,35 +48,92 @@ else
     /usr/bin/dscl . -create /Users/$ACCOUNT IsHidden 1
     /usr/bin/dscl . -create /Users/$ACCOUNT Password '*'
 fi
-# Display name only: preserve UID/GID, ownership and launchd identity on upgrades.
+# Cambiar solo el nombre visible; conservar identidad y propiedad de archivos.
+aidex_stage preparar-directorios
 /usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIDEX'
 /usr/bin/install -d -o "$ACCOUNT" -g "$ACCOUNT" -m 700 "$BASE/data" "$BASE/data/logs"
+aidex_stage detener-servicio
+aidex_stop_service
+aidex_stage validar-configuracion
 if [ ! -e "$CONFIG" ]; then
+    # Recuperar directamente el borrado de versiones antiguas, sin ejecutar el
+    # desinstalador. La lista permitida excluye SQLite, licencias y documentos.
+    aidex_stage recuperar-residuos-reconocidos
+    /usr/bin/sudo -u "$ACCOUNT" "$BINARY" recover-macos-installation --config "$CONFIG"
+    aidex_stage inicializar-instalacion-nueva
     /usr/bin/sudo -u "$ACCOUNT" "$BINARY" init --config "$CONFIG" --listen 127.0.0.1:18090 --tools /opt/homebrew/bin
+    /usr/bin/sudo -u "$ACCOUNT" "$BINARY" configure-license --config "$CONFIG"
 fi
+aidex_stage verificar-acceso-exclusivo
 /usr/bin/sudo -u "$ACCOUNT" "$BINARY" check-state --config "$CONFIG"
-/usr/bin/sudo -u "$ACCOUNT" "$BINARY" configure-license --config "$CONFIG"
+aidex_stage verificar-migraciones
 /usr/bin/sudo -u "$ACCOUNT" "$BINARY" migrate --config "$CONFIG"
+aidex_stage registrar-version
 /usr/bin/printf '%s\n' '@VERSION@' > "$BASE/data/package-version"
 /usr/sbin/chown "$ACCOUNT:$ACCOUNT" "$BASE/data/package-version"
 /bin/chmod 600 "$BASE/data/package-version"
-# Adapt the production plist to the existing account and private configuration.
+# Adaptar el plist a la cuenta y configuración conservadas.
+aidex_stage preparar-launchdaemon
 /usr/bin/plutil -replace UserName -string "$ACCOUNT" "$PLIST"
 /usr/bin/plutil -replace GroupName -string "$ACCOUNT" "$PLIST"
-/usr/bin/plutil -replace ProgramArguments.3 -string "$CONFIG" "$PLIST"
+aidex_rebuild_program_arguments
 /usr/bin/plutil -replace WorkingDirectory -string "$BASE/data" "$PLIST"
 /usr/bin/plutil -replace StandardOutPath -string "$BASE/data/logs/service.log" "$PLIST"
 /usr/bin/plutil -replace StandardErrorPath -string "$BASE/data/logs/service.log" "$PLIST"
 /usr/sbin/chown root:wheel "$PLIST"
 /bin/chmod 644 "$PLIST"
 /usr/bin/plutil -lint "$PLIST"
-# Record the finalized generated plist so hash-based uninstall remains accurate.
+# Registrar el plist final para mantener la desinstalación por SHA-256.
+aidex_stage actualizar-manifiesto
 HASH=$(/usr/bin/shasum -a 256 "$PLIST" | /usr/bin/cut -d ' ' -f 1)
 /usr/bin/awk -F '\t' -v hash="$HASH" -v file="$PLIST" 'BEGIN {OFS="\t"} $2==file {$1=hash} {print}' "$CODE/package-files.tsv" > "$CODE/package-files.tsv.new"
 /bin/mv "$CODE/package-files.tsv.new" "$CODE/package-files.tsv"
-# Bootstrap is local and interactive; there is no default password.
-if [ -f "$BASE/data/service-enabled" ]; then
-    /bin/launchctl enable system/app.aidex
-    /bin/launchctl bootstrap system "$PLIST"
-    /bin/launchctl print system/app.aidex >/dev/null
+# Distinguir la ausencia normal del primer administrador de un error real.
+aidex_stage verificar-administrador
+# Su salida/código se resuelve abajo; no heredar ERR en esta consulta esperada.
+if READY_OUTPUT=$(trap - ERR; /usr/bin/sudo -u "$ACCOUNT" "$BINARY" bootstrap-ready --config "$CONFIG" 2>&1); then
+    :
+else
+    READY_STATUS=$?
+    if [ "$READY_OUTPUT" = 'Error: falta crear el primer administrador' ]; then
+        echo '[AIDEX postinstall] Instalación completada. Abre Aplicaciones → AIDEX → Configurar AIDEX.command para crear el primer administrador e iniciar el servicio.'
+        exit 0
+    fi
+    aidex_fail "No se pudo verificar el administrador (bootstrap-ready, código $READY_STATUS). No se inició el servicio; los datos se conservan."
 fi
+aidex_stage verificar-puerto
+ADDRESS=$(/usr/bin/plutil -extract listen_address raw -o - "$CONFIG")
+PORT=${ADDRESS##*:}
+case "$PORT" in *[!0-9]*|'') aidex_fail 'Puerto configurado inválido; se conservan los datos.';; esac
+[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || aidex_fail 'Puerto configurado fuera de intervalo.'
+if /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && ! /bin/launchctl print "system/$LABEL" >/dev/null 2>&1; then
+    aidex_fail "El puerto $PORT está ocupado por otro proceso. Revisa Configurar puerto.command. Los datos se conservaron."
+fi
+aidex_stage habilitar-servicio
+/bin/launchctl enable "system/$LABEL"
+# Si el trabajo volvió a cargarse, retirar su definición antes de registrar el
+# plist reparado. kickstart reinicia el proceso con los argumentos almacenados
+# por launchd y podría conservar los duplicados de una definición anterior.
+if /bin/launchctl print "system/$LABEL" >/dev/null 2>&1; then
+    aidex_stage retirar-definicion-cargada
+    aidex_stop_service
+fi
+aidex_stage registrar-servicio
+/bin/launchctl bootstrap system "$PLIST"
+aidex_stage verificar-respuesta-http
+HEALTH_HOST=${ADDRESS%:*}
+case "$HEALTH_HOST" in 0.0.0.0) HEALTH_HOST=127.0.0.1;; '[::]') HEALTH_HOST='[::1]';; esac
+ATTEMPT=0
+while [ "$ATTEMPT" -lt 30 ]; do
+    if /usr/bin/curl --noproxy '*' -fsS --connect-timeout 1 --max-time 2 "http://$HEALTH_HOST:$PORT/health/live" 2>/dev/null | /usr/bin/grep -q '"product":"AIDEX"'; then
+        if [ ! -f "$BASE/data/service-enabled" ]; then
+            /usr/bin/sudo -u "$ACCOUNT" /usr/bin/touch "$BASE/data/service-enabled"
+        fi
+        aidex_stage completado
+        echo "Servicio AIDEX operativo en el puerto $PORT."
+        exit 0
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+    /bin/sleep 1
+done
+aidex_fail "El servicio no respondió en el puerto $PORT dentro del plazo de comprobación. Revisa data/logs/service.log; los datos se conservaron."

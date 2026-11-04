@@ -138,12 +138,12 @@ func (service *Service) SetGlobalRoles(ctx context.Context, principal domain.Pri
 		if err := checkRevision(user, expected); err != nil {
 			return err
 		}
-		if len(roleIDs) > 2 {
+		if len(roleIDs) > 3 {
 			return domain.Failure("INVALID_REQUEST", "Roles no válidos.", 400)
 		}
 		seen := map[string]bool{}
 		for _, roleID := range roleIDs {
-			if (roleID != "installation_admin" && roleID != "access_auditor") || seen[roleID] {
+			if (roleID != "installation_admin" && roleID != "access_auditor" && roleID != "event_auditor") || seen[roleID] {
 				return domain.Failure("INVALID_REQUEST", "Roles no válidos.", 400)
 			}
 			seen[roleID] = true

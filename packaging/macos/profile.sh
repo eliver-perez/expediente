@@ -9,7 +9,7 @@ aidex_select_profile() {
     BINARY="$CODE/bin/aidex-server"
     LABEL=app.aidex
     PLIST="$prefix/Library/LaunchDaemons/app.aidex.plist"
-    for path in "$BASE" "$CODE" "$CONFIG" "$PLIST" "$CODE/package-files.tsv" "$CODE/package-files.tsv.new"; do
+    for path in "$BINARY" "$CODE/bin/aidex-folder-helper" "$prefix/Applications/AIDEX/Autorizar carpeta AIDEX.app" "$BASE" "$CODE" "$CONFIG" "$BASE/data/logs" "$BASE/data/package-version" "$BASE/data/service-enabled" "$PLIST" "$CODE/package-files.tsv" "$CODE/package-files.tsv.new"; do
         current=$path
         while [ "$current" != / ] && [ -n "$current" ]; do
             [ ! -L "$current" ] || { echo "Enlace no permitido: $current" >&2; return 1; }

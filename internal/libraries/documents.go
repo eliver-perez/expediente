@@ -32,15 +32,37 @@ func (service *Service) Document(ctx context.Context, principal domain.Principal
 	available := (document.Availability == "available" || document.Availability == "staged") && document.IndexReason != "content_rejected"
 	document.Preview = available && document.Format == "pdf"
 	document.CanCancel = document.Availability == "staged" && document.CreatedBy == principal.User.ID && (document.Approval == "draft" || document.Approval == "rejected" || document.Approval == "pending_review") && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.cancel_own") == nil
-	document.CanClassify = service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.classify") == nil
+	document.CanClassify = service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.classify") == nil && (document.Approval != "approved" || service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.correct_classification") == nil)
 	document.CanAssociate = document.Source == "linked" && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.associate") == nil
 	document.CanReassign = service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.reassign") == nil
+	document.CanRequestCorrection = document.Approval == "approved" && document.Classification != "historical" && document.CreatedBy == principal.User.ID && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.request_correction") == nil
+	document.CanReplace = document.Approval == "approved" && document.Classification != "historical" && document.Source == "managed" && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.replace") == nil && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.upload") == nil
+	if document.CanReplace {
+		var existing bool
+		if err = service.Database.Reader.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM document_replacements WHERE previous_document_id=? AND status<>'cancelled')", documentID).Scan(&existing); err != nil {
+			return Document{}, err
+		}
+		document.CanReplace = !existing
+	}
 	document.CanReindex = document.Approval != "materializing" && document.Approval != "cancelled" && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "indexing.run") == nil
 	document.Download = available && service.require(ctx, service.Database.Reader, principal, document.LibraryID, "documents.download") == nil
 	if document.Availability == "staged" || service.require(ctx, service.Database.Reader, principal, document.LibraryID, "storage.view_paths") != nil {
 		document.OriginalPath = ""
 	}
 	document.Processing, err = service.latestProcessing(ctx, document.FileID)
+	if document.Classification == "historical" {
+		var snapshot string
+		if err = service.Database.Reader.QueryRowContext(ctx, "SELECT previous_json FROM document_replacements WHERE previous_document_id=? AND status='completed'", document.ID).Scan(&snapshot); err != nil {
+			return Document{}, err
+		}
+		document.PreviousClassification = &Classification{}
+		if err = json.Unmarshal([]byte(snapshot), document.PreviousClassification); err != nil {
+			return Document{}, err
+		}
+		document.CanClassify = false
+		document.CanAssociate = false
+		document.CanReassign = false
+	}
 	if err == nil && document.Format != "pdf" {
 		// Older DOCX runs retain blank paragraphs. Open useful content without
 		// changing those historical runs or forcing a new extraction.
@@ -142,6 +164,14 @@ func (service *Service) RemoveIndexConfirmed(ctx context.Context, principal doma
 		return err
 	}
 	return service.write(ctx, principal, document.LibraryID, "documents.remove_index", func(transaction *sql.Tx, current domain.Principal) error {
+		var replacing bool
+		if err := transaction.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM document_replacements WHERE previous_document_id=? AND status='pending')", documentID).Scan(&replacing); err != nil {
+			return err
+		}
+		if replacing {
+			return domain.Failure("REPLACEMENT_PENDING", "Resuelve o cancela la versión nueva antes de retirar del índice la anterior.", 409)
+		}
+
 		var approval string
 		if err := transaction.QueryRowContext(ctx, "SELECT approval_status FROM documents WHERE id=?", documentID).Scan(&approval); err != nil {
 			return err
@@ -539,6 +569,14 @@ func (service *Service) ConfigureRoot(ctx context.Context, principal domain.Prin
 		if _, err = transaction.ExecContext(ctx, "UPDATE libraries SET current_configuration_revision=current_configuration_revision+1,revision=revision+1 WHERE id=?", root.LibraryID); err != nil {
 			return err
 		}
+		if !enabled {
+			if err = clearManagedDestination(ctx, transaction, current, root.LibraryID, rootID, metadata); err != nil {
+				return err
+			}
+		}
+		if err = configurationSnapshot(ctx, transaction, root.LibraryID, current.User.ID); err != nil {
+			return err
+		}
 		return record(ctx, transaction, current, metadata, "storage.root_configured", root.LibraryID, "", map[string]any{"root_id": rootID, "enabled": enabled, "interval": interval})
 	})
 }
@@ -657,7 +695,7 @@ func (service *Service) Retire(ctx context.Context, principal domain.Principal, 
 		if _, err = transaction.ExecContext(ctx, "UPDATE libraries SET current_configuration_revision=current_configuration_revision+1,revision=revision+1 WHERE id=?", root.LibraryID); err != nil {
 			return err
 		}
-		if _, err = transaction.ExecContext(ctx, "UPDATE libraries SET settings_json=json_set(settings_json,'$.default_managed_root_id','') WHERE id=? AND json_extract(settings_json,'$.default_managed_root_id')=?", root.LibraryID, rootID); err != nil {
+		if err = clearManagedDestination(ctx, transaction, current, root.LibraryID, rootID, metadata); err != nil {
 			return err
 		}
 		if err = configurationSnapshot(ctx, transaction, root.LibraryID, current.User.ID); err != nil {

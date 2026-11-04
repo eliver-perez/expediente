@@ -167,7 +167,9 @@ Section "Instalar"
     File "${STAGE}/installer-action.ps1"
     File /oname=aidex-repair.exe "${STAGE}/aidex-server.exe"
     GetTempFileName $LogPath
-    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\installer-action.ps1" -ManageScript "$PLUGINSDIR\manage.ps1" -LogPath "$LogPath" -Action Preflight -InstallRoot "$INSTDIR" -PreflightBinary "$PLUGINSDIR\aidex-repair.exe"' $0
+    nsExec::ExecToStack /TIMEOUT=660000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\installer-action.ps1" -ManageScript "$PLUGINSDIR\manage.ps1" -LogPath "$LogPath" -Action Preflight -InstallRoot "$INSTDIR" -PreflightBinary "$PLUGINSDIR\aidex-repair.exe"'
+    Pop $0
+    Pop $1
     Call ReadAidexLog
     ${If} $0 != 0
         Abort "No se pudo preparar la instalación; consulta el detalle."
@@ -175,7 +177,9 @@ Section "Instalar"
     SetOutPath "$INSTDIR"
     File /r "${STAGE}/*"
     GetTempFileName $LogPath
-    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Configure -InstallRoot "$INSTDIR" -Port $SelectedPort' $0
+    nsExec::ExecToStack /TIMEOUT=660000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Configure -InstallRoot "$INSTDIR" -Port $SelectedPort'
+    Pop $0
+    Pop $1
     Call ReadAidexLog
     ${If} $0 != 0
         Abort "La configuración falló. No se inició el servicio. Consulta el detalle."
@@ -213,7 +217,9 @@ Section "Uninstall"
     SetShellVarContext all
     ${DisableX64FSRedirection}
     GetTempFileName $LogPath
-    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Remove -InstallRoot "$INSTDIR" $EraseData' $0
+    nsExec::ExecToStack /TIMEOUT=660000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Remove -InstallRoot "$INSTDIR" $EraseData'
+    Pop $0
+    Pop $1
     Call un.ReadAidexLog
     ${If} $0 != 0
         Abort "No se pudo completar la preparación de la desinstalación. Consulta el detalle; se conserva el programa."

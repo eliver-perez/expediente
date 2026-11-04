@@ -58,7 +58,7 @@ export function Users({ currentUser, refreshSession }: { currentUser: User; refr
     </form></section>}
     <section className="card"><div className="table-wrap"><table><thead><tr><th>Usuario</th><th>Permisos globales</th><th>Creación</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
       {list.items.map(user => <tr key={user.id}><td><strong>{user.display_name}</strong><small>@{user.username}{user.id === currentUser.id ? ' · Tú' : ''}</small></td>
-        <td>{user.role_ids.map(role => role === 'installation_admin' ? 'Administración' : 'Auditoría de accesos').join(', ') || 'Cuenta personal'}</td>
+        <td>{user.role_ids.map(role => ({ installation_admin: 'Administración', access_auditor: 'Auditoría de accesos', event_auditor: 'Auditoría de eventos' }[role] || role)).join(', ') || 'Cuenta personal'}</td>
         <td>{formatDate(user.created_at)}</td><td><span className={`badge ${user.disabled ? '' : 'positive'}`}>{user.disabled ? 'Deshabilitado' : 'Habilitado'}</span></td>
         <td><button className="text-button" onClick={() => { setSelected(user); setCreating(false); setError(''); setSuccess(''); }}>Editar <span className="sr-only">a {user.username}</span></button></td></tr>)}
     </tbody></table></div><PageEnd {...list} empty={list.items.length === 0} /></section>
@@ -71,7 +71,8 @@ export function Users({ currentUser, refreshSession }: { currentUser: User; refr
       {can('permissions.manage_global') && <form onSubmit={roles} className="form-grid"><h3>Permisos globales</h3>
         <label className="check"><input name="role_ids" type="checkbox" value="installation_admin" defaultChecked={selected.role_ids.includes('installation_admin')} />Administrador de instalación</label>
         <label className="check"><input name="role_ids" type="checkbox" value="access_auditor" defaultChecked={selected.role_ids.includes('access_auditor')} />Auditor de accesos</label>
-        <p className="muted">La administración de cuentas y la consulta de bitácoras se conceden por separado.</p><button disabled={busy}>Guardar permisos</button>
+        <label className="check"><input name="role_ids" type="checkbox" value="event_auditor" defaultChecked={selected.role_ids.includes('event_auditor')} />Auditor de eventos</label>
+        <p className="muted">Los perfiles de Accesos y Eventos se asignan por separado y pueden combinarse.</p><button disabled={busy}>Guardar permisos</button>
       </form>}
       {can('users.reset_password') && <form onSubmit={password} className="form-grid"><h3>Restablecer contraseña</h3>
         <label>Nueva contraseña<input name="new_password" type="password" autoComplete="new-password" required minLength={6} maxLength={128} /></label>

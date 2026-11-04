@@ -283,6 +283,25 @@ func (service *Service) ConfirmRoot(ctx context.Context, principal domain.Princi
 		if _, err = transaction.ExecContext(ctx, "UPDATE libraries SET current_configuration_revision=current_configuration_revision+1,revision=revision+1 WHERE id=?", libraryID); err != nil {
 			return err
 		}
+		// Solo la primera carpeta registrada: no se elige entre destinos anteriores.
+		if source == "managed" {
+			settings, _, err := settingsFor(ctx, transaction, libraryID)
+			if err != nil {
+				return err
+			}
+			var count int
+			if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM storage_roots WHERE library_id=? AND storage_source='managed'", libraryID).Scan(&count); err != nil {
+				return err
+			}
+			if count == 1 && settings.ManagedRootID == "" {
+				if err = storeManagedDestination(ctx, transaction, current, libraryID, "", rootID, metadata); err != nil {
+					return err
+				}
+			}
+		}
+		if err = configurationSnapshot(ctx, transaction, libraryID, current.User.ID); err != nil {
+			return err
+		}
 		if _, err = transaction.ExecContext(ctx, "UPDATE root_plans SET committed_root_id=? WHERE id=?", rootID, planID); err != nil {
 			return err
 		}
@@ -418,23 +437,8 @@ func (service *Service) requireRootSource(ctx context.Context, query storage.Que
 	}
 	return nil
 }
+
+// La inspección y la autorización comparten la prueba efectiva del servicio.
 func probeManagedRoot(path string) error {
-	root, err := os.OpenRoot(path)
-	if err != nil {
-		return invalid("No se puede abrir el destino administrado.")
-	}
-	defer root.Close()
-	name := ".documental-probe-" + domain.NewID()
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return invalid("El destino necesita permisos de escritura.")
-	}
-	defer root.Remove(name)
-	_, writeErr := file.Write([]byte("probe"))
-	syncErr := file.Sync()
-	closeErr := file.Close()
-	if writeErr != nil || syncErr != nil || closeErr != nil {
-		return invalid("No se pudo verificar escritura en el destino.")
-	}
-	return nil
+	return CheckAuthorizedDirectory(path, "managed")
 }

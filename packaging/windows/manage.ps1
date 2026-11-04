@@ -163,6 +163,8 @@ function Authorize-AidexFolder {
     if (!(Test-Path -LiteralPath $Config -PathType Leaf)) { throw 'No se encontró la configuración de AIDEX.' }
     $Service = Get-Service -Name $ServiceName -ErrorAction Stop
     if ($Service.Status -ne 'Running') { throw 'El servicio AIDEX debe estar iniciado para verificar el acceso.' }
+    $ServiceAccount = (Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop).StartName
+    if ($ServiceAccount -ine ('NT SERVICE\' + $ServiceName)) { throw "El servicio no usa la identidad NT SERVICE\$ServiceName. Repara la instalación antes de autorizar carpetas." }
     $Settings = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
     $Listen = [string]$Settings.listen_address
     if ($Listen -notmatch '^(127\.0\.0\.1|0\.0\.0\.0):([0-9]{1,5})$') { throw 'Puerto local de AIDEX no válido.' }
@@ -171,25 +173,35 @@ function Authorize-AidexFolder {
     $Endpoint = "http://127.0.0.1:$LocalPort/api/v1/local-folder-authorizations/$Ticket"
     $Request = Invoke-RestMethod -Method Post -Uri "$Endpoint/claim" -TimeoutSec 10 -ErrorAction Stop
     $Target = [string]$Request.server_path
+    $Finished = $false
     try {
         if ($Request.scope -ne 'linked-read-traverse' -or $Target -cnotmatch '^[A-Za-z]:\\[^\\]' -or $Target.Length -gt 1024) { throw 'La solicitud contiene una ruta o alcance no válido.' }
         $Full = [IO.Path]::GetFullPath($Target)
         if ($Full.Length -le 3 -or $Full.StartsWith('\\') -or !(Test-Path -LiteralPath $Full -PathType Container)) { throw 'La carpeta local seleccionada ya no existe.' }
         Assert-PrivatePath $Full
         Add-Type -AssemblyName System.Windows.Forms
-        $Text = "AIDEX solicita lectura y recorrido, con herencia normal, únicamente sobre esta carpeta y su contenido:`n`n$Full`n`nNo se concederá escritura ni Control total. ¿Autorizar al servicio NT SERVICE\AIDEX?"
+        $Text = "AIDEX solicita lectura y recorrido sobre esta carpeta y su contenido, y solo recorrido en sus directorios superiores:`n`n$Full`n`nNo se concederá escritura ni Control total. ¿Autorizar al servicio NT SERVICE\AIDEX?"
         $Choice = [System.Windows.Forms.MessageBox]::Show($Text, 'Autorizar acceso de AIDEX', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning, [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
         if ($Choice -ne [System.Windows.Forms.DialogResult]::Yes) { throw 'Autorización cancelada por el administrador.' }
         $ServiceSID = (New-Object Security.Principal.NTAccount('NT SERVICE', $ServiceName)).Translate([Security.Principal.SecurityIdentifier]).Value
         & icacls.exe $Full /grant ('*' + $ServiceSID + ':(OI)(CI)(RX)') | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Windows no pudo conceder lectura y recorrido a la carpeta.' }
+        # La lectura del destino puede fallar si el perfil del usuario impide
+        # atravesar sus directorios superiores. X no permite listar ni leerlos.
+        $Parent = Split-Path -Parent $Full
+        $Volume = [IO.Path]::GetPathRoot($Full).TrimEnd('\')
+        while ($Parent -and $Parent.TrimEnd('\') -ine $Volume) {
+            & icacls.exe $Parent /grant ('*' + $ServiceSID + ':(X)') | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Windows no pudo conceder recorrido a un directorio superior.' }
+            $Parent = Split-Path -Parent $Parent
+        }
+        $Result = Invoke-RestMethod -Method Post -Uri "$Endpoint/finish" -TimeoutSec 10 -ErrorAction Stop
+        $Finished = $true
+        if (!$Result.accessible) { throw "El servicio sigue sin poder leer la carpeta (diagnóstico: $($Result.code)). Revisa las ACL explícitas; no se concedieron permisos adicionales." }
+        Write-Host 'Acceso a la raíz verificado por el servicio AIDEX.'
     } finally {
-        # The service, not this elevated process, decides whether the ACL worked.
-        try {
-            $Result = Invoke-RestMethod -Method Post -Uri "$Endpoint/finish" -TimeoutSec 10 -ErrorAction Stop
-            if ($Result.accessible) { Write-Host 'Acceso verificado por el servicio AIDEX.' }
-            else { Write-Warning 'El servicio todavía no puede leer la carpeta o algún elemento requerido. Revisa los permisos heredados.' }
-        } catch { Write-Warning 'No se pudo completar la comprobación desde el servicio. Usa Comprobar acceso en AIDEX.' }
+        # También se cierra el ticket tras una cancelación o error local.
+        if (!$Finished) { try { Invoke-RestMethod -Method Post -Uri "$Endpoint/finish" -TimeoutSec 10 -ErrorAction Stop | Out-Null } catch { } }
     }
 }
 try {
@@ -239,11 +251,12 @@ try {
             $CommandLine = Get-AidexServiceCommand
             if (!(Get-Service $ServiceName -ErrorAction SilentlyContinue)) {
                 New-Service -Name $ServiceName -BinaryPathName $CommandLine -StartupType Manual -DisplayName 'AIDEX' | Out-Null
-                Invoke-Native sc.exe @('config',$ServiceName,'obj=',('NT SERVICE\' + $ServiceName))
             } else {
                 # Verified installation command; retain the same SID, data and ACLs.
                 Invoke-Native sc.exe @('config',$ServiceName,'binPath=',$CommandLine)
             }
+            # Older installations could retain their former logon account.
+            Invoke-Native sc.exe @('config',$ServiceName,'obj=',('NT SERVICE\' + $ServiceName))
             Set-Service -Name $ServiceName -DisplayName 'AIDEX'
             Invoke-Native sc.exe @('sidtype',$ServiceName,'unrestricted')
             if (![Diagnostics.EventLog]::SourceExists($ServiceName)) { New-EventLog -LogName Application -Source $ServiceName }

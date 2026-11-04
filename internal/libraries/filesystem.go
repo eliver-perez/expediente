@@ -83,6 +83,73 @@ func CheckLinkedDirectory(path string) error {
 	_, err := inspectDirectory(path)
 	return err
 }
+
+// Se ejecuta con la identidad del backend, nunca con los privilegios del auxiliar.
+// La prueba administrada usa nombres aleatorios exclusivos; no toca originales.
+func CheckAuthorizedDirectory(path, source string) error {
+	if err := CheckLinkedDirectory(path); err != nil {
+		return err
+	}
+	if source != "managed" {
+		return nil
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return directoryFailure(path, err)
+	}
+	defer root.Close()
+	name := ".aidex-access-" + domain.NewID()
+	if err = root.Mkdir(name, 0700); err != nil {
+		return directoryFailure(path, err)
+	}
+	defer root.Remove(name)
+	child, err := root.OpenRoot(name)
+	if err != nil {
+		return directoryFailure(path, err)
+	}
+	defer child.Close()
+	file, err := child.OpenFile("probe", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return directoryFailure(path, err)
+	}
+	defer child.Remove("probe")
+	defer child.Remove("published")
+	_, writeErr := file.Write([]byte("AIDEX access probe"))
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil {
+		return directoryFailure(path, writeErr)
+	}
+	if syncErr != nil {
+		return directoryFailure(path, syncErr)
+	}
+	if closeErr != nil {
+		return directoryFailure(path, closeErr)
+	}
+	read, err := child.ReadFile("probe")
+	if err != nil {
+		return directoryFailure(path, err)
+	}
+	if string(read) != "AIDEX access probe" {
+		return domain.Failure("ROOT_PROBE_FAILED", "No se pudo verificar el contenido de la prueba de escritura.", 422)
+	}
+	if err = child.Link("probe", "published"); err != nil {
+		return directoryFailure(path, err)
+	}
+	if err = child.Remove("published"); err != nil {
+		return directoryFailure(path, err)
+	}
+	if err = child.Remove("probe"); err != nil {
+		return directoryFailure(path, err)
+	}
+	if err = child.Close(); err != nil {
+		return directoryFailure(path, err)
+	}
+	if err = root.Remove(name); err != nil {
+		return directoryFailure(path, err)
+	}
+	return nil
+}
 func within(parent, child string, caseSensitive bool) bool {
 	if !caseSensitive {
 		parent = strings.ToLower(parent)

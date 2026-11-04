@@ -27,7 +27,7 @@ if [ "$was_loaded" -eq 1 ]; then
     if /bin/launchctl bootstrap system "$PLIST"; then
         attempt=0
         while [ "$attempt" -lt 30 ]; do
-            if /usr/bin/curl -fsS --max-time 2 "http://127.0.0.1:$new_port/health/live" >/dev/null 2>&1; then ready=1; break; fi
+            if /usr/bin/curl -fsS --max-time 2 "http://127.0.0.1:$new_port/health/live" 2>/dev/null | /usr/bin/grep -q '"product":"AIDEX"'; then ready=1; break; fi
             attempt=$((attempt + 1))
             /bin/sleep 1
         done

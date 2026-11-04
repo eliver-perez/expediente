@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -18,6 +19,8 @@ import (
 	"gestor-documental/internal/audit"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/libraries"
+	"gestor-documental/internal/licensing"
+	"gestor-documental/internal/macosfolders"
 )
 
 // Tickets live only in the service process, expire quickly and contain no shell
@@ -25,6 +28,7 @@ import (
 // elevated local administrator utility can do that after a second confirmation.
 type folderAuthorization struct {
 	path, libraryID, userID, sessionID string
+	source, tokenDigest                string
 	expires                            time.Time
 	claimed                            bool
 }
@@ -69,13 +73,17 @@ func (server *Server) expireFolderTickets(now time.Time) {
 func (server *Server) folderAuthorizationAudit(r *http.Request, ticket folderAuthorization, event, outcome string) error {
 	hash := sha256.Sum256([]byte(strings.ToLower(ticket.path)))
 	return server.identity.Database.Write(r.Context(), func(tx *sql.Tx) error {
-		return audit.Append(r.Context(), tx, time.Now(), audit.Event{Type: event, ActorUserID: ticket.userID, SessionID: ticket.sessionID, LibraryID: ticket.libraryID, Metadata: metadata(r), Details: map[string]any{"path_sha256": hex.EncodeToString(hash[:]), "scope": "linked-read-traverse", "outcome": outcome}})
+		return audit.Append(r.Context(), tx, time.Now(), audit.Event{Type: event, ActorUserID: ticket.userID, SessionID: ticket.sessionID, LibraryID: ticket.libraryID, Metadata: metadata(r), Details: map[string]any{"path_sha256": hex.EncodeToString(hash[:]), "scope": ticket.source, "outcome": outcome}})
 	})
 }
 
 func (server *Server) startFolderAuthorization(w http.ResponseWriter, r *http.Request, p domain.Principal) {
-	if runtime.GOOS != "windows" || !localOnly(r) {
-		server.fail(w, r, domain.Failure("LOCAL_AUTHORIZATION_REQUIRED", "Abre AIDEX en 127.0.0.1 desde el equipo Windows donde está instalado el servicio.", 403))
+	if (runtime.GOOS != "windows" && runtime.GOOS != "darwin") || !localOnly(r) {
+		server.fail(w, r, domain.Failure("LOCAL_AUTHORIZATION_REQUIRED", "Abre AIDEX en 127.0.0.1 desde el mismo equipo donde está instalado el servicio.", 403))
+		return
+	}
+	if runtime.GOOS == "windows" && !p.Can("system.configure") {
+		server.fail(w, r, domain.Failure("FORBIDDEN", "Se requiere administración de esta instalación.", 403))
 		return
 	}
 	var input struct {
@@ -87,16 +95,26 @@ func (server *Server) startFolderAuthorization(w http.ResponseWriter, r *http.Re
 		server.fail(w, r, err)
 		return
 	}
-	if input.Source != "linked" || !localFolderAuthorizationPath(input.Path) {
+	if runtime.GOOS == "windows" && (input.Source != "linked" || !localFolderAuthorizationPath(input.Path)) {
 		server.fail(w, r, domain.Failure("FOLDER_AUTHORIZATION_SCOPE", "La autorización automática solo admite una carpeta local vinculada. Las rutas UNC y destinos administrados requieren revisión de sus permisos en el equipo correspondiente.", 422))
 		return
 	}
-	if _, err := server.libraries.PlanStorageRoot(r.Context(), p, input.LibraryID, input.Path, input.Source, metadata(r)); err == nil {
+	if runtime.GOOS == "darwin" {
+		if err := macosfolders.ValidateSelection(macosfolders.Selection{Path: input.Path, Source: input.Source}); err != nil {
+			server.fail(w, r, domain.Failure("FOLDER_AUTHORIZATION_SCOPE", err.Error(), 422))
+			return
+		}
+		if err := server.libraries.ValidateFolderAuthorizationScope(r.Context(), p, input.LibraryID, input.Path, input.Source); err != nil {
+			server.fail(w, r, err)
+			return
+		}
+	}
+	if _, err := server.libraries.PlanStorageRoot(r.Context(), p, input.LibraryID, input.Path, input.Source, metadata(r)); err == nil && runtime.GOOS == "windows" {
 		server.fail(w, r, domain.Failure("FOLDER_ALREADY_ACCESSIBLE", "El servicio ya puede leer la carpeta. Vuelve a inspeccionarla.", 409))
 		return
-	} else {
+	} else if err != nil {
 		var failure *domain.Error
-		if !errors.As(err, &failure) || failure.Code != "ROOT_PERMISSION_DENIED" {
+		if !errors.As(err, &failure) || (failure.Code != "ROOT_PERMISSION_DENIED" && !(runtime.GOOS == "darwin" && failure.Code == "ROOT_PRIVACY_DENIED")) {
 			server.fail(w, r, err)
 			return
 		}
@@ -107,7 +125,7 @@ func (server *Server) startFolderAuthorization(w http.ResponseWriter, r *http.Re
 		return
 	}
 	key := hex.EncodeToString(nonce[:])
-	ticket := &folderAuthorization{path: filepath.Clean(input.Path), libraryID: input.LibraryID, userID: p.User.ID, sessionID: p.SessionID, expires: time.Now().Add(5 * time.Minute)}
+	ticket := &folderAuthorization{source: input.Source, tokenDigest: p.TokenDigest, path: filepath.Clean(input.Path), libraryID: input.LibraryID, userID: p.User.ID, sessionID: p.SessionID, expires: time.Now().Add(5 * time.Minute)}
 	if err := server.folderAuthorizationAudit(r, *ticket, "folder.authorization_requested", "pending"); err != nil {
 		server.fail(w, r, err)
 		return
@@ -121,11 +139,15 @@ func (server *Server) startFolderAuthorization(w http.ResponseWriter, r *http.Re
 	}
 	server.folderAuth[key] = ticket
 	server.folderAuthMu.Unlock()
-	writeJSON(w, 201, map[string]any{"launch_url": "aidex-auth://authorize/" + key, "expires_in_seconds": 300})
+	launchURL := "aidex-auth://authorize/" + key
+	if runtime.GOOS == "darwin" {
+		launchURL += fmt.Sprintf("?port=%s", serverLocalPort(server.configuration.ListenAddress))
+	}
+	writeJSON(w, 201, map[string]any{"launch_url": launchURL, "expires_in_seconds": 300})
 }
 
 func (server *Server) claimFolderAuthorization(w http.ResponseWriter, r *http.Request) {
-	if runtime.GOOS != "windows" || !localOnly(r) || !authorizationToken.MatchString(r.PathValue("ticket")) {
+	if (runtime.GOOS != "windows" && runtime.GOOS != "darwin") || !localOnly(r) || !authorizationToken.MatchString(r.PathValue("ticket")) {
 		server.fail(w, r, domain.Failure("NOT_FOUND", "Solicitud de autorización no disponible.", 404))
 		return
 	}
@@ -137,14 +159,20 @@ func (server *Server) claimFolderAuthorization(w http.ResponseWriter, r *http.Re
 		server.fail(w, r, domain.Failure("NOT_FOUND", "Solicitud de autorización vencida o utilizada.", 404))
 		return
 	}
+	if err := server.validateFolderTicket(r, *ticket); err != nil {
+		server.folderAuthMu.Unlock()
+		server.fail(w, r, err)
+		return
+	}
 	ticket.claimed = true
+	source := ticket.source
 	path := ticket.path
 	server.folderAuthMu.Unlock()
-	writeJSON(w, 200, map[string]string{"server_path": path, "scope": "linked-read-traverse"})
+	writeJSON(w, 200, map[string]string{"server_path": path, "storage_source": source, "scope": "linked-read-traverse"})
 }
 
 func (server *Server) finishFolderAuthorization(w http.ResponseWriter, r *http.Request) {
-	if runtime.GOOS != "windows" || !localOnly(r) || !authorizationToken.MatchString(r.PathValue("ticket")) {
+	if (runtime.GOOS != "windows" && runtime.GOOS != "darwin") || !localOnly(r) || !authorizationToken.MatchString(r.PathValue("ticket")) {
 		server.fail(w, r, domain.Failure("NOT_FOUND", "Solicitud de autorización no disponible.", 404))
 		return
 	}
@@ -160,14 +188,66 @@ func (server *Server) finishFolderAuthorization(w http.ResponseWriter, r *http.R
 	server.folderAuthMu.Unlock()
 	// This check runs in the service process (NT SERVICE\AIDEX), not in the
 	// elevated helper. It is the only proof that the new ACL is effective.
-	err := libraries.CheckLinkedDirectory(copy.path)
+	err := server.validateFolderTicket(r, copy)
+	if err == nil {
+		err = libraries.CheckAuthorizedDirectory(copy.path, copy.source)
+	}
 	outcome := "accessible"
+	code := ""
 	if err != nil {
 		outcome = "unavailable"
+		var failure *domain.Error
+		if errors.As(err, &failure) {
+			code = failure.Code
+		} else {
+			code = "ROOT_READ_FAILED"
+		}
 	}
 	if auditErr := server.folderAuthorizationAudit(r, copy, "folder.authorization_checked", outcome); auditErr != nil {
 		server.fail(w, r, auditErr)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"accessible": err == nil})
+	writeJSON(w, 200, map[string]any{"accessible": err == nil, "code": code, "checked_scope": "root"})
+}
+
+func serverLocalPort(address string) string {
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "18090"
+	}
+	return port
+}
+
+func (server *Server) validateFolderTicket(r *http.Request, ticket folderAuthorization) error {
+	principal, err := server.identity.LoadPrincipal(r.Context(), server.identity.Database.Reader, ticket.tokenDigest)
+	if err != nil {
+		return err
+	}
+	if principal.User.ID != ticket.userID || principal.SessionID != ticket.sessionID {
+		return domain.Failure("SESSION_REQUIRED", "La sesión que solicitó la autorización ya no está vigente.", 401)
+	}
+	if err = server.identity.License.Check(r.Context(), licensing.WriteDocuments); err != nil {
+		return err
+	}
+	return server.libraries.Read(r.Context(), principal, ticket.libraryID, "storage.manage_roots")
+}
+
+func (server *Server) describeFolderAuthorization(w http.ResponseWriter, r *http.Request) {
+	if runtime.GOOS != "darwin" || !localOnly(r) || !authorizationToken.MatchString(r.PathValue("ticket")) {
+		server.fail(w, r, domain.Failure("NOT_FOUND", "Solicitud no disponible.", 404))
+		return
+	}
+	server.folderAuthMu.Lock()
+	defer server.folderAuthMu.Unlock()
+	server.expireFolderTickets(time.Now())
+	ticket := server.folderAuth[r.PathValue("ticket")]
+	if ticket == nil || ticket.claimed {
+		server.fail(w, r, domain.Failure("NOT_FOUND", "Solicitud vencida o utilizada.", 404))
+		return
+	}
+	if err := server.validateFolderTicket(r, *ticket); err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, macosfolders.Selection{Path: ticket.path, Source: ticket.source})
 }

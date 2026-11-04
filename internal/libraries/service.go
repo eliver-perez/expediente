@@ -270,6 +270,10 @@ func (service *Service) UpdateConfigurationWithDescription(ctx context.Context, 
 		return invalid("Nombre o idioma OCR inválido.")
 	}
 	return service.write(ctx, principal, libraryID, "libraries.configure", func(transaction *sql.Tx, current domain.Principal) error {
+		previousSettings, _, err := settingsFor(ctx, transaction, libraryID)
+		if err != nil {
+			return err
+		}
 		if err := service.updateSettings(ctx, transaction, libraryID, mode, settings); err != nil {
 			return err
 		}
@@ -317,6 +321,11 @@ func (service *Service) UpdateConfigurationWithDescription(ctx context.Context, 
 		}
 		if err = configurationSnapshot(ctx, transaction, libraryID, current.User.ID); err != nil {
 			return err
+		}
+		if settings != nil && previousSettings.ManagedRootID != settings.ManagedRootID {
+			if err = record(ctx, transaction, current, metadata, "storage.destination_changed", libraryID, "", map[string]any{"previous_root_id": previousSettings.ManagedRootID, "new_root_id": settings.ManagedRootID}); err != nil {
+				return err
+			}
 		}
 		return record(ctx, transaction, current, metadata, "library.updated", libraryID, "", map[string]any{"name": name, "ocr_languages": languages})
 	})

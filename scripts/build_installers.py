@@ -69,17 +69,70 @@ def documents(destination):
         copy(ROOT / "testdata/documents" / name, destination / "formatos" / name)
 
 
+def macos_uninstaller(destination, work):
+    """Compile the native applet and bundle the root-owned, narrow helper."""
+    run(["osacompile", "-o", destination, ROOT / "packaging/macos/uninstall.applescript"])
+    resources = destination / "Contents/Resources"
+    copy(ROOT / "packaging/macos/uninstall-helper.sh", resources / "uninstall-helper.sh", 0o755)
+    # The official icon is already rasterized in the project's Windows asset.
+    # sips selects its 256 px frame; no extra graphics dependency is required.
+    source = work / "aidex-icon.png"
+    run(["sips", "-s", "format", "png", ROOT / "packaging/windows/aidex.ico",
+         "--out", source], stdout=subprocess.DEVNULL)
+    iconset = work / "aidex.iconset"
+    iconset.mkdir()
+    for size, name in [(16, "icon_16x16.png"), (32, "icon_16x16@2x.png"),
+                       (32, "icon_32x32.png"), (64, "icon_32x32@2x.png"),
+                       (128, "icon_128x128.png"), (256, "icon_128x128@2x.png"),
+                       (256, "icon_256x256.png"), (512, "icon_256x256@2x.png"),
+                       (512, "icon_512x512.png"), (1024, "icon_512x512@2x.png")]:
+        run(["sips", "-z", size, size, source, "--out", iconset / name], stdout=subprocess.DEVNULL)
+    run(["iconutil", "-c", "icns", iconset, "-o", resources / "aidex.icns"])
+    info = destination / "Contents/Info.plist"
+    details = plistlib.loads(info.read_bytes())
+    details.update(CFBundleIdentifier="mx.com.aidex.uninstaller", CFBundleName="Desinstalar AIDEX",
+                   CFBundleDisplayName="Desinstalar AIDEX", CFBundleIconFile="aidex.icns",
+                   CFBundleVersion=VERSION, CFBundleShortVersionString=VERSION,
+                   LSMinimumSystemVersion="13.0")
+    details.pop("CFBundleIconName", None)
+    info.write_bytes(plistlib.dumps(details))
+    run(["codesign", "--force", "--deep", "--sign", "-", destination])
+    run(["codesign", "--verify", "--deep", "--strict", destination])
+
+
 def macos(output, work):
     payload = work / "root"
     base = payload / "Library/Application Support/AIDEX"
     binary(base / "bin/aidex-server", "darwin", "arm64")
     # Local ad-hoc Mach-O signature for Apple Silicon execution; not notarization.
     run(["codesign", "--force", "--sign", "-", base / "bin/aidex-server"])
+    # El auxiliar de ACL utiliza las API nativas por descriptor, sin chmod
+    # recursivo ni interpretación de comandos procedentes del navegador.
+    helper_environment = dict(os.environ, CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64",
+                              MACOSX_DEPLOYMENT_TARGET="13.0")
+    run(["go", "build", "-trimpath", "-ldflags", "-s -w", "-o", base / "bin/aidex-folder-helper",
+         "./cmd/macos-folder-helper"], env=helper_environment)
+    run(["codesign", "--force", "--sign", "-", base / "bin/aidex-folder-helper"])
     documents(base / "docs")
     copy(ROOT / "packaging/macos/profile.sh", base / "profile.sh")
     apps = payload / "Applications/AIDEX"
-    for source, name in [("admin.command", "Configurar AIDEX.command"), ("uninstall.command", "Desinstalar AIDEX.command")]:
+    for source, name in [("admin.command", "Configurar AIDEX.command"), ("port.command", "Configurar puerto.command")]:
         copy(ROOT / "packaging/macos" / source, apps / name, 0o755)
+    macos_uninstaller(apps / "Desinstalar AIDEX.app", work)
+    authorization_app = apps / "Autorizar carpeta AIDEX.app"
+    run(["osacompile", "-o", authorization_app, ROOT / "packaging/macos/authorize-folder.applescript"])
+    info = authorization_app / "Contents/Info.plist"
+    details = plistlib.loads(info.read_bytes())
+    details.update(CFBundleIdentifier="mx.com.aidex.folder-authorization", CFBundleName="Autorizar carpeta AIDEX",
+                   CFBundleDisplayName="Autorizar carpeta AIDEX", CFBundleVersion=VERSION,
+                   CFBundleShortVersionString=VERSION, LSMinimumSystemVersion="13.0",
+                   CFBundleURLTypes=[{"CFBundleURLName":"Autorización local AIDEX", "CFBundleURLSchemes":["aidex-auth"]}])
+    copy(apps / "Desinstalar AIDEX.app/Contents/Resources/aidex.icns", authorization_app / "Contents/Resources/aidex.icns")
+    details.update(CFBundleIconFile="aidex.icns")
+    details.pop("CFBundleIconName", None)
+    info.write_bytes(plistlib.dumps(details))
+    run(["codesign", "--force", "--deep", "--sign", "-", authorization_app])
+    run(["codesign", "--verify", "--deep", "--strict", authorization_app])
     (apps / "Abrir AIDEX.webloc").write_bytes(plistlib.dumps({"URL": "http://127.0.0.1:18090"}))
     daemon = payload / "Library/LaunchDaemons/app.aidex.plist"
     daemon.parent.mkdir(parents=True, exist_ok=True)
@@ -97,7 +150,7 @@ def macos(output, work):
     (base / "package-files.tsv").write_text("\n".join(manifest) + "\n")
     # Installer ownership must never inherit the developer's UID or group.
     scripts = work / "scripts"
-    for name in ["preinstall", "postinstall", "profile.sh"]:
+    for name in ["preinstall", "postinstall", "profile.sh", "installer-common.sh"]:
         copy(ROOT / "packaging/macos" / name, scripts / name, 0o755, template=True)
     component = work / "component.pkg"
     run(["pkgbuild", "--root", payload, "--scripts", scripts, "--identifier", "app.aidex",
@@ -165,7 +218,7 @@ Priority: optional
 Architecture: {architecture}
 Maintainer: AIDEX
 Installed-Size: {size}
-Depends: adduser, util-linux, systemd, poppler-utils, tesseract-ocr, tesseract-ocr-spa, tesseract-ocr-eng, fonts-dejavu-core
+Depends: adduser, util-linux, systemd, python3, poppler-utils, tesseract-ocr, tesseract-ocr-spa, tesseract-ocr-eng, fonts-dejavu-core
 Recommends: libreoffice-writer, libreoffice-calc
 Description: AIDEX - Aplicación de Indexación Digital de Expedientes
  Servicio local de biblioteca digital. Datos conservados incluso al desinstalar.
@@ -231,6 +284,42 @@ def windows_tools(prefix, destination, docs):
                            '<dir>WINDOWSFONTDIR</dir><cachedir prefix="xdg">fontconfig</cachedir></fontconfig>')
     (docs / "windows-ocr.lock.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
+
+
+def reuse_verified_windows_runtime(prior, destination, docs):
+    """Reuse only OCR assets from a previously verified installer payload."""
+    prior = prior.resolve()
+    records = json.loads((prior / "package-files.json").read_text(encoding="utf-8"))
+    hashes = {item["path"]: item["sha256"] for item in records}
+    if len(hashes) != len(records):
+        raise RuntimeError("Duplicate paths in prior Windows package manifest")
+    lock_path = prior / "docs/windows-ocr.lock.json"
+    if json.loads(lock_path.read_text(encoding="utf-8")) != json.loads(
+        (ROOT / "packaging/windows/ocr.lock.json").read_text(encoding="utf-8")
+    ):
+        raise RuntimeError("Prior Windows OCR lock differs from current lock")
+    selected = [path for path in prior.rglob("*") if path.is_file() and (
+        path.relative_to(prior).parts[0] == "tools"
+        or path.relative_to(prior).parts[:2] == ("docs", "third-party")
+        or path == lock_path
+    )]
+    for source in selected:
+        relative = source.relative_to(prior)
+        if source.is_symlink() or source.resolve() != prior / relative:
+            raise RuntimeError(f"Unsafe prior Windows runtime path: {relative}")
+        expected = hashes.get(relative.as_posix())
+        if not expected or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f"Prior Windows runtime differs from package manifest: {relative}")
+        target = destination / relative.relative_to("tools") if relative.parts[0] == "tools" else docs / relative.relative_to("docs")
+        copy(source, target)
+    for path in ["Library/bin/pdfinfo.exe", "Library/bin/pdftotext.exe", "Library/bin/pdftoppm.exe",
+                 "Library/bin/tesseract.exe", "tessdata/spa.traineddata", "tessdata/eng.traineddata",
+                 "tessdata/osd.traineddata", "fonts.conf"]:
+        if not (destination / path).is_file():
+            raise RuntimeError(f"Missing verified Windows OCR runtime component: {path}")
+    if not (docs / "windows-ocr.lock.json").is_file() or not (docs / "third-party").is_dir():
+        raise RuntimeError("Prior Windows OCR runtime lacks provenance documentation")
+    print(f"Verified {len(selected)} Windows OCR runtime files against prior installer manifest")
 
 
 def check_pe_imports(directory):
@@ -317,9 +406,9 @@ def check_windows_icon(executable, gui=False):
     print(f"Windows icon resources: {executable.name}: {sorted(sizes)} OK")
 
 
-def windows(output, work, prefix, makensis, powershell=None):
-    if not prefix or not makensis:
-        raise RuntimeError("Windows requires --windows-tools and --makensis")
+def windows(output, work, prefix, makensis, powershell=None, prior_runtime=None):
+    if (not prefix and not prior_runtime) or not makensis:
+        raise RuntimeError("Windows requires --windows-tools or --windows-runtime-payload, and --makensis")
     powershell = powershell or shutil.which("powershell.exe") or shutil.which("pwsh")
     if not powershell:
         raise RuntimeError("Windows packaging requires PowerShell to validate the generated script; use --powershell")
@@ -340,7 +429,10 @@ def windows(output, work, prefix, makensis, powershell=None):
     documents(payload / "docs")
     copy(ROOT / "internal/httpapi/eula-draft.txt", payload / "docs/CLUF-BORRADOR-PENDIENTE.txt")
     copy(ROOT / "docs/PRUEBAS-WINDOWS-1.0.0.md", payload / "docs/PRUEBAS-WINDOWS-1.0.0.md")
-    windows_tools(prefix, payload / "tools", payload / "docs")
+    if prior_runtime:
+        reuse_verified_windows_runtime(prior_runtime, payload / "tools", payload / "docs")
+    else:
+        windows_tools(prefix, payload / "tools", payload / "docs")
     check_pe_imports(payload / "tools/Library/bin")
     copy(ROOT / "packaging/windows/admin.cmd", payload / "admin.cmd")
     copy(ROOT / "packaging/windows/server-port.cmd", payload / "server-port.cmd")
@@ -369,6 +461,8 @@ def main():
     parser.add_argument("--target", choices=["macos", "windows", "ubuntu", "all"], required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "dist/aidex-1.0.0")
     parser.add_argument("--windows-tools", type=Path)
+    parser.add_argument("--windows-runtime-payload", type=Path,
+                        help="Extracted prior installer payload; verify OCR files against its SHA manifest and current lock")
     parser.add_argument("--makensis")
     parser.add_argument("--powershell", help="PowerShell parser for Windows scripts (prefers Windows PowerShell 5.1 on Windows)")
     parser.add_argument("--ubuntu-arch", choices=["amd64", "arm64", "all"], default="all",
@@ -381,7 +475,8 @@ def main():
         with tempfile.TemporaryDirectory(prefix="aidex-package-") as directory:
             work = Path(directory).resolve()
             if target == "windows":
-                windows(output, work, args.windows_tools, args.makensis, args.powershell)
+                windows(output, work, args.windows_tools, args.makensis, args.powershell,
+                        args.windows_runtime_payload)
             elif target == "ubuntu":
                 architectures = ["amd64", "arm64"] if args.ubuntu_arch == "all" else [args.ubuntu_arch]
                 for architecture in architectures:

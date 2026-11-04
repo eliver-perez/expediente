@@ -1,0 +1,29 @@
+{
+  "version": "1.0.0",
+  "packages": [
+    {
+      "file": "AIDEX-1.0.0-Windows-amd64.exe",
+      "path": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-carpetas-flujo-20261030/AIDEX-1.0.0-Windows-amd64.exe",
+      "size_bytes": 40509820,
+      "sha256": "4bcff34d972e2693d093f5d78992a1684f04fc94ebed191cebc29fbfc3c30653"
+    },
+    {
+      "file": "AIDEX-1.0.0-macOS-arm64.pkg",
+      "path": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-carpetas-flujo-20261030/AIDEX-1.0.0-macOS-arm64.pkg",
+      "size_bytes": 10033375,
+      "sha256": "b25f15a7d99929631bdb6fa46dd4b68e84065d37a73778f117779161a9deb06d"
+    },
+    {
+      "file": "aidex_1.0.0_amd64.deb",
+      "path": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-carpetas-flujo-20261030/aidex_1.0.0_amd64.deb",
+      "size_bytes": 6650112,
+      "sha256": "78c7e3dbb723e2087960dc828b6705d8f808d7ef66b653e6fdc821a98c2d1415"
+    },
+    {
+      "file": "aidex_1.0.0_arm64.deb",
+      "path": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-carpetas-flujo-20261030/aidex_1.0.0_arm64.deb",
+      "size_bytes": 6140348,
+      "sha256": "a3ec984149a38f1e66aaa345bce997d6263930dff3dfb5bbc2a94b9c4bf05f60"
+    }
+  ]
+}

@@ -58,6 +58,12 @@ def check_docs(directory):
 def check_identity(name, data):
     former = bytes([97, 105, 98, 105, 100])
     assert former not in name.lower().encode(), name
+    if name.endswith('/Scripts/postinstall'):
+        # The installer may detect the two legacy launchd jobs, but must never
+        # use their identity for the new service or migrate/delete their data.
+        for legacy in (b'app.aibid.test', b'app.aibid', b'AIBID-Test'):
+            assert data.count(legacy) <= 1, name
+            data = data.replace(legacy, b'previous-service')
     if name in ('manage.ps1', '$PLUGINSDIR/manage.ps1'):
         # The installer must reject a pre-existing legacy service without
         # deleting its data. These names are allowed only in that exact guard.
@@ -186,6 +192,7 @@ def main():
         installer_source = (builder.ROOT / 'packaging/windows/installer.nsi').read_text(encoding='utf-8-sig')
         assert 'Software\\Classes\\aidex-auth\\shell\\open\\command' in installer_source
         assert 'DeleteRegKey HKLM "Software\\Classes\\aidex-auth"' in installer_source
+        assert 'ExecWait' not in installer_source and installer_source.count('nsExec::ExecToStack /TIMEOUT=660000') == 3
         builder.check_pe_imports(manifest.parent / 'tools/Library/bin')
         assert not (manifest.parent / 'gestor-documental.exe').exists()
         check_docs(manifest.parent / 'docs')
@@ -202,6 +209,22 @@ def main():
         check_backend_identity(binary.read_bytes())
         payload = binary.parents[4]
         base = binary.parent.parent
+        assert (payload / 'Applications/AIDEX/Configurar puerto.command').is_file()
+        uninstaller = payload / 'Applications/AIDEX/Desinstalar AIDEX.app'
+        assert (uninstaller / 'Contents/MacOS/applet').is_file()
+        assert (uninstaller / 'Contents/Resources/uninstall-helper.sh').is_file()
+        assert (uninstaller / 'Contents/Resources/aidex.icns').is_file()
+        assert not (payload / 'Applications/AIDEX/Desinstalar AIDEX.command').exists()
+        uninstaller_info = plistlib.loads((uninstaller / 'Contents/Info.plist').read_bytes())
+        assert uninstaller_info['CFBundleIdentifier'] == 'mx.com.aidex.uninstaller'
+        authorization_app=payload/'Applications/AIDEX/Autorizar carpeta AIDEX.app'
+        authorization_info=plistlib.loads((authorization_app/'Contents/Info.plist').read_bytes())
+        assert authorization_info['CFBundleIdentifier']=='mx.com.aidex.folder-authorization'
+        assert authorization_info['CFBundleShortVersionString']=='1.0.0'
+        assert authorization_info['CFBundleURLTypes'][0]['CFBundleURLSchemes']==['aidex-auth']
+        assert (authorization_app/'Contents/Resources/aidex.icns').read_bytes()==(uninstaller/'Contents/Resources/aidex.icns').read_bytes()
+        folder_helper=base/'bin/aidex-folder-helper'
+        assert folder_helper.is_file() and folder_helper.read_bytes()[:4]==b'\xcf\xfa\xed\xfe'
         for entry in (base / 'package-files.tsv').read_text().splitlines():
             digest, name = entry.split('\t')
             path = payload / name.lstrip('/')
@@ -210,13 +233,23 @@ def main():
         plist = next(mac.rglob('app.aidex.plist'))
         info = plistlib.loads(plist.read_bytes())
         assert info['Label'] == 'app.aidex' and info['UserName'] == '_aidex'
-        assert info['ProgramArguments'][0].endswith('/AIDEX/bin/aidex-server')
-        # Exercise the real plist editor used by postinstall on a synthetic Unicode path.
-        cfg = root / 'María López/Documentación Muñoz/配置.json'
+        assert info['ProgramArguments'] == ['/Library/Application Support/AIDEX/bin/aidex-server', 'serve', '--config', '/Library/Application Support/AIDEX/data/config.json']
+        # Usar el mismo auxiliar de postinstall; comprobar todo el arreglo,
+        # incluida la reparación de duplicados y las reinstalaciones sucesivas.
+        cfg = root / 'María López/Documentación & <Muñoz>/配置.json'
         cfg.parent.mkdir(parents=True)
-        command(['plutil', '-replace', 'ProgramArguments.3', '-string', cfg, plist])
-        assert plistlib.loads(plist.read_bytes())['ProgramArguments'][3] == str(cfg)
+        helper = next(mac.rglob('Scripts/installer-common.sh'))
+        info['ProgramArguments'].append(info['ProgramArguments'][-1])
+        plist.write_bytes(plistlib.dumps(info))
+        for _ in range(2):
+            command(['/bin/bash', '-Eeuo', 'pipefail', '-c',
+                     '. "$1"; BINARY=$2; CONFIG=$3; PLIST=$4; aidex_rebuild_program_arguments',
+                     'aidex-plist-test', helper, binary, cfg, plist])
+            assert plistlib.loads(plist.read_bytes())['ProgramArguments'] == [str(binary), 'serve', '--config', str(cfg)]
         command(['codesign', '--verify', '--strict', binary])
+        command(['codesign', '--verify', '--deep', '--strict', uninstaller])
+        command(['codesign','--verify','--strict',folder_helper])
+        command(['codesign','--verify','--deep','--strict',authorization_app])
         assert command([binary, 'version']).startswith('AIDEX 1.0.0 (production;')
         check_docs(base / 'docs')
         results.append({'target': 'macos-arm64', 'result': 'PASS', 'scope': 'distribution/plist, ownership, complete SHA manifest, UTF-8 docs, native plutil Unicode, ad-hoc signature, packaged binary version'})
