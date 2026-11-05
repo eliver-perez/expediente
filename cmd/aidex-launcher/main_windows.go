@@ -1,7 +1,8 @@
-// A GUI-subsystem Windows executable: no console, elevation, credentials or writes.
+// GUI launcher; native ACL work runs in a separate elevated, supervised process.
 package main
 
 import (
+	"gestor-documental/internal/folderpicker"
 	"gestor-documental/internal/launcher"
 	"golang.org/x/sys/windows"
 	"os"
@@ -12,6 +13,33 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && (os.Args[1] == "--folder-authorization" || os.Args[1] == "--folder-acl-worker") {
+		if !folderTicket.MatchString("aidex-auth://authorize/" + os.Args[2]) {
+			os.Exit(2)
+		}
+		var err error
+		if os.Args[1] == "--folder-acl-worker" {
+			closeLog := authorizationLog()
+			defer closeLog()
+			err = applyFolderAuthorization(os.Args[2])
+		} else {
+			err = superviseFolderAuthorization(os.Args[2])
+			if err != nil {
+				showMessage(err.Error())
+			}
+		}
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "aidex-pick://") {
+		if err := folderpicker.Run(os.Args[1]); err != nil {
+			showMessage("No se pudo seleccionar la carpeta. Vuelve a AIDEX o introduce la ruta manualmente.")
+		}
+		return
+	}
+
 	if len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "aidex-auth://") {
 		if message := openFolderAuthorization(os.Args[1]); message != "" {
 			showMessage(message)
@@ -38,23 +66,8 @@ func openFolderAuthorization(value string) string {
 	if parts == nil {
 		return "La solicitud de autorización de carpeta no es válida."
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		return "No se pudo localizar la utilidad instalada de AIDEX."
-	}
-	root := filepath.Dir(executable)
-	script := filepath.Join(root, "manage.ps1")
-	if _, err := os.Stat(script); err != nil {
-		return "Falta la utilidad de administración de AIDEX. Reinstala el programa."
-	}
-	// Only a random ticket crosses the browser/protocol boundary; the elevated
-	// utility obtains the immutable requested path directly from the local service.
-	powershell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	verb, _ := windows.UTF16PtrFromString("runas")
-	program, _ := windows.UTF16PtrFromString(powershell)
-	arguments, _ := windows.UTF16PtrFromString(`-NoProfile -ExecutionPolicy Bypass -File "` + script + `" -Action AuthorizeFolder -InstallRoot "` + root + `" -Ticket ` + parts[1])
-	if err := windows.ShellExecute(0, verb, program, arguments, nil, windows.SW_SHOWNORMAL); err != nil {
-		return "No se pudo abrir la autorización de Windows. Vuelve a intentarlo desde este equipo."
+	if err := elevateAuthorization(parts[1]); err != nil {
+		return "La autorización se canceló o Windows no pudo abrirla. Vuelve a AIDEX y comprueba el acceso."
 	}
 	return ""
 }

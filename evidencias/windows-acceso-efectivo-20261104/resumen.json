@@ -1,0 +1,21 @@
+{
+  "date": "2026-11-04",
+  "version": "1.0.0",
+  "target": "windows-amd64",
+  "installer": "dist/aidex-1.0.0-windows-acceso-efectivo-20261104/AIDEX-1.0.0-Windows-amd64.exe",
+  "size_bytes": 42058469,
+  "sha256": "20c188b79da2c50b0be8ec2d4de5589072841355877dbbe4903617dfeff20ba0",
+  "checks": {
+    "cross_compilation": "PASS",
+    "windows_go_vet": "PASS",
+    "packaging_parser_tests_passed": 7,
+    "package_inspection": "PASS",
+    "unchanged_gui_uac_helper": true,
+    "protected_files_unchanged": 211,
+    "portable_implementation_unchanged": true
+  },
+  "native_windows_tests": "COMPILED_NOT_EXECUTED",
+  "installed_service_validation": "PENDING",
+  "actual_original_failing_syscall": "Not recorded in supplied log; detailed native service diagnostics now included",
+  "macos_ubuntu_packages_generated": false
+}

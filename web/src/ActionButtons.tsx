@@ -14,3 +14,5 @@ export function VisualizeButton(props: ActionProps) { return <button type="butto
 export function AuditDetailsButton(props: ActionProps) { return <button type="button" {...props} className={`secondary compact icon-only-button ${props.className || ''}`.trim()} aria-label={props['aria-label'] || 'Ver detalles del evento'} title={props.title || 'Ver detalles del evento'}><EyeIcon /></button>; }
 export function RemoveButton(props: ActionProps) { return <button type="button" {...props} className={`secondary compact icon-label-button remove-button ${props.className || ''}`.trim()}><TrashIcon />Remover</button>; }
 export function ModalCloseButton(props: ActionProps) { return <button type="button" {...props} className={`secondary compact icon-only-button modal-close-button ${props.className || ''}`.trim()} aria-label={props['aria-label'] || 'Cerrar ventana'} title={props.title || 'Cerrar ventana'}><CloseIcon /></button>; }
+
+export function FolderIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5h6l2 2h10v13H3V7Z" /></svg>; }

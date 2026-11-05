@@ -22,7 +22,7 @@ class ProfileTests(unittest.TestCase):
                     data.mkdir(parents=True)
                     config = data / 'config.json' if platform == 'macos' else root / ('etc/aidex/config.json')
                     config.parent.mkdir(parents=True, exist_ok=True)
-                    config.write_text('{}')
+                    config.write_text(json.dumps({'listen_address':'127.0.0.1:18090'}))
                     profile_source = builder.ROOT / 'packaging' / platform / 'profile.sh'
                     profile = root / 'profile.sh'
                     profile.write_text(profile_source.read_text().replace('/bin/launchctl', '"$AIDEX_TEST_MOCK" launchctl').replace('systemctl ', '"$AIDEX_TEST_MOCK" systemctl '))
@@ -30,11 +30,16 @@ class ProfileTests(unittest.TestCase):
                     script = source.read_text().replace(". '/Library/Application Support/AIDEX/profile.sh'", '. "$AIDEX_TEST_PROFILE"').replace('. /usr/lib/aidex/profile.sh', '. "$AIDEX_TEST_PROFILE"').replace('aidex_select_profile\n', 'aidex_select_profile "$AIDEX_TEST_ROOT"\n')
                     mock = root / 'mock.py'
                     mock.write_text('''#!/usr/bin/env python3
-import json,os,pathlib,sys
+import json,os,pathlib,sys,subprocess
 args=sys.argv[1:]; command=args.pop(0)
 root=pathlib.Path(os.environ['AIDEX_TEST_ROOT'])
 with (root/'calls.jsonl').open('a') as log: log.write(json.dumps([command,*args])+"\\n")
 if command=='id': print('0'); sys.exit(0)
+if command=='lsof': sys.exit(1)
+if command=='curl': print('{"product":"AIDEX"}'); sys.exit(0)
+if command=='python3':
+ if 'urllib.request' in ' '.join(args): sys.exit(0)
+ sys.exit(subprocess.run([sys.executable,*args]).returncode)
 if command in ('sudo','runuser'):
  if args[0]=='test': sys.exit(0 if pathlib.Path(args[-1]).exists() else 1)
  if args[0]=='-u':
@@ -49,9 +54,9 @@ if command=='launchctl':
 sys.exit(0)
 ''')
                     mock.chmod(0o755)
-                    for command in ['id', 'sudo', 'runuser', 'launchctl', 'systemctl']:
+                    for command in ['id', 'sudo', 'runuser', 'launchctl', 'systemctl', 'lsof', 'curl', 'python3']:
                         if platform == 'macos':
-                            script = script.replace('/usr/bin/' + command, '"$AIDEX_TEST_MOCK" ' + command).replace('/bin/' + command, '"$AIDEX_TEST_MOCK" ' + command)
+                            script = script.replace('/usr/sbin/' + command, '"$AIDEX_TEST_MOCK" ' + command).replace('/usr/bin/' + command, '"$AIDEX_TEST_MOCK" ' + command).replace('/bin/' + command, '"$AIDEX_TEST_MOCK" ' + command)
                         else:
                             script = script.replace(command + ' ', '"$AIDEX_TEST_MOCK" ' + command + ' ')
                             script = script.replace('$(id -u)', '$("$AIDEX_TEST_MOCK" id -u)')

@@ -149,6 +149,12 @@ def main():
                 check_backend_identity(binary)
                 assert binary[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', binary, 18)[0] == machine
                 assert b'1.0.0' in binary and b'0014_observability' in binary
+                picker=archive.extractfile('./usr/lib/aidex/aidex-folder-picker').read()
+                assert picker[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H',picker,18)[0] == machine
+                desktop=archive.extractfile('./usr/share/applications/aidex-folder-picker.desktop').read().decode()
+                assert 'Exec=/usr/lib/aidex/aidex-folder-picker %u' in desktop
+                assert 'MimeType=x-scheme-handler/aidex-pick;' in desktop
+                assert 'zenity | kdialog' in control
                 unit = archive.extractfile('./usr/lib/systemd/system/aidex.service').read().decode()
                 assert 'User=aidex\n' in unit and '/usr/lib/aidex/aidex-server serve' in unit
                 for name in ['profile.sh', 'aidex-admin', 'aidex-uninstall']:
@@ -192,6 +198,12 @@ def main():
         installer_source = (builder.ROOT / 'packaging/windows/installer.nsi').read_text(encoding='utf-8-sig')
         assert 'Software\\Classes\\aidex-auth\\shell\\open\\command' in installer_source
         assert 'DeleteRegKey HKLM "Software\\Classes\\aidex-auth"' in installer_source
+        assert 'Software\\Classes\\aidex-pick\\shell\\open\\command' in installer_source
+        assert 'DeleteRegKey HKLM "Software\\Classes\\aidex-pick"' in installer_source
+        launcher=(manifest.parent / 'AIDEX.exe').read_bytes()
+        for capability in [b'aidex-pick://',b'--folder-authorization',b'--folder-acl-worker']:
+            assert capability in launcher
+        assert b'-Action AuthorizeFolder' not in launcher
         assert 'ExecWait' not in installer_source and installer_source.count('nsExec::ExecToStack /TIMEOUT=660000') == 3
         builder.check_pe_imports(manifest.parent / 'tools/Library/bin')
         assert not (manifest.parent / 'gestor-documental.exe').exists()
@@ -223,6 +235,16 @@ def main():
         assert authorization_info['CFBundleShortVersionString']=='1.0.0'
         assert authorization_info['CFBundleURLTypes'][0]['CFBundleURLSchemes']==['aidex-auth']
         assert (authorization_app/'Contents/Resources/aidex.icns').read_bytes()==(uninstaller/'Contents/Resources/aidex.icns').read_bytes()
+        selection_app=payload/'Applications/AIDEX/Seleccionar carpeta AIDEX.app'
+        selection_info=plistlib.loads((selection_app/'Contents/Info.plist').read_bytes())
+        assert selection_info['CFBundleIdentifier']=='mx.com.aidex.folder-selection'
+        assert selection_info['CFBundleShortVersionString']=='1.0.0'
+        assert selection_info['CFBundleURLTypes'][0]['CFBundleURLSchemes']==['aidex-pick']
+        selection_helper=base/'bin/aidex-folder-picker'
+        assert selection_helper.read_bytes()[:4]==b'\xcf\xfa\xed\xfe'
+        assert struct.unpack_from('<I',selection_helper.read_bytes(),4)[0]==0x100000c
+        command(['codesign','--verify','--strict',selection_helper])
+        command(['codesign','--verify','--deep','--strict',selection_app])
         folder_helper=base/'bin/aidex-folder-helper'
         assert folder_helper.is_file() and folder_helper.read_bytes()[:4]==b'\xcf\xfa\xed\xfe'
         for entry in (base / 'package-files.tsv').read_text().splitlines():

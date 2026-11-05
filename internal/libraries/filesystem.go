@@ -19,7 +19,15 @@ type directoryInfo struct {
 	CaseSensitive  bool
 }
 
+// Windows installs handle-based probes during package initialization. Other
+// platforms keep the original implementations below, without modification.
+var platformInspectDirectory func(string) (directoryInfo, error)
+var platformCheckAuthorizedDirectory func(string, string) error
+
 func inspectDirectory(path string) (directoryInfo, error) {
+	if platformInspectDirectory != nil {
+		return platformInspectDirectory(path)
+	}
 	var result directoryInfo
 	if !filepath.IsAbs(path) {
 		return result, invalid("La carpeta debe ser una ruta absoluta del servidor.")
@@ -87,6 +95,9 @@ func CheckLinkedDirectory(path string) error {
 // Se ejecuta con la identidad del backend, nunca con los privilegios del auxiliar.
 // La prueba administrada usa nombres aleatorios exclusivos; no toca originales.
 func CheckAuthorizedDirectory(path, source string) error {
+	if platformCheckAuthorizedDirectory != nil {
+		return platformCheckAuthorizedDirectory(path, source)
+	}
 	if err := CheckLinkedDirectory(path); err != nil {
 		return err
 	}

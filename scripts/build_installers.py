@@ -133,6 +133,20 @@ def macos(output, work):
     info.write_bytes(plistlib.dumps(details))
     run(["codesign", "--force", "--deep", "--sign", "-", authorization_app])
     run(["codesign", "--verify", "--deep", "--strict", authorization_app])
+    run(["go", "build", "-trimpath", "-ldflags", "-s -w", "-o", base / "bin/aidex-folder-picker", "./cmd/aidex-folder-picker"],
+        env=dict(os.environ, CGO_ENABLED="0", GOOS="darwin", GOARCH="arm64"))
+    run(["codesign", "--force", "--sign", "-", base / "bin/aidex-folder-picker"])
+    selection_app = apps / "Seleccionar carpeta AIDEX.app"
+    run(["osacompile", "-o", selection_app, ROOT / "packaging/macos/select-folder.applescript"])
+    selection_info = selection_app / "Contents/Info.plist"
+    selection_details = plistlib.loads(selection_info.read_bytes())
+    selection_details.update(CFBundleIdentifier="mx.com.aidex.folder-selection", CFBundleName="Seleccionar carpeta AIDEX",
+                            CFBundleVersion=VERSION, CFBundleShortVersionString=VERSION, LSMinimumSystemVersion="13.0",
+                            CFBundleIconFile="aidex.icns", CFBundleURLTypes=[{"CFBundleURLName":"Selección local AIDEX", "CFBundleURLSchemes":["aidex-pick"]}])
+    selection_info.write_bytes(plistlib.dumps(selection_details))
+    copy(apps / "Desinstalar AIDEX.app/Contents/Resources/aidex.icns", selection_app / "Contents/Resources/aidex.icns")
+    run(["codesign", "--force", "--deep", "--sign", "-", selection_app])
+    run(["codesign", "--verify", "--deep", "--strict", selection_app])
     (apps / "Abrir AIDEX.webloc").write_bytes(plistlib.dumps({"URL": "http://127.0.0.1:18090"}))
     daemon = payload / "Library/LaunchDaemons/app.aidex.plist"
     daemon.parent.mkdir(parents=True, exist_ok=True)
@@ -202,6 +216,9 @@ def ar_member(stream, name, data):
 def ubuntu(output, work, architecture):
     payload, control = work / "root", work / "control"
     binary(payload / "usr/lib/aidex/aidex-server", "linux", architecture)
+    run(["go", "build", "-trimpath", "-ldflags", "-s -w", "-o", payload / "usr/lib/aidex/aidex-folder-picker", "./cmd/aidex-folder-picker"],
+        env=dict(os.environ, CGO_ENABLED="0", GOOS="linux", GOARCH=architecture))
+    copy(ROOT / "packaging/ubuntu/aidex-folder-picker.desktop", payload / "usr/share/applications/aidex-folder-picker.desktop")
     documents(payload / "usr/share/doc/aidex")
     for name in ["prepare-offline.sh", "install-offline.sh"]:
         copy(ROOT / "packaging/ubuntu" / name, payload / "usr/share/doc/aidex/offline" / name, 0o755)
@@ -219,7 +236,7 @@ Architecture: {architecture}
 Maintainer: AIDEX
 Installed-Size: {size}
 Depends: adduser, util-linux, systemd, python3, poppler-utils, tesseract-ocr, tesseract-ocr-spa, tesseract-ocr-eng, fonts-dejavu-core
-Recommends: libreoffice-writer, libreoffice-calc
+Recommends: libreoffice-writer, libreoffice-calc, zenity | kdialog, desktop-file-utils
 Description: AIDEX - Aplicación de Indexación Digital de Expedientes
  Servicio local de biblioteca digital. Datos conservados incluso al desinstalar.
  Requiere activar una licencia para habilitar las modificaciones.

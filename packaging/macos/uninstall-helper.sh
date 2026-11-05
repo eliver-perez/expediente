@@ -28,7 +28,7 @@ no_links() {
 
 allowed_file() {
     case "$1" in
-        "$CODE/bin/"*|"$CODE/docs/"*|"$CODE/profile.sh"|"$MANIFEST"|"$APPS/Configurar AIDEX.command"|"$APPS/Configurar puerto.command"|"$APPS/Desinstalar AIDEX.command"|"$APPS/Abrir AIDEX.webloc"|"$APP/Contents/"*|"$APPS/Autorizar carpeta AIDEX.app/Contents/"*|"$PLIST") ;;
+        "$CODE/bin/"*|"$CODE/docs/"*|"$CODE/profile.sh"|"$MANIFEST"|"$APPS/Configurar AIDEX.command"|"$APPS/Configurar puerto.command"|"$APPS/Desinstalar AIDEX.command"|"$APPS/Abrir AIDEX.webloc"|"$APP/Contents/"*|"$APPS/Autorizar carpeta AIDEX.app/Contents/"*|"$APPS/Seleccionar carpeta AIDEX.app/Contents/"*|"$PLIST") ;;
         *) echo "Archivo ajeno al paquete: $1" >&2; return 1;;
     esac
     case "$1" in */../*|*/./*|*/..|*/.|*'//'*) echo 'Ruta insegura en inventario.' >&2; return 1;; esac
@@ -107,7 +107,7 @@ done < "$LIST"
 
 # Solo se eliminan directorios vacíos de ubicaciones fijas del paquete.
 /bin/rm -f "$MANIFEST"
-for tree in "$APPS/Autorizar carpeta AIDEX.app" "$APP" "$CODE/docs"; do
+for tree in "$APPS/Seleccionar carpeta AIDEX.app" "$APPS/Autorizar carpeta AIDEX.app" "$APP" "$CODE/docs"; do
     [ ! -d "$tree" ] || /usr/bin/find "$tree" -depth -type d -exec /bin/rmdir '{}' \; 2>/dev/null || true
 done
 for directory in "$APPS" "$CODE/bin" "$CODE"; do

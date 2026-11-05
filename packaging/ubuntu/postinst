@@ -34,5 +34,6 @@ if [ "$1" = configure ]; then
             [ "$attempt" -lt 30 ] || { echo "AIDEX no respondió en el puerto $port. Se conservaron los datos; revisa journalctl -u aidex.service." >&2; exit 1; }
         fi
     fi
+    if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/share/applications; fi
     echo 'Instalado AIDEX. Ejecuta sudo aidex-admin para crear el administrador e iniciar el servicio.'
 fi

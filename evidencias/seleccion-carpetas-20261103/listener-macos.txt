@@ -1,0 +1,8 @@
+=== RUN   TestNativeDarwinListenerOwnership
+--- PASS: TestNativeDarwinListenerOwnership (0.01s)
+=== RUN   TestRejectClientTunnelOwnerInAllListenerTables
+--- PASS: TestRejectClientTunnelOwnerInAllListenerTables (0.00s)
+=== RUN   TestEndpointOnlyAcceptsOpaqueLoopbackSelection
+--- PASS: TestEndpointOnlyAcceptsOpaqueLoopbackSelection (0.00s)
+PASS
+ok  	gestor-documental/internal/folderpicker	0.296s

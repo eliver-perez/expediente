@@ -31,17 +31,18 @@ import (
 var compiledAssets embed.FS
 
 type Server struct {
-	backups        *backups.Service
-	libraries      *libraries.Service
-	identity       *identity.Service
-	configuration  config.Config
-	logger         *slog.Logger
-	publicHost     string
-	secure         bool
-	trustedProxies []netip.Prefix
-	network        *network.Service
-	folderAuthMu   sync.Mutex
-	folderAuth     map[string]*folderAuthorization
+	backups          *backups.Service
+	libraries        *libraries.Service
+	identity         *identity.Service
+	configuration    config.Config
+	logger           *slog.Logger
+	publicHost       string
+	secure           bool
+	trustedProxies   []netip.Prefix
+	network          *network.Service
+	folderAuthMu     sync.Mutex
+	folderAuth       map[string]*folderAuthorization
+	folderSelections map[string]*folderSelection
 }
 
 func (server *Server) WithBackups(service *backups.Service) *Server {
@@ -86,7 +87,14 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/local-folder-authorizations", server.protected("", true, server.startFolderAuthorization))
 	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/claim", server.claimFolderAuthorization)
 	mux.HandleFunc("GET /api/v1/local-folder-authorizations/{ticket}/describe", server.describeFolderAuthorization)
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/probe", server.probeFolderAuthorization)
 	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/finish", server.finishFolderAuthorization)
+	mux.HandleFunc("GET /api/v1/local-folder-authorizations/{ticket}/status", server.protected("", true, server.folderAuthorizationStatus))
+	mux.HandleFunc("POST /api/v1/folder-selections", server.protected("", true, server.startFolderSelection))
+	mux.HandleFunc("GET /api/v1/folder-selections/{ticket}", server.protected("", true, server.folderSelectionStatus))
+	mux.HandleFunc("POST /api/v1/folder-selections/{ticket}/claim", server.claimFolderSelection)
+	mux.HandleFunc("POST /api/v1/folder-selections/{ticket}/finish", server.finishFolderSelection)
+	mux.HandleFunc("POST /api/v1/libraries/{library}/folder-browser", server.protected("", true, server.browseFolders))
 	mux.HandleFunc("GET /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
 	mux.HandleFunc("POST /api/v1/system/previews/clear", server.protected("system.configure", true, server.clearPreviews))
@@ -218,7 +226,7 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 			server.fail(writer, request, domain.Failure("HTTPS_REQUIRED", "Se requiere una conexión HTTPS.", 403))
 			return
 		}
-		localFolderHandoff := (runtime.GOOS == "windows" || runtime.GOOS == "darwin") && strings.HasPrefix(request.URL.Path, "/api/v1/local-folder-authorizations/") && localOnly(request)
+		localFolderHandoff := localOnly(request) && (((runtime.GOOS == "windows" || runtime.GOOS == "darwin") && strings.HasPrefix(request.URL.Path, "/api/v1/local-folder-authorizations/")) || strings.HasPrefix(request.URL.Path, "/api/v1/folder-selections/"))
 		if request.Method != "GET" && request.Method != "HEAD" && !localFolderHandoff {
 			expectedOrigin := server.configuration.PublicURL
 			if server.configuration.NetworkMode == "lan" {

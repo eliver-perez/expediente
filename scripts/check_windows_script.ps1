@@ -25,10 +25,10 @@ $RequiredParameters = if ($Kind -eq 'Transport') { @('ManageScript','Action','In
 foreach ($Required in $RequiredParameters) {
     if ($Required -notin $Parameters) { throw "Missing installer parameter: $Required" }
 }
-if ($Kind -eq 'Manage' -and (!$Text.Contains("'AuthorizeFolder'") -or !$Text.Contains('/local-folder-authorizations/'))) {
-    throw 'Missing local folder authorization workflow in the packaged utility.'
+if ($Kind -eq 'Manage' -and (!$Text.Contains("'AuthorizeFolder'") -or !$Text.Contains('--folder-authorization '))) {
+    throw 'Missing native folder authorization dispatch in the packaged utility.'
 }
-if ($Kind -eq 'Manage' -and (!$Text.Contains('$ServiceAccount = (Get-CimInstance Win32_Service') -or !$Text.Contains(':(OI)(CI)(RX)') -or !$Text.Contains(':(X)') -or !$Text.Contains('if (!$Result.accessible)'))) {
-    throw 'The packaged utility does not verify the service identity, minimal ACL or service-side access.'
+if ($Kind -eq 'Manage' -and $Text.Contains('icacls.exe $Full')) {
+    throw 'Unbounded legacy folder ACL workflow must not be packaged.'
 }
 [Console]::WriteLine("Windows PowerShell payload: encoding, syntax and parameters OK (parser $($PSVersionTable.PSVersion))")

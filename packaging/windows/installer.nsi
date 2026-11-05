@@ -27,11 +27,14 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 BrandingText "AIDEX — Tu biblioteca digital, ordenada y al alcance."
 !define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TEXT "Instalación interna de AIDEX 1.0.0. Después abre Configurar AIDEX para crear el administrador e iniciar el servicio.$\r$\n$\r$\nEn la primera ejecución se mostrará el CLUF provisional, pendiente de revisión jurídica. Debe aceptarse expresamente antes de utilizar bibliotecas y expedientes. Luego podrás activar tu licencia en AIDEX.$\r$\n$\r$\nDesinstalar conserva datos y documentos por defecto. Si detectas servicios antiguos AIBID, desinstálalos con su propio programa conservando sus datos antes de continuar."
+; Texto informativo de bienvenida; el CLUF se acepta en la aplicación.
+!define MUI_WELCOMEPAGE_TITLE "Bienvenido al Asistente de Instalación de AIDEX 1.0.0."
+!define MUI_WELCOMEPAGE_TITLE_3LINES
+!define MUI_WELCOMEPAGE_TEXT "Al finalizar la instalación, abre Configurar AIDEX para crear la cuenta del administrador e iniciar el servicio.$\r$\n$\r$\nEn el primer acceso deberás leer y aceptar el Contrato de Licencia de Usuario Final (CLUF) para utilizar las funciones de AIDEX. Posteriormente podrás activar tu licencia.$\r$\n$\r$\nSi ya tienes una instalación de AIDEX, el asistente conservará sus datos y configuración durante la actualización."
 !insertmacro MUI_PAGE_WELCOME
 Page custom PortPage PortPageLeave
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TEXT "Abre Configurar AIDEX desde Inicio para crear el administrador e iniciar el servicio. Al entrar por primera vez, lee y acepta el CLUF provisional antes de utilizar el sistema.$\r$\n$\r$\nDespués usa AIDEX desde el Escritorio o Inicio: abrirá el navegador sin pedir permisos de administrador."
+!define MUI_FINISHPAGE_TEXT "Abre Configurar AIDEX desde Inicio para crear el administrador e iniciar el servicio. Al entrar por primera vez, lee y acepta el CLUF antes de utilizar el sistema.$\r$\n$\r$\nDespués usa AIDEX desde el Escritorio o Inicio: abrirá el navegador sin pedir permisos de administrador."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.DataOptions un.ConfirmDataOptions
@@ -58,6 +61,12 @@ Function .onInit
     ${If} $1 != ""
     ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
         MessageBox MB_ICONSTOP "Otro programa registra el protocolo local aidex-auth. Se conserva ese registro; AIDEX no se instalará sobre él."
+        Abort
+    ${EndIf}
+    ReadRegStr $1 HKLM "Software\Classes\aidex-pick\shell\open\command" ""
+    ${If} $1 != ""
+    ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        MessageBox MB_ICONSTOP "Otro programa registra el protocolo local aidex-pick. Se conserva ese registro; AIDEX no se instalará sobre él."
         Abort
     ${EndIf}
     ReadRegStr $SelectedPort HKLM "Software\AIDEX" "Port"
@@ -203,6 +212,14 @@ Section "Instalar"
     WriteRegStr HKLM "Software\Classes\aidex-auth" "" "AIDEX - autorización local de carpetas"
     WriteRegStr HKLM "Software\Classes\aidex-auth" "URL Protocol" ""
     WriteRegStr HKLM "Software\Classes\aidex-auth\shell\open\command" "" '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+    ReadRegStr $1 HKLM "Software\Classes\aidex-pick\shell\open\command" ""
+    ${If} $1 != ""
+    ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        Abort "Otro programa registra el protocolo de autorización aidex-pick. No se reemplazó su registro."
+    ${EndIf}
+    WriteRegStr HKLM "Software\Classes\aidex-pick" "" "AIDEX - selección local de carpetas"
+    WriteRegStr HKLM "Software\Classes\aidex-pick" "URL Protocol" ""
+    WriteRegStr HKLM "Software\Classes\aidex-pick\shell\open\command" "" '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayName" "AIDEX"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayVersion" "${VERSION}"
@@ -227,6 +244,10 @@ Section "Uninstall"
     ReadRegStr $1 HKLM "Software\Classes\aidex-auth\shell\open\command" ""
     ${If} $1 == '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
         DeleteRegKey HKLM "Software\Classes\aidex-auth"
+    ${EndIf}
+    ReadRegStr $1 HKLM "Software\Classes\aidex-pick\shell\open\command" ""
+    ${If} $1 == '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        DeleteRegKey HKLM "Software\Classes\aidex-pick"
     ${EndIf}
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX"
     Delete "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk"

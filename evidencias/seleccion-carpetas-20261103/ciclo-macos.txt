@@ -1,0 +1,18 @@
+PASS instalación limpia; primer administrador pendiente
+PASS actualización directa y acceso del administrador anterior
+PASS conservación y reinstalación de configuración, usuarios, biblioteca y licencia
+PASS rechazo de datos recuperables sin configuración; bytes intactos
+PASS postinstall del PKG recupera residuos antiguos sin desinstalador; administrador nuevo y HTTP reales
+{
+  "result": "PASS",
+  "direct_update": true,
+  "keep_reinstall_previous_admin_login": true,
+  "complete_erase_fresh_install_repeated": 2,
+  "data_directory_absent_after_every_erase": true,
+  "configuration_users_library_local_license_preserved_in_keep_mode": true,
+  "external_and_uploaded_originals_preserved": true,
+  "previous_partial_erase_logs_and_lock_recovered_directly_by_packaged_postinstall": true,
+  "first_admin_creation_and_real_server_login_after_recovery": true,
+  "packaged_postinstall_refuses_recoverable_data_without_configuration": true,
+  "not_tested": "Installer.app, cuenta/launchd/recibo reales y autorización gráfica"
+}

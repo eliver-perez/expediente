@@ -1,0 +1,15 @@
+
+> aidex-web@1.0.0 test:e2e
+> playwright test folder-selection.spec.ts
+
+
+Running 3 tests using 1 worker
+
+(node:25166) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 tests/folder-selection.spec.ts:12:1 › cliente remoto explora únicamente raíces habilitadas y selecciona subcarpetas del servidor (1.3s)
+  ✓  2 tests/folder-selection.spec.ts:27:1 › respuesta del auxiliar simulado completa ruta e inspección; cancelar conserva alternativa manual (3.4s)
+[WebServer] 2026/11/03 20:24:55 WARN directory inspection failed os=darwin errno=2 network_path=false
+  ✓  3 tests/folder-selection.spec.ts:42:1 › modal Windows ofrece autorización administrada, SVG y error visible sin bloquear comprobación (912ms)
+
+  3 passed (10.0s)

@@ -1,0 +1,11 @@
+{
+  "result": "PASS",
+  "protected_files_unchanged": 211,
+  "portable_implementation_without_dispatch_identical": true,
+  "acl_grants_unchanged": true,
+  "http_authorization_flow_unchanged": true,
+  "changed_production_files": [
+    "internal/libraries/filesystem.go (Windows dispatch only)",
+    "internal/libraries/folder_access_windows.go"
+  ]
+}

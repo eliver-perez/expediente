@@ -21,6 +21,7 @@ import (
 	"gestor-documental/internal/libraries"
 	"gestor-documental/internal/licensing"
 	"gestor-documental/internal/macosfolders"
+	"gestor-documental/internal/windowsfolders"
 )
 
 // Tickets live only in the service process, expire quickly and contain no shell
@@ -31,6 +32,10 @@ type folderAuthorization struct {
 	source, tokenDigest                string
 	expires                            time.Time
 	claimed                            bool
+	completed                          bool
+	finishing                          bool
+	resultCode                         string
+	accessible                         bool
 }
 
 var localWindowsDirectory = regexp.MustCompile(`(?i)^[a-z]:\\[^\\].*`)
@@ -95,8 +100,14 @@ func (server *Server) startFolderAuthorization(w http.ResponseWriter, r *http.Re
 		server.fail(w, r, err)
 		return
 	}
-	if runtime.GOOS == "windows" && (input.Source != "linked" || !localFolderAuthorizationPath(input.Path)) {
-		server.fail(w, r, domain.Failure("FOLDER_AUTHORIZATION_SCOPE", "La autorización automática solo admite una carpeta local vinculada. Las rutas UNC y destinos administrados requieren revisión de sus permisos en el equipo correspondiente.", 422))
+	if runtime.GOOS == "windows" {
+		if err := windowsfolders.ValidateLocal(input.Path, input.Source); err != nil {
+			server.fail(w, r, domain.Failure("FOLDER_AUTHORIZATION_SCOPE", err.Error(), 422))
+			return
+		}
+	}
+	if err := server.libraries.ValidateFolderAuthorizationScope(r.Context(), p, input.LibraryID, input.Path, input.Source); err != nil {
+		server.fail(w, r, err)
 		return
 	}
 	if runtime.GOOS == "darwin" {
@@ -104,18 +115,19 @@ func (server *Server) startFolderAuthorization(w http.ResponseWriter, r *http.Re
 			server.fail(w, r, domain.Failure("FOLDER_AUTHORIZATION_SCOPE", err.Error(), 422))
 			return
 		}
-		if err := server.libraries.ValidateFolderAuthorizationScope(r.Context(), p, input.LibraryID, input.Path, input.Source); err != nil {
-			server.fail(w, r, err)
+	}
+	_, inspectionErr := server.libraries.PlanStorageRoot(r.Context(), p, input.LibraryID, input.Path, input.Source, metadata(r))
+	if inspectionErr == nil && runtime.GOOS == "windows" {
+		inspectionErr = libraries.CheckAuthorizedDirectory(input.Path, input.Source)
+		if inspectionErr == nil {
+			server.fail(w, r, domain.Failure("FOLDER_ALREADY_ACCESSIBLE", "El servicio ya puede acceder a la carpeta. Vuelve a inspeccionarla.", 409))
 			return
 		}
 	}
-	if _, err := server.libraries.PlanStorageRoot(r.Context(), p, input.LibraryID, input.Path, input.Source, metadata(r)); err == nil && runtime.GOOS == "windows" {
-		server.fail(w, r, domain.Failure("FOLDER_ALREADY_ACCESSIBLE", "El servicio ya puede leer la carpeta. Vuelve a inspeccionarla.", 409))
-		return
-	} else if err != nil {
+	if inspectionErr != nil {
 		var failure *domain.Error
-		if !errors.As(err, &failure) || (failure.Code != "ROOT_PERMISSION_DENIED" && !(runtime.GOOS == "darwin" && failure.Code == "ROOT_PRIVACY_DENIED")) {
-			server.fail(w, r, err)
+		if !errors.As(inspectionErr, &failure) || (failure.Code != "ROOT_PERMISSION_DENIED" && !(runtime.GOOS == "darwin" && failure.Code == "ROOT_PRIVACY_DENIED")) {
+			server.fail(w, r, inspectionErr)
 			return
 		}
 	}
@@ -168,7 +180,11 @@ func (server *Server) claimFolderAuthorization(w http.ResponseWriter, r *http.Re
 	source := ticket.source
 	path := ticket.path
 	server.folderAuthMu.Unlock()
-	writeJSON(w, 200, map[string]string{"server_path": path, "storage_source": source, "scope": "linked-read-traverse"})
+	scope := source + "-access"
+	if runtime.GOOS == "darwin" {
+		scope = "linked-read-traverse"
+	}
+	writeJSON(w, 200, map[string]string{"server_path": path, "storage_source": source, "scope": scope})
 }
 
 func (server *Server) finishFolderAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -178,12 +194,16 @@ func (server *Server) finishFolderAuthorization(w http.ResponseWriter, r *http.R
 	}
 	server.folderAuthMu.Lock()
 	ticket := server.folderAuth[r.PathValue("ticket")]
-	if ticket == nil || !ticket.claimed || !time.Now().Before(ticket.expires) {
+	if ticket == nil || !ticket.claimed || ticket.completed || ticket.finishing || !time.Now().Before(ticket.expires) {
 		server.folderAuthMu.Unlock()
 		server.fail(w, r, domain.Failure("NOT_FOUND", "Solicitud de autorización vencida o no utilizada.", 404))
 		return
 	}
-	delete(server.folderAuth, r.PathValue("ticket"))
+	if runtime.GOOS == "darwin" {
+		delete(server.folderAuth, r.PathValue("ticket"))
+	} else {
+		ticket.finishing = true
+	}
 	copy := *ticket
 	server.folderAuthMu.Unlock()
 	// This check runs in the service process (NT SERVICE\AIDEX), not in the
@@ -207,6 +227,11 @@ func (server *Server) finishFolderAuthorization(w http.ResponseWriter, r *http.R
 		server.fail(w, r, auditErr)
 		return
 	}
+	server.folderAuthMu.Lock()
+	ticket.accessible = err == nil
+	ticket.resultCode = code
+	ticket.completed = true
+	server.folderAuthMu.Unlock()
 	writeJSON(w, 200, map[string]any{"accessible": err == nil, "code": code, "checked_scope": "root"})
 }
 
@@ -250,4 +275,53 @@ func (server *Server) describeFolderAuthorization(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, 200, macosfolders.Selection{Path: ticket.path, Source: ticket.source})
+}
+
+func (server *Server) folderAuthorizationStatus(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	server.folderAuthMu.Lock()
+	defer server.folderAuthMu.Unlock()
+	ticket := server.folderAuth[r.PathValue("ticket")]
+	if ticket == nil || !time.Now().Before(ticket.expires) || ticket.userID != p.User.ID || ticket.sessionID != p.SessionID {
+		server.fail(w, r, domain.Failure("NOT_FOUND", "La autorización venció. Comprueba el acceso para continuar.", 404))
+		return
+	}
+	if err := server.validateFolderTicket(r, *ticket); err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"done": ticket.completed, "accessible": ticket.accessible, "code": ticket.resultCode})
+}
+
+// Non-consuming probe lets the Windows helper leave ancestor ACLs untouched
+// whenever granting access to the selected root is sufficient.
+func (server *Server) probeFolderAuthorization(w http.ResponseWriter, r *http.Request) {
+	if runtime.GOOS != "windows" || !localOnly(r) || !authorizationToken.MatchString(r.PathValue("ticket")) {
+		server.fail(w, r, domain.Failure("NOT_FOUND", "Solicitud no disponible.", 404))
+		return
+	}
+	server.folderAuthMu.Lock()
+	ticket := server.folderAuth[r.PathValue("ticket")]
+	if ticket == nil || !ticket.claimed || ticket.finishing || !time.Now().Before(ticket.expires) {
+		server.folderAuthMu.Unlock()
+		server.fail(w, r, domain.Failure("NOT_FOUND", "Solicitud vencida o utilizada.", 404))
+		return
+	}
+	copy := *ticket
+	server.folderAuthMu.Unlock()
+	err := server.validateFolderTicket(r, copy)
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	err = libraries.CheckAuthorizedDirectory(copy.path, copy.source)
+	code := ""
+	if err != nil {
+		var failure *domain.Error
+		if errors.As(err, &failure) {
+			code = failure.Code
+		} else {
+			code = "ROOT_READ_FAILED"
+		}
+	}
+	writeJSON(w, 200, map[string]any{"accessible": err == nil, "code": code})
 }

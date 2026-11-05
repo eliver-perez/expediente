@@ -39,11 +39,16 @@ class UninstallerTest(unittest.TestCase):
         self.folder_helper=self.code/'bin/aidex-folder-helper'
         self.folder_helper.write_text('#!/bin/sh\n[ "$#" -eq 1 ] && [ "$1" = preserve-archive ] || exit 1\nprintf "autorizado\\n" > "'+str(self.root/'finder-access')+'"\n')
         self.folder_helper.chmod(0o755)
+        self.picker=self.code/'bin/aidex-folder-picker'
+        self.picker.write_text('selector de prueba')
+        self.selection=self.apps/'Seleccionar carpeta AIDEX.app/Contents/MacOS/applet'
+        self.selection.parent.mkdir(parents=True)
+        self.selection.write_text('aplicación selectora de prueba')
         self.receipt.write_text("installed")
         self.running.write_text("running")
         self.fake = self.root / "fake"
         self.fake.mkdir()
-        receipt_files = [self.binary, self.folder_helper, self.plist, self.apps / "Abrir AIDEX.webloc",
+        receipt_files = [self.binary, self.folder_helper, self.picker, self.selection, self.plist, self.apps / "Abrir AIDEX.webloc",
                          self.app / "Contents/Resources/uninstall-helper.sh", self.code / "package-files.tsv"]
         receipt_lines = " ".join('"' + str(path).lstrip("/") + '"' for path in receipt_files)
         for name, body in {
@@ -72,7 +77,7 @@ class UninstallerTest(unittest.TestCase):
         self.script.chmod(0o755)
 
     def write_manifest(self):
-        files = [self.binary, self.folder_helper, self.plist, self.apps / "Abrir AIDEX.webloc",
+        files = [self.binary, self.folder_helper, self.picker, self.selection, self.plist, self.apps / "Abrir AIDEX.webloc",
                  self.app / "Contents/Resources/uninstall-helper.sh"]
         self.manifest.write_text("".join(hashlib.sha256(path.read_bytes()).hexdigest() + "\t" + str(path) + "\n" for path in files))
 
@@ -91,6 +96,8 @@ class UninstallerTest(unittest.TestCase):
         self.assertTrue(self.config.exists())
         self.assertTrue(self.database.exists())
         self.assertFalse(self.binary.exists())
+        self.assertFalse(self.picker.exists())
+        self.assertFalse(self.selection.exists())
         self.assertFalse(self.plist.exists())
         self.assertFalse(self.running.exists())
         self.assertFalse(self.receipt.exists())
@@ -139,6 +146,8 @@ class UninstallerTest(unittest.TestCase):
         result = self.run_uninstall("conservar")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.binary.exists())
+        self.assertFalse(self.picker.exists())
+        self.assertFalse(self.selection.exists())
         self.assertFalse(self.plist.exists())
         self.assertTrue(self.config.exists())
         self.assert_originals()
