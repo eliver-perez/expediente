@@ -1,0 +1,17 @@
+{
+  "isolated": true,
+  "production_data_used": false,
+  "server_source": "/Applications/XAMPP/xamppfiles/htdocs/aidexlicense",
+  "checks": [
+    {
+      "name": "servidor-integracion",
+      "result": "PASS"
+    },
+    {
+      "name": "cliente-servidor-real",
+      "result": "PASS"
+    }
+  ],
+  "mysql": "8.4.11",
+  "result": "PASS"
+}

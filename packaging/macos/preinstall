@@ -1,19 +1,34 @@
-#!/bin/sh
-set -eu
-BASE='/Library/Application Support/AIBID-Test'
-# A future schema-changing release needs the H7 verified backup/restore updater.
-# This preview permits only same-version reinstalls, including after uninstall.
-if [ -f "$BASE/data/package-version" ] && [ "$(cat "$BASE/data/package-version")" != '@VERSION@' ]; then
-    echo 'Esta versión de prueba no admite actualizar datos de otra versión. Conserva los datos y consulta docs/H7.md.' >&2
-    exit 1
+#!/bin/bash
+set -Eeuo pipefail
+. "$(dirname "$0")/installer-common.sh"
+aidex_stage validar-rutas
+. "$(dirname "$0")/profile.sh"
+aidex_select_profile
+aidex_stage validar-version-existente
+if [ -f "$BASE/data/package-version" ]; then
+    case "$(cat "$BASE/data/package-version")" in
+        '@VERSION@') ;;
+        *) aidex_fail 'Versión de datos no compatible con este instalador. Se conservan los datos.' ;;
+    esac
 fi
 if [ -L "$BASE" ] || [ -L "$BASE/data" ] || [ -L "$BASE/data/config.json" ]; then
-    echo 'La ruta de instalación no puede ser un enlace.' >&2
-    exit 1
+    aidex_fail 'La ruta de instalación no puede ser un enlace.'
 fi
-if /bin/launchctl print system/app.aibid.test >/dev/null 2>&1; then
-    /bin/launchctl bootout system/app.aibid.test
+if [ -f "$CONFIG" ] && [ ! -f "$BASE/data/package-version" ]; then
+    echo '[AIDEX preinstall] Instalación parcial: se conservará y validará la configuración existente en postinstall.'
 fi
-if [ -f "$BASE/bin/gestor-documental" ] && [ -f "$BASE/data/config.json" ]; then
-    /usr/bin/sudo -u _aibidtest "$BASE/bin/gestor-documental" migrate --config "$BASE/data/config.json"
+aidex_stage detener-servicio
+aidex_stop_service
+aidex_stage retirar-acceso-anterior
+# El paquete anterior publicaba un acceso de Terminal. Retirarlo solo si su
+# huella coincide con el inventario anterior; conservar modificaciones ajenas.
+OLD_UNINSTALL='/Applications/AIDEX/Desinstalar AIDEX.command'
+OLD_MANIFEST="$BASE/package-files.tsv"
+if [ -f "$OLD_MANIFEST" ] && [ -f "$OLD_UNINSTALL" ] && [ ! -L "$OLD_UNINSTALL" ] && [ ! -L '/Applications/AIDEX' ]; then
+    OLD_HASH=$(/usr/bin/awk -F '\t' -v file="$OLD_UNINSTALL" '$2==file {print $1}' "$OLD_MANIFEST")
+    if [ -n "$OLD_HASH" ] && [ "$(/usr/bin/shasum -a 256 "$OLD_UNINSTALL" | /usr/bin/cut -d ' ' -f 1)" = "$OLD_HASH" ]; then
+        /bin/rm -f "$OLD_UNINSTALL"
+    fi
 fi
+aidex_stage completado
+# Updates use the newly installed binary for check-state and migration.

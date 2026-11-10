@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "packages": [
+    {
+      "path": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-validacion-licencias-20261030/AIDEX-1.0.0-Windows-amd64.exe",
+      "bytes": 40534736,
+      "sha256": "af762f536bd76208236bfc83902aa8e07a7c55c5a1fc51b1335a51d16328a1db",
+      "package_inspection": "PASS",
+      "native_installation": false
+    },
+    {
+      "path": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-validacion-licencias-20261030/AIDEX-1.0.0-macOS-arm64.pkg",
+      "bytes": 10109355,
+      "sha256": "04458c0e2247cb14d6f10d91629a2c1e6014f696686cb25103c7edce475960a3",
+      "package_inspection": "PASS",
+      "native_installation": false
+    },
+    {
+      "path": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-validacion-licencias-20261030/aidex_1.0.0_amd64.deb",
+      "bytes": 6655614,
+      "sha256": "acec4c7ad837289f103102360e0a0fdbed7441d98f881cfac7abda854be68af9",
+      "package_inspection": "PASS",
+      "native_installation": false
+    },
+    {
+      "path": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-validacion-licencias-20261030/aidex_1.0.0_arm64.deb",
+      "bytes": 6145664,
+      "sha256": "a08b2857b617e644e07d3f99cc961d7047a4a8e6d8c36e57d21813af105305c0",
+      "package_inspection": "PASS",
+      "native_installation": false
+    }
+  ]
+}

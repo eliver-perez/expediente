@@ -1,0 +1,2 @@
+ok  	gestor-documental/internal/libraries	91.984s
+ok  	gestor-documental/internal/storage	3.314s

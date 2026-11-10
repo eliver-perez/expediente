@@ -1,11 +1,16 @@
 package libraries
 
 import (
+	"errors"
 	"fmt"
+	"gestor-documental/internal/domain"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"unicode"
 )
 
@@ -14,31 +19,42 @@ type directoryInfo struct {
 	CaseSensitive  bool
 }
 
+// Windows installs handle-based probes during package initialization. Other
+// platforms keep the original implementations below, without modification.
+var platformInspectDirectory func(string) (directoryInfo, error)
+var platformCheckAuthorizedDirectory func(string, string) error
+
 func inspectDirectory(path string) (directoryInfo, error) {
+	if platformInspectDirectory != nil {
+		return platformInspectDirectory(path)
+	}
 	var result directoryInfo
 	if !filepath.IsAbs(path) {
 		return result, invalid("La carpeta debe ser una ruta absoluta del servidor.")
 	}
 	canonical, err := filepath.EvalSymlinks(filepath.Clean(path))
 	if err != nil {
-		return result, invalid("No se puede acceder a la carpeta del servidor.")
+		return result, directoryFailure(path, err)
 	}
 	directory, err := os.Open(canonical)
 	if err != nil {
-		return result, invalid("No se puede leer la carpeta del servidor.")
+		return result, directoryFailure(path, err)
 	}
 	defer directory.Close()
 	info, err := directory.Stat()
-	if err != nil || !info.IsDir() {
+	if err != nil {
+		return result, directoryFailure(path, err)
+	}
+	if !info.IsDir() {
 		return result, invalid("Selecciona una carpeta legible.")
 	}
 	entries, err := directory.ReadDir(128)
 	if err != nil && err != io.EOF {
-		return result, invalid("No se puede enumerar la carpeta.")
+		return result, directoryFailure(path, err)
 	}
 	identity, _, err := physicalIdentity(directory)
 	if err != nil {
-		return result, err
+		return result, directoryFailure(path, err)
 	}
 	result = directoryInfo{Path: canonical, Identity: identity, CaseSensitive: true}
 	// Probe entries inside the selected directory, not its parent volume. If the
@@ -67,6 +83,83 @@ func inspectDirectory(path string) (directoryInfo, error) {
 		}
 	}
 	return result, nil
+}
+
+// CheckLinkedDirectory repeats the complete read probe in the service process
+// after a local administrator changes a folder ACL.
+func CheckLinkedDirectory(path string) error {
+	_, err := inspectDirectory(path)
+	return err
+}
+
+// Se ejecuta con la identidad del backend, nunca con los privilegios del auxiliar.
+// La prueba administrada usa nombres aleatorios exclusivos; no toca originales.
+func CheckAuthorizedDirectory(path, source string) error {
+	if platformCheckAuthorizedDirectory != nil {
+		return platformCheckAuthorizedDirectory(path, source)
+	}
+	if err := CheckLinkedDirectory(path); err != nil {
+		return err
+	}
+	if source != "managed" {
+		return nil
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return directoryFailure(path, err)
+	}
+	defer root.Close()
+	name := ".aidex-access-" + domain.NewID()
+	if err = root.Mkdir(name, 0700); err != nil {
+		return directoryFailure(path, err)
+	}
+	defer root.Remove(name)
+	child, err := root.OpenRoot(name)
+	if err != nil {
+		return directoryFailure(path, err)
+	}
+	defer child.Close()
+	file, err := child.OpenFile("probe", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return directoryFailure(path, err)
+	}
+	defer child.Remove("probe")
+	defer child.Remove("published")
+	_, writeErr := file.Write([]byte("AIDEX access probe"))
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil {
+		return directoryFailure(path, writeErr)
+	}
+	if syncErr != nil {
+		return directoryFailure(path, syncErr)
+	}
+	if closeErr != nil {
+		return directoryFailure(path, closeErr)
+	}
+	read, err := child.ReadFile("probe")
+	if err != nil {
+		return directoryFailure(path, err)
+	}
+	if string(read) != "AIDEX access probe" {
+		return domain.Failure("ROOT_PROBE_FAILED", "No se pudo verificar el contenido de la prueba de escritura.", 422)
+	}
+	if err = child.Link("probe", "published"); err != nil {
+		return directoryFailure(path, err)
+	}
+	if err = child.Remove("published"); err != nil {
+		return directoryFailure(path, err)
+	}
+	if err = child.Remove("probe"); err != nil {
+		return directoryFailure(path, err)
+	}
+	if err = child.Close(); err != nil {
+		return directoryFailure(path, err)
+	}
+	if err = root.Remove(name); err != nil {
+		return directoryFailure(path, err)
+	}
+	return nil
 }
 func within(parent, child string, caseSensitive bool) bool {
 	if !caseSensitive {
@@ -139,4 +232,39 @@ func volumeKey(identity string) string {
 		return ""
 	}
 	return parts[0] + ":" + parts[1]
+}
+
+func directoryFailure(path string, err error) error {
+	shared := strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//")
+	// Preserve the OS error number for support without logging a private path.
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		slog.Warn("directory inspection failed", "os", runtime.GOOS, "errno", uint64(errno), "network_path", shared)
+	}
+	if errors.Is(err, os.ErrPermission) {
+		if runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM) {
+			return domain.Failure("ROOT_PRIVACY_DENIED", "macOS denegó el acceso del servicio AIDEX a esta ubicación. Revisa Privacidad y seguridad para el proceso del servicio; autorizar el navegador no le concede acceso.", 422)
+		}
+		message := "La cuenta del servicio AIDEX no puede leer esta carpeta. Comprueba que tenga permiso de lectura y recorrido en esta ruta y sus carpetas superiores."
+		if runtime.GOOS == "darwin" {
+			message = "El servicio AIDEX (_aidex) no puede leer esta carpeta. Comprueba los permisos de la ruta y sus carpetas superiores."
+		} else if runtime.GOOS == "windows" {
+			message = `El servicio AIDEX (NT SERVICE\AIDEX) no puede leer esta carpeta. Concede lectura y recorrido a esa cuenta en la ruta y sus carpetas superiores.`
+			if shared {
+				message = "El servicio AIDEX no puede leer este recurso de red. Revisa tanto los permisos del recurso compartido como los de Seguridad para la identidad con la que accede el servicio; la sesión del usuario del navegador no le concede acceso."
+			}
+		}
+		return domain.Failure("ROOT_PERMISSION_DENIED", message, 422)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		message := "No se encontró la carpeta indicada. Comprueba que la ruta exista en el equipo donde corre AIDEX."
+		if shared {
+			message = "No se encontró la ruta de red. Comprueba el nombre del equipo, el recurso compartido y las carpetas desde el equipo donde corre AIDEX."
+		}
+		return domain.Failure("ROOT_NOT_FOUND", message, 422)
+	}
+	if shared {
+		return domain.Failure("ROOT_NETWORK_UNAVAILABLE", "No se pudo acceder a la ruta de red. Comprueba la disponibilidad del equipo y el acceso de la cuenta del servicio.", 422)
+	}
+	return domain.Failure("ROOT_READ_FAILED", "No se pudo leer la carpeta. Comprueba su disponibilidad y vuelve a intentarlo; si persiste, consulta Registro de errores.", 422)
 }

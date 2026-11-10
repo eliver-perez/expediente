@@ -1,0 +1,29 @@
+[Unit]
+Description=AIDEX — biblioteca digital
+After=network.target
+ConditionPathExists=/var/lib/aidex/service-enabled
+
+[Service]
+Type=simple
+User=aidex
+Group=aidex
+ExecStart=/usr/lib/aidex/aidex-server serve --config /etc/aidex/config.json
+WorkingDirectory=/var/lib/aidex
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# Only AIDEX's private configuration directory is writable under /etc.
+ReadWritePaths=/etc/aidex
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

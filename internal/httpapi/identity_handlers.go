@@ -33,8 +33,13 @@ func (server *Server) session(writer http.ResponseWriter, request *http.Request,
 		server.fail(writer, request, err)
 		return
 	}
+	accepted, err := server.eulaAccepted(request.Context())
+	if err != nil {
+		server.fail(writer, request, err)
+		return
+	}
 	cookie, _ := request.Cookie(server.cookieName())
-	writeJSON(writer, 200, map[string]any{"user": principal.User, "session_expires_at": principal.ExpiresAt, "csrf_token": identity.CSRFToken(cookie.Value), "license": map[string]any{"state": license.State, "write_allowed": license.WriteAllowed, "read_allowed": license.ReadAllowed, "clock_warning": license.ClockWarning}})
+	writeJSON(writer, 200, map[string]any{"user": principal.User, "session_expires_at": principal.ExpiresAt, "csrf_token": identity.CSRFToken(cookie.Value), "eula_accepted": accepted, "license": map[string]any{"state": license.State, "write_allowed": license.WriteAllowed, "read_allowed": license.ReadAllowed, "clock_warning": license.ClockWarning}})
 }
 func (server *Server) account(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
 	userJSON(writer, 200, principal.User)
@@ -165,5 +170,5 @@ func (server *Server) status(writer http.ResponseWriter, request *http.Request, 
 		server.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, 200, map[string]any{"stage": "H6", "product_name": "AIBID", "extraction_tools": server.configuration.Indexing.Diagnostics(), "sqlite_version": version, "development_license": license.Development, "license_state": license.State})
+	writeJSON(writer, 200, map[string]any{"stage": "H6", "product_name": "AIDEX", "extraction_tools": server.configuration.Indexing.Diagnostics(), "sqlite_version": version, "development_license": license.Development, "license_state": license.State})
 }

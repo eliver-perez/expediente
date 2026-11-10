@@ -23,7 +23,7 @@ test('biblioteca vinculada: raíz, OCR, búsqueda, texto retenido y vista lógic
   try {
     await login(page); await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click();
     await page.getByRole('button', { name: 'Nueva biblioteca' }).click(); await page.getByLabel('Nombre de la biblioteca').fill('Archivo de planos E2E');
-    await page.getByLabel('Asignarme como gestor de esta biblioteca').check(); await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
+     await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Archivo de planos E2E', exact: true })).toBeVisible();
     await page.getByRole('tab', { name: 'Carpetas', exact: true }).click();
     await page.getByLabel('Ruta de la carpeta en el servidor').fill(directory); await page.getByRole('button', { name: 'Inspeccionar carpeta' }).click();
@@ -39,7 +39,7 @@ test('biblioteca vinculada: raíz, OCR, búsqueda, texto retenido y vista lógic
     await page.screenshot({ path: 'test-results/h3-explorer.png', fullPage: true });
     await page.getByRole('link', { name: 'Buscar documentos', exact: true }).click(); await page.getByLabel('Texto a buscar').fill('  "estructura metálica"  ');
     await page.getByRole('button', { name: 'Buscar documentos', exact: true }).click(); await expect(page.getByRole('heading', { name: '1 documento encontrado' })).toBeVisible();
-    await page.getByRole('button', { name: 'Ver ficha', exact: true }).click(); await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByRole('button', { name: 'Visualizar', exact: true }).click(); await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Descargar PDF' })).toBeVisible(); await expect(page.locator('.retained-text pre')).toContainText('estructura metálica');
     // Wait for Chrome's native PDF viewer, not just the surrounding dialog.
     await expect.poll(async () => {
@@ -53,7 +53,7 @@ test('biblioteca vinculada: raíz, OCR, búsqueda, texto retenido y vista lógic
     const roots = await (await page.request.get(`/api/v1/libraries/${library.id}/roots`)).json();
     await mutate(page, `/libraries/${library.id}/verify`, { root_id: roots.items[0].id });
     await expect.poll(async () => { const response = await mutate(page, '/search', { query: 'PR-008', library_ids: [library.id], filters: { availability: 'missing' } }); return (await response.json()).result_count; }, { timeout: 20_000 }).toBe(1);
-    await page.getByRole('button', { name: 'Buscar documentos', exact: true }).click(); await page.getByRole('button', { name: 'Ver ficha', exact: true }).click();
+    await page.getByRole('button', { name: 'Buscar documentos', exact: true }).click(); await page.getByRole('button', { name: 'Visualizar', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Original no disponible' })).toBeVisible(); await expect(page.getByRole('link', { name: 'Descargar PDF' })).toHaveCount(0);
     await expect(page.locator('.retained-text pre')).toContainText('estructura metálica'); await page.getByRole('button', { name: 'Cerrar ficha' }).click();
     await page.setViewportSize({ width: 390, height: 844 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();

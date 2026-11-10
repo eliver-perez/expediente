@@ -106,3 +106,26 @@ func TestNativeBatchesPreservePageBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestOCRDisabledAndNativeThreshold(t *testing.T) {
+	if _, err := exec.LookPath("pdfinfo"); err != nil {
+		t.Skip("PDF tools unavailable")
+	}
+	options := Defaults()
+	options.MinimumNativeCharacters = 10000
+	pages, err := options.Prepare(context.Background(), "../../testdata/documents/native.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !NeedsOCR(pages) {
+		t.Fatal("threshold ignored")
+	}
+	options.DisableOCR = true
+	result, err := PrepareDocument(context.Background(), "../../testdata/documents/native.pdf", "pdf", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if NeedsOCR(result.Units) || len(result.Warnings) != 1 || result.Warnings[0] != "OCR_DISABLED" || !strings.Contains(result.Units[0].Text, "PR-008") {
+		t.Fatal(result)
+	}
+}

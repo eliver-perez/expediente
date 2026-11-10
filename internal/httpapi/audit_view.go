@@ -7,7 +7,18 @@ import (
 	"strings"
 )
 
-const auditTable = `(SELECT a.*,coalesce(u.display_name,CASE a.actor_kind WHEN 'system' THEN 'Sistema' WHEN 'anonymous' THEN 'Sin sesión' ELSE 'Usuario retirado' END) AS actor_name,coalesce(b.name,'') AS library_name,coalesce(nullif(d.title,''),d.original_filename,'') AS document_name FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id LEFT JOIN libraries b ON b.id=a.library_id LEFT JOIN documents d ON d.id=a.document_id)`
+const auditTable = `(SELECT a.*,coalesce(u.display_name,CASE a.actor_kind WHEN 'system' THEN 'Sistema' WHEN 'anonymous' THEN 'Sin sesión' ELSE 'Usuario retirado' END) AS actor_name,coalesce(b.name,'') AS library_name,coalesce(nullif(d.title,''),d.original_filename,'') AS document_name,
+CASE WHEN s.event_id IS NOT NULL THEN json_object(
+ 'query',s.exact_query_text,'type',s.search_type,
+ 'libraries',json((SELECT json_group_array(coalesce(lb.name,'Biblioteca no disponible')) FROM json_each(s.consulted_library_ids_json) scope LEFT JOIN libraries lb ON lb.id=scope.value)),
+ 'filters',json(s.applied_filters_json),
+ 'category', (SELECT name FROM categories WHERE id=json_extract(s.applied_filters_json,'$.category_id')),
+ 'document_type', (SELECT name FROM document_types WHERE id=json_extract(s.applied_filters_json,'$.document_type_id')),
+ 'case_name', (SELECT identifier FROM cases WHERE id=json_extract(s.applied_filters_json,'$.case_id')),
+ 'root', (SELECT canonical_path FROM storage_roots WHERE id=json_extract(s.applied_filters_json,'$.root_id')),
+ 'view', (SELECT name FROM logical_folder_views WHERE id=json_extract(s.applied_filters_json,'$.view_id'))
+) END AS search_details_json
+FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id LEFT JOIN libraries b ON b.id=a.library_id LEFT JOIN documents d ON d.id=a.document_id LEFT JOIN search_audit_details s ON s.event_id=a.id)`
 
 func (server *Server) auditScope(r *http.Request, p domain.Principal) (string, []any, error) {
 	library := r.PathValue("library")
@@ -17,7 +28,7 @@ func (server *Server) auditScope(r *http.Request, p domain.Principal) (string, [
 		}
 		return "library_id=?", []any{library}, nil
 	}
-	return "library_id IS NULL", []any{}, nil
+	return "1=1", []any{}, nil
 }
 func (server *Server) auditList(w http.ResponseWriter, r *http.Request, p domain.Principal) {
 	where, args, err := server.auditScope(r, p)
@@ -58,7 +69,7 @@ func (server *Server) auditList(w http.ResponseWriter, r *http.Request, p domain
 		server.fail(w, r, domain.Failure("INVALID_REQUEST", "Orden no válido.", 400))
 		return
 	}
-	result, err := server.readPage(r, p, "id,occurred_at,actor_kind,actor_user_id,actor_name,session_id,observed_ip,request_id,event_type,library_id,library_name,document_id,document_name,details_json", auditTable, column, where, args)
+	result, err := server.readPage(r, p, "id,occurred_at,actor_kind,actor_user_id,actor_name,session_id,observed_ip,request_id,event_type,library_id,library_name,document_id,document_name,details_json,search_details_json", auditTable, column, where, args)
 	if err != nil {
 		server.fail(w, r, err)
 		return
@@ -100,7 +111,7 @@ func (server *Server) libraryAuditDetail(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	args = append(args, r.PathValue("event"))
-	rows, err := server.identity.Database.Reader.QueryContext(r.Context(), "SELECT id,occurred_at,actor_kind,actor_user_id,actor_name,event_type,library_id,library_name,document_id,document_name,details_json FROM "+auditTable+" WHERE "+where+" AND id=?", args...)
+	rows, err := server.identity.Database.Reader.QueryContext(r.Context(), "SELECT id,occurred_at,actor_kind,actor_user_id,actor_name,event_type,library_id,library_name,document_id,document_name,details_json,search_details_json FROM "+auditTable+" WHERE "+where+" AND id=?", args...)
 	if err != nil {
 		server.fail(w, r, err)
 		return

@@ -6,8 +6,10 @@ import (
 	"gestor-documental/internal/buildinfo"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
+	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 )
 
@@ -16,6 +18,11 @@ type windowsService struct {
 }
 
 func runHost(application func(context.Context, func()) error) error {
+	arguments, name, err := buildinfo.WindowsServiceArguments(os.Args, buildinfo.ServiceName)
+	if err != nil {
+		return err
+	}
+	os.Args, buildinfo.ServiceName = arguments, name
 	inService, err := svc.IsWindowsService()
 	if err != nil {
 		return err
@@ -27,6 +34,21 @@ func runHost(application func(context.Context, func()) error) error {
 	}
 	if buildinfo.ServiceName == "" || len(os.Args) < 2 || os.Args[1] != "serve" {
 		return fmt.Errorf("invalid installed service invocation")
+	}
+	// Windows services have no console. Keep timing and sanitized diagnostics in
+	// the existing private ProgramData tree so support can inspect slow requests.
+	if base := os.Getenv("ProgramData"); base != "" {
+		logDir := filepath.Join(base, "AIDEX", "logs")
+		if err := os.MkdirAll(logDir, 0700); err != nil {
+			return err
+		}
+		logFile, err := os.OpenFile(filepath.Join(logDir, "service.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		defer logFile.Close()
+		os.Stderr = logFile
+		slog.SetDefault(slog.New(slog.NewJSONHandler(logFile, nil)))
 	}
 	return svc.Run(buildinfo.ServiceName, &windowsService{application: application})
 }

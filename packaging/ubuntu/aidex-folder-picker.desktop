@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Seleccionar carpeta AIDEX
+Exec=/usr/lib/aidex/aidex-folder-picker %u
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/aidex-pick;
+Categories=Utility;

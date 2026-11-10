@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -235,10 +234,9 @@ func (mock *Mock) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	reply(writer, 200, response)
 }
 func (mock *Mock) activate(binding licensing.Binding, key string) (Activation, error) {
-	kind := strings.TrimPrefix(key, "DEMO-")
-	switch kind {
-	case "PERPETUAL", "SUBSCRIPTION", "GRACE", "EXPIRED", "REVOKED", "LINKED":
-	default:
+	kinds := map[string]string{"K7M-9R3X-6TVP-8CHD": "PERPETUAL", "T7M-9R3X-6TVP-8CHD": "SUBSCRIPTION", "G7M-9R3X-6TVP-8CHD": "GRACE", "X7M-9R3X-6TVP-8CHD": "EXPIRED", "R7M-9R3X-6TVP-8CHD": "REVOKED", "D7M-9R3X-6TVP-8CHD": "LINKED"}
+	kind := kinds[key]
+	if kind == "" {
 		return Activation{}, fmt.Errorf("LICENSE_NOT_FOUND")
 	}
 	commercialID := ""

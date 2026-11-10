@@ -1,9 +1,11 @@
 #!/bin/sh
 set -eu
+. /usr/lib/aidex/profile.sh
+aidex_select_profile
 if [ -d /run/systemd/system ]; then
-    if systemctl is-active --quiet aibid-test.service; then systemctl stop aibid-test.service; fi
-    if [ "$1" = remove ]; then systemctl disable aibid-test.service; fi
+    if systemctl is-active --quiet "$UNIT"; then systemctl stop "$UNIT"; fi
+    if [ "$1" = remove ]; then systemctl disable "$UNIT"; fi
 fi
-if [ -f /etc/aibid-test/config.json ]; then
-    runuser -u aibid-test -- /usr/lib/aibid-test/gestor-documental migrate --config /etc/aibid-test/config.json
+if [ -f "$CONFIG" ]; then
+    runuser -u "$ACCOUNT" -- "$BINARY" check-state --config "$CONFIG"
 fi

@@ -1,0 +1,11 @@
+DROP INDEX IF EXISTS preview_cache_version;
+DROP INDEX IF EXISTS materializations_version;
+DROP INDEX IF EXISTS review_requests_version;
+DROP INDEX IF EXISTS notifications_version;
+DROP INDEX IF EXISTS extraction_runs_version;
+DROP INDEX IF EXISTS documents_approved_version;
+DROP INDEX IF EXISTS physical_files_current_version;
+DROP INDEX IF EXISTS preview_document;
+DROP INDEX IF EXISTS physical_files_primary_location;
+DROP INDEX IF EXISTS documents_library_created;
+DROP INDEX IF EXISTS documents_dashboard_dates;

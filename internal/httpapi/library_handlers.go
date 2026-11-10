@@ -14,7 +14,22 @@ func (server *Server) libraryRoutes(mux *http.ServeMux) {
 	server.organizationRoutes(mux)
 	server.workflowRoutes(mux)
 	routes := map[string]authorizedHandler{
-		"GET /api/v1/libraries/{library}": server.getLibrary, "GET /api/v1/jobs/{job}": server.getJob, "POST /api/v1/storage/path-inspections": server.inspectPath,
+		"GET /api/v1/libraries/{library}/file-skips":          server.processingTable,
+		"GET /api/v1/libraries/{library}/job-history":         server.processingTable,
+		"GET /api/v1/deletions":                               server.deletionList,
+		"POST /api/v1/libraries/{library}/archive":            server.libraryLifecycle,
+		"POST /api/v1/libraries/{library}/restore":            server.libraryLifecycle,
+		"PUT /api/v1/libraries/{library}/managed-destination": server.managedDestination,
+		"POST /api/v1/roots/{root}/resume":                    server.resumeRoot,
+		"POST /api/v1/libraries/{library}/deletion-plans":     server.planEntityDeletion,
+		"POST /api/v1/roots/{root}/deletion-plans":            server.planEntityDeletion,
+		"GET /api/v1/deletions/{operation}":                   server.entityDeletion,
+		"POST /api/v1/deletions/{operation}/confirm":          server.entityDeletion,
+		"POST /api/v1/deletions/{operation}/retry":            server.entityDeletion,
+		"GET /api/v1/deletions/{operation}/manifest":          server.deletionManifest,
+		"GET /api/v1/libraries/{library}/file-settings":       server.fileConfiguration,
+		"PUT /api/v1/libraries/{library}/file-settings":       server.fileConfiguration,
+		"GET /api/v1/libraries/{library}":                     server.getLibrary, "GET /api/v1/jobs/{job}": server.getJob, "POST /api/v1/storage/path-inspections": server.inspectPath,
 		"GET /api/v1/libraries/{library}/folders": server.libraryFolders,
 		"GET /api/v1/search-events":               server.searchEvents, "GET /api/v1/libraries/{library}/member-candidates": server.memberCandidates,
 		"GET /api/v1/libraries": server.listLibraries, "POST /api/v1/libraries": server.createLibrary, "PATCH /api/v1/libraries/{library}": server.updateLibrary,
@@ -23,10 +38,11 @@ func (server *Server) libraryRoutes(mux *http.ServeMux) {
 		"GET /api/v1/libraries/{library}/roots": server.libraryRoots, "PATCH /api/v1/roots/{root}": server.configureRoot, "POST /api/v1/roots/{root}/retirement-plans": server.retirementPlan, "POST /api/v1/roots/{root}/retire": server.retireRoot,
 		"GET /api/v1/libraries/{library}/folder-views": server.libraryViews, "POST /api/v1/libraries/{library}/folder-views": server.addView, "POST /api/v1/libraries/{library}/verify": server.verifyLibrary,
 		"GET /api/v1/libraries/{library}/explorer": server.explorer, "POST /api/v1/search": server.search,
-		"GET /api/v1/documents/{document}": server.document, "GET /api/v1/documents/{document}/content": server.documentContent, "GET /api/v1/documents/{document}/download": server.documentContent,
+		"POST /api/v1/documents/{document}/reindex": server.reindexDocument, "GET /api/v1/documents/{document}": server.document, "GET /api/v1/documents/{document}/content": server.documentContent, "GET /api/v1/documents/{document}/download": server.documentContent,
 		"GET /api/v1/documents/{document}/pages/{page}/text": server.documentText, "GET /api/v1/documents/{document}/history": server.documentHistory, "POST /api/v1/documents/{document}/remove-index": server.removeDocumentIndex,
 		"GET /api/v1/libraries/{library}/processing":        server.processing,
 		"POST /api/v1/jobs/{job}/cancel":                    server.cancelJob,
+		"POST /api/v1/jobs/{job}/pause":                     server.pauseJob,
 		"POST /api/v1/roots/{root}/retry-errors":            server.retryScanErrors,
 		"GET /api/v1/libraries/{library}/duplicates":        server.duplicateGroups,
 		"GET /api/v1/libraries/{library}/duplicates/{hash}": server.duplicateDocuments, "GET /api/v1/libraries/{library}/jobs": server.libraryJobs, "POST /api/v1/jobs/{job}/retry": server.retryJob,
@@ -50,28 +66,30 @@ func (server *Server) libraryResult(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, status, result)
 }
 func (server *Server) listLibraries(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
-	items, err := server.libraries.Libraries(request.Context(), principal)
+	items, err := server.libraries.ListLibraries(request.Context(), principal, request.URL.Query().Get("archived") == "true")
 	server.libraryResult(writer, request, 200, map[string]any{"items": items}, err)
 }
 func (server *Server) createLibrary(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
 	var input struct {
-		Name    string `json:"name"`
-		Mode    string `json:"mode"`
-		Manager string `json:"manager_user_id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Mode        string `json:"mode"`
+		Manager     string `json:"manager_user_id"`
 	}
 	if err := decodeJSON(writer, request, &input); err != nil {
 		server.fail(writer, request, err)
 		return
 	}
-	identifier, err := server.libraries.Create(request.Context(), principal, input.Name, input.Mode, input.Manager, request.Header.Get("Idempotency-Key"), metadata(request))
+	identifier, err := server.libraries.CreateWithDescription(request.Context(), principal, input.Name, input.Description, input.Mode, principal.User.ID, request.Header.Get("Idempotency-Key"), metadata(request))
 	server.libraryResult(writer, request, 201, map[string]string{"id": identifier}, err)
 }
 func (server *Server) updateLibrary(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
 	var input struct {
-		Name      string              `json:"name"`
-		Languages string              `json:"ocr_languages"`
-		Mode      string              `json:"mode"`
-		Settings  *libraries.Settings `json:"settings"`
+		Name        string              `json:"name"`
+		Description *string             `json:"description"`
+		Languages   string              `json:"ocr_languages"`
+		Mode        string              `json:"mode"`
+		Settings    *libraries.Settings `json:"settings"`
 	}
 	if err := decodeJSON(writer, request, &input); err != nil {
 		server.fail(writer, request, err)
@@ -82,7 +100,7 @@ func (server *Server) updateLibrary(writer http.ResponseWriter, request *http.Re
 		server.fail(writer, request, err)
 		return
 	}
-	err = server.libraries.UpdateConfiguration(request.Context(), principal, request.PathValue("library"), input.Name, input.Languages, input.Mode, input.Settings, revision, metadata(request))
+	err = server.libraries.UpdateConfigurationWithDescription(request.Context(), principal, request.PathValue("library"), input.Name, input.Description, input.Languages, input.Mode, input.Settings, revision, metadata(request))
 	server.libraryResult(writer, request, 204, nil, err)
 }
 func (server *Server) libraryMembers(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
@@ -216,7 +234,7 @@ func (server *Server) explorer(writer http.ResponseWriter, request *http.Request
 		}
 		limit = parsed
 	}
-	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
+	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{Classification: query.Get("classification_status"), Format: query.Get("format"), DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
 	result, err := server.libraries.Search(request.Context(), principal, input, metadata(request), input.Query != "")
 	server.libraryResult(writer, request, 200, result, err)
 }
@@ -241,7 +259,8 @@ func (server *Server) documentContent(writer http.ResponseWriter, request *http.
 	if download {
 		disposition = "attachment"
 	}
-	writer.Header().Set("Content-Type", "application/pdf")
+	writer.Header().Set("Content-Type", document.MIME)
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": document.Filename}))
 	writer.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'self'")
 	writer.Header().Set("X-Frame-Options", "SAMEORIGIN")
@@ -376,6 +395,14 @@ func (server *Server) cancelJob(w http.ResponseWriter, r *http.Request, p domain
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
+func (server *Server) pauseJob(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	err := server.libraries.PauseJob(r.Context(), p, r.PathValue("job"), metadata(r))
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
 func (server *Server) retryScanErrors(w http.ResponseWriter, r *http.Request, p domain.Principal) {
 	err := server.libraries.RetryScanErrors(r.Context(), p, r.PathValue("root"), metadata(r))
 	if err != nil {
@@ -400,4 +427,26 @@ func (server *Server) duplicateDocuments(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func (server *Server) reindexDocument(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
+	identifier, err := server.libraries.ReindexDocument(request.Context(), principal, request.PathValue("document"), request.Header.Get("Idempotency-Key"), metadata(request))
+	server.libraryResult(writer, request, 202, map[string]string{"id": identifier}, err)
+}
+
+func (server *Server) managedDestination(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	var input struct {
+		RootID string `json:"root_id"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	revision, err := expectedRevision(r)
+	if err != nil {
+		server.fail(w, r, err)
+		return
+	}
+	err = server.libraries.SetManagedDestination(r.Context(), p, r.PathValue("library"), input.RootID, revision, metadata(r))
+	server.libraryResult(w, r, 204, nil, err)
 }

@@ -138,7 +138,7 @@ func (server *Server) licenseArtifact(writer http.ResponseWriter, request *http.
 		extension = "json"
 	}
 	writer.Header().Set("Content-Type", "application/octet-stream")
-	writer.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="AIBID-%s.%s"`, result.ID, extension))
+	writer.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="AIDEX-%s.%s"`, result.ID, extension))
 	writer.WriteHeader(200)
 	_, _ = io.WriteString(writer, result.Contents)
 }

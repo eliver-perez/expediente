@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-03",
+  "version": "1.0.0",
+  "target": "windows-amd64",
+  "installer": "dist/aidex-1.0.0-windows-autorizacion-20261103/AIDEX-1.0.0-Windows-amd64.exe",
+  "size_bytes": 42046006,
+  "sha256": "970517b4f76ffe38ddf6967c46cd93c5b5152cf1c6ba0198986df4db54b53546",
+  "automated": {
+    "cross_compilation": "PASS",
+    "windows_go_vet": "PASS",
+    "packaging_parser_tests": 7,
+    "package_inspection": "PASS",
+    "protected_files_unchanged": 344
+  },
+  "native_windows_execution": "NOT_RUN",
+  "native_windows_confirmation": "PENDING",
+  "original_machine_failing_resource": "not present in supplied log; new operation/resource/error diagnostics added",
+  "macos_ubuntu_generated": false
+}

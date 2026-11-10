@@ -18,6 +18,7 @@ import (
 )
 
 type Config struct {
+	FolderBrowseRoots    []FolderBrowseRoot `json:"folder_browse_roots,omitempty"`
 	License              licensing.Options  `json:"license"`
 	Indexing             extraction.Options `json:"indexing"`
 	ListenAddress        string             `json:"listen_address"`
@@ -35,12 +36,19 @@ type Config struct {
 	LoginIPLimit         int                `json:"login_ip_limit"`
 }
 
+// Explicit, per-library browse boundaries, provisioned by the server administrator.
+// Registered library roots are also available; no disk roots are discovered.
+type FolderBrowseRoot struct {
+	LibraryID string `json:"library_id"`
+	Path      string `json:"path"`
+}
+
 func DefaultPath() (string, error) {
 	directory, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(directory, "gestor-documental", "config.json"), nil
+	return filepath.Join(directory, "aidex", "config.json"), nil
 }
 
 func Defaults(stateDirectory string) Config {
@@ -111,6 +119,11 @@ func Load(path string) (Config, error) {
 }
 
 func (configuration Config) Validate() error {
+	for _, root := range configuration.FolderBrowseRoots {
+		if root.LibraryID == "" || !filepath.IsAbs(root.Path) || filepath.Dir(filepath.Clean(root.Path)) == filepath.Clean(root.Path) || len(root.Path) > 1024 {
+			return fmt.Errorf("folder_browse_roots requires a library_id and a bounded absolute directory")
+		}
+	}
 	if err := configuration.License.Validate(); err != nil {
 		return err
 	}

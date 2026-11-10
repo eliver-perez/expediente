@@ -12,39 +12,52 @@ import (
 )
 
 func ReadTarget(reader io.Reader) (string, error) {
+	address, _, err := ReadInstallation(reader)
+	return address, err
+}
+
+// Public launcher metadata always refers to the AIDEX service.
+func ReadInstallation(reader io.Reader) (string, string, error) {
 	contents, err := io.ReadAll(io.LimitReader(reader, 4097))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(contents) > 4096 {
-		return "", fmt.Errorf("launch configuration too large")
+		return "", "", fmt.Errorf("launch configuration too large")
 	}
 	// Windows PowerShell 5.1 writes a BOM for UTF-8; accept it explicitly.
 	contents = bytes.TrimPrefix(contents, []byte{0xef, 0xbb, 0xbf})
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	var target struct {
-		PublicURL string `json:"public_url"`
+		PublicURL   string `json:"public_url"`
+		ServiceName string `json:"service_name"`
 	}
 	if err := decoder.Decode(&target); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return "", fmt.Errorf("expected one launch configuration")
+		return "", "", fmt.Errorf("expected one launch configuration")
 	}
 	address, err := url.Parse(target.PublicURL)
 	if err != nil || address.Host == "" || address.User != nil || address.Opaque != "" || address.Path != "" || address.RawQuery != "" || address.ForceQuery || address.Fragment != "" {
-		return "", fmt.Errorf("invalid browser origin")
+		return "", "", fmt.Errorf("invalid browser origin")
 	}
 	switch address.Scheme {
 	case "https":
 	case "http":
 		ip, err := netip.ParseAddr(address.Hostname())
 		if address.Hostname() != "localhost" && (err != nil || !ip.IsLoopback()) {
-			return "", fmt.Errorf("HTTP requires loopback")
+			return "", "", fmt.Errorf("HTTP requires loopback")
 		}
 	default:
-		return "", fmt.Errorf("unsupported browser scheme")
+		return "", "", fmt.Errorf("unsupported browser scheme")
 	}
-	return address.String(), nil
+	if target.ServiceName == "" {
+		target.ServiceName = "AIDEX"
+	}
+	if target.ServiceName != "AIDEX" {
+		return "", "", fmt.Errorf("invalid installed service")
+	}
+	return address.String(), target.ServiceName, nil
 }

@@ -31,6 +31,7 @@ type Client struct {
 	lastEffective  time.Time
 	lastSample     time.Time
 	nextAttempt    time.Time
+	rateLimitUntil time.Time
 	cachedJWS      string
 	cachedClaims   Claims
 	cachedBinding  Binding
@@ -143,6 +144,7 @@ type Status struct {
 	LastError            string          `json:"last_error_code"`
 	Diagnostic           string          `json:"diagnostic"`
 	DeactivationPending  bool            `json:"offline_deactivation_pending"`
+	ActivationMethod     string          `json:"activation_method"`
 }
 
 func (client *Client) Status(ctx context.Context) (Status, error) {
@@ -207,6 +209,9 @@ func (client *Client) Status(ctx context.Context) (Status, error) {
 	result.State = "active"
 	result.ReadAllowed = true
 	result.WriteAllowed = true
+	if err := snapshot.QueryRowContext(ctx, "SELECT CASE WHEN action='offline_import' THEN 'offline' ELSE 'online' END FROM license_artifacts WHERE direction='response' AND sha256=? ORDER BY created_at DESC LIMIT 1", domain.Digest(state.JWS)).Scan(&result.ActivationMethod); err != nil && err != sql.ErrNoRows {
+		return result, err
+	}
 	if claims.Type == "subscription" {
 		expires, _ := utcInstant(*claims.ExpiresAt)
 		grace := expires.Add(15 * 24 * time.Hour)
@@ -223,8 +228,16 @@ func (client *Client) Status(ctx context.Context) (Status, error) {
 		result.State = "revoked"
 		result.WriteAllowed = false
 		if state.Deactivated || retired {
+			result.ReadAllowed = false
+			result.State = "deactivated"
 			result.Diagnostic = "ACTIVATION_DEACTIVATED"
 		}
+	}
+	if state.DeactivationPending {
+		result.State = "deactivated"
+		result.ReadAllowed = false
+		result.WriteAllowed = false
+		result.Diagnostic = "OFFLINE_DEACTIVATION_PENDING"
 	}
 	if client.Options.ServerURL != "" && client.Options.RefreshHours > 0 && !state.Deactivated && !retired {
 		last, _ := utcInstant(state.LastContact)

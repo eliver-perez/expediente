@@ -29,3 +29,23 @@ func TestBrowserTargetRejectsCommandsCredentialsAndNonlocalHTTP(t *testing.T) {
 		}
 	}
 }
+
+func TestLauncherProductionService(t *testing.T) {
+	for _, name := range []string{"", "AIDEX", "OtherService"} {
+		contents, _ := json.Marshal(map[string]string{"public_url": "http://127.0.0.1:18090", "service_name": name})
+		_, actual, err := ReadInstallation(strings.NewReader(string(contents)))
+		if name == "OtherService" {
+			if err == nil {
+				t.Fatal("accepted foreign service")
+			}
+			continue
+		}
+		expected := name
+		if expected == "" {
+			expected = "AIDEX"
+		}
+		if err != nil || actual != expected {
+			t.Fatal(actual, err)
+		}
+	}
+}

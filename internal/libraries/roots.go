@@ -82,6 +82,7 @@ func (service *Service) Roots(ctx context.Context, principal domain.Principal, l
 }
 
 type Plan struct {
+	Notice   string   `json:"notice,omitempty"`
 	Source   string   `json:"storage_source"`
 	ID       string   `json:"id"`
 	Relation string   `json:"relation"`
@@ -179,8 +180,37 @@ func (service *Service) PlanStorageRoot(ctx context.Context, principal domain.Pr
 		if err = transaction.QueryRowContext(ctx, "SELECT current_configuration_revision FROM libraries WHERE id=?", libraryID).Scan(&plan.Revision); err != nil {
 			return err
 		}
-		if err = service.requireRootSource(ctx, transaction, libraryID, source, related); err != nil {
-			return err
+		if relation != "equal" {
+			if err = service.requireRootSource(ctx, transaction, libraryID, source, related); err != nil {
+				return err
+			}
+		} else {
+			for _, id := range related {
+				var existing string
+				if err = transaction.QueryRowContext(ctx, "SELECT storage_source FROM storage_roots WHERE id=?", id).Scan(&existing); err != nil {
+					return err
+				}
+				if existing != source {
+					return domain.Failure("ROOT_STORAGE_OVERLAP", "Esta carpeta ya está registrada con otro origen. Revisa su configuración; no puede registrarse dos veces.", 409)
+				}
+			}
+		}
+		if relation == "equal" {
+			plan.Notice = "Esta carpeta ya está registrada. Puedes administrarla desde Configurar carpeta."
+			for _, id := range related {
+				var status string
+				if err := transaction.QueryRowContext(ctx, "SELECT status FROM storage_roots WHERE id=?", id).Scan(&status); err != nil {
+					return err
+				}
+				if status == "retired" {
+					plan.Notice = "Esta carpeta ya está registrada, pero su supervisión está detenida. Puedes reanudarla desde Configurar carpeta."
+				}
+			}
+		}
+		if source == "managed" && relation == "distinct" {
+			if err = probeManagedRoot(directory.Path); err != nil {
+				return err
+			}
 		}
 		plan.Relation = relation
 		plan.Related = related
@@ -251,6 +281,25 @@ func (service *Service) ConfirmRoot(ctx context.Context, principal domain.Princi
 			return err
 		}
 		if _, err = transaction.ExecContext(ctx, "UPDATE libraries SET current_configuration_revision=current_configuration_revision+1,revision=revision+1 WHERE id=?", libraryID); err != nil {
+			return err
+		}
+		// Solo la primera carpeta registrada: no se elige entre destinos anteriores.
+		if source == "managed" {
+			settings, _, err := settingsFor(ctx, transaction, libraryID)
+			if err != nil {
+				return err
+			}
+			var count int
+			if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM storage_roots WHERE library_id=? AND storage_source='managed'", libraryID).Scan(&count); err != nil {
+				return err
+			}
+			if count == 1 && settings.ManagedRootID == "" {
+				if err = storeManagedDestination(ctx, transaction, current, libraryID, "", rootID, metadata); err != nil {
+					return err
+				}
+			}
+		}
+		if err = configurationSnapshot(ctx, transaction, libraryID, current.User.ID); err != nil {
 			return err
 		}
 		if _, err = transaction.ExecContext(ctx, "UPDATE root_plans SET committed_root_id=? WHERE id=?", rootID, planID); err != nil {
@@ -388,23 +437,8 @@ func (service *Service) requireRootSource(ctx context.Context, query storage.Que
 	}
 	return nil
 }
+
+// La inspección y la autorización comparten la prueba efectiva del servicio.
 func probeManagedRoot(path string) error {
-	root, err := os.OpenRoot(path)
-	if err != nil {
-		return invalid("No se puede abrir el destino administrado.")
-	}
-	defer root.Close()
-	name := ".documental-probe-" + domain.NewID()
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return invalid("El destino necesita permisos de escritura.")
-	}
-	defer root.Remove(name)
-	_, writeErr := file.Write([]byte("probe"))
-	syncErr := file.Sync()
-	closeErr := file.Close()
-	if writeErr != nil || syncErr != nil || closeErr != nil {
-		return invalid("No se pudo verificar escritura en el destino.")
-	}
-	return nil
+	return CheckAuthorizedDirectory(path, "managed")
 }

@@ -1,0 +1,29 @@
+Windows icon resources: aidex-server.exe: [16, 24, 32, 40, 48, 64, 128, 256] OK
+Windows icon resources: AIDEX.exe: [16, 24, 32, 40, 48, 64, 128, 256] OK
+Windows runtime PE/amd64 import closure: OK (native test still required)
+{
+  "result": "PASS",
+  "checks": [
+    {
+      "target": "ubuntu-amd64",
+      "result": "PASS",
+      "scope": "control, ELF, ownership, templates, unit, current wrappers and documentation"
+    },
+    {
+      "target": "ubuntu-arm64",
+      "result": "PASS",
+      "scope": "control, ELF, ownership, templates, unit, current wrappers and documentation"
+    },
+    {
+      "target": "windows-amd64",
+      "result": "PASS",
+      "scope": "installer metadata, UTF-8 BOM/parser/template, both scripts, complete SHA manifest, icons, DLL closure, current documentation"
+    },
+    {
+      "target": "macos-arm64",
+      "result": "PASS",
+      "scope": "distribution/plist, ownership, complete SHA manifest, UTF-8 docs, native plutil Unicode, ad-hoc signature, packaged binary version"
+    }
+  ],
+  "native_installation": "not performed"
+}

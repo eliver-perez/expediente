@@ -5,6 +5,7 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -68,7 +69,12 @@ func TestScanCachePartialErrorsAndTargetedRetry(t *testing.T) {
 	requireNoError(t, service.RetryScanErrors(ctx, principal, root, domain.RequestMetadata{}))
 	var payload string
 	requireNoError(t, service.Database.Reader.QueryRow("SELECT payload_json FROM jobs WHERE job_type='scan' AND status='queued'").Scan(&payload))
-	if payload != "{\"paths\":[\"bad.pdf\"]}" {
+	var retry struct {
+		Paths  []string `json:"paths"`
+		Manual bool     `json:"manual"`
+	}
+	requireNoError(t, json.Unmarshal([]byte(payload), &retry))
+	if len(retry.Paths) != 1 || retry.Paths[0] != "bad.pdf" || !retry.Manual {
 		t.Fatal(payload)
 	}
 	requireNoError(t, service.Scan(context.WithValue(ctx, scanPathsKey{}, []string{"bad.pdf"}), root, 256<<20, nil))
@@ -152,8 +158,14 @@ func TestCancelledScanStaysPausedAndCanResume(t *testing.T) {
 	root := addRoot(t, service, principal, library, path)
 	job, err := service.claimLane(ctx, "scan")
 	requireNoError(t, err)
-	requireNoError(t, service.CancelJob(ctx, principal, job.ID, domain.RequestMetadata{}))
+	requireNoError(t, service.PauseJob(ctx, principal, job.ID, domain.RequestMetadata{}))
 	requireNoError(t, service.finish(ctx, job, scanFailure("USER_CANCELLED")))
+	requireNoError(t, service.recoverJobs(ctx)) // service restart must retain the paused checkpoint
+	var paused int
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT paused FROM root_scan_controls WHERE root_id=?", root).Scan(&paused))
+	if paused != 1 {
+		t.Fatal("paused scan lost its resume marker")
+	}
 	runtime := &Runtime{Service: service, directories: map[string]string{}, dirty: map[string]time.Time{}, degraded: map[string]string{}}
 	runtime.scheduleOnce(ctx)
 	_, err = service.claimLane(ctx, "scan")
@@ -165,10 +177,35 @@ func TestCancelledScanStaysPausedAndCanResume(t *testing.T) {
 	requireNoError(t, err)
 }
 
+func TestDefinitiveCancellationReleasesLibraryAndSurvivesRestart(t *testing.T) {
+	service, principal, directory := fixture(t)
+	ctx := context.Background()
+	library := addLibrary(t, service, principal, "Final cancellation")
+	path := filepath.Join(directory, "files")
+	copyFixture(t, filepath.Join(path, "one.pdf"), "native.pdf")
+	root := addRoot(t, service, principal, library, path)
+	job, err := service.claimLane(ctx, "scan")
+	requireNoError(t, err)
+	requireNoError(t, service.CancelJob(ctx, principal, job.ID, domain.RequestMetadata{}))
+	requireNoError(t, service.finish(ctx, job, scanFailure("USER_CANCELLED")))
+	requireNoError(t, service.recoverJobs(ctx))
+	runtime := &Runtime{Service: service, directories: map[string]string{}, dirty: map[string]time.Time{}, degraded: map[string]string{}, watchInitialized: map[string]bool{root: true}}
+	runtime.scheduleOnce(ctx)
+	if _, err = service.claimLane(ctx, "scan"); err != sql.ErrNoRows {
+		t.Fatal("cancelled traversal returned", err)
+	}
+	var revision int64
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT revision FROM libraries WHERE id=?", library).Scan(&revision))
+	requireNoError(t, service.ArchiveLibrary(ctx, principal, library, revision, false, domain.RequestMetadata{}))
+	if _, err = os.Stat(filepath.Join(path, "one.pdf")); err != nil {
+		t.Fatal("original removed", err)
+	}
+}
+
 // Opt-in corpus test: actual files, actual SQLite commits, no external 9,000-file corpus required.
 func TestLargeLibrary9000(t *testing.T) {
-	if os.Getenv("AIBID_LARGE_TEST") != "1" {
-		t.Skip("set AIBID_LARGE_TEST=1 for the 9,000-file regression")
+	if os.Getenv("AIDEX_LARGE_TEST") != "1" {
+		t.Skip("set AIDEX_LARGE_TEST=1 for the 9,000-file regression")
 	}
 	service, principal, directory := fixture(t)
 	ctx := context.Background()

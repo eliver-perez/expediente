@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -14,20 +15,33 @@ import (
 )
 
 type Settings struct {
-	ReviewManaged    bool   `json:"review_managed"`
-	ReviewLinked     bool   `json:"review_linked"`
-	RetentionDays    int    `json:"retention_days"`
-	IdentifierLabel  string `json:"identifier_label"`
-	ExerciseEnabled  bool   `json:"exercise_enabled"`
-	CasesEnabled     bool   `json:"cases_enabled"`
-	StructurePattern string `json:"structure_pattern"`
-	FilenamePattern  string `json:"filename_pattern"`
-	FilenamePrefix   string `json:"filename_prefix"`
-	ManagedRootID    string `json:"default_managed_root_id"`
+	RequireClassification bool   `json:"require_classification"`
+	ReviewClassification  bool   `json:"review_classification"`
+	ReviewManaged         bool   `json:"review_managed"`
+	ReviewLinked          bool   `json:"review_linked"`
+	RetentionDays         int    `json:"retention_days"`
+	IdentifierLabel       string `json:"identifier_label"`
+	ExerciseEnabled       bool   `json:"exercise_enabled"`
+	CasesEnabled          bool   `json:"cases_enabled"`
+	StructurePattern      string `json:"structure_pattern"`
+	FilenamePattern       string `json:"filename_pattern"`
+	FilenamePrefix        string `json:"filename_prefix"`
+	ManagedRootID         string `json:"default_managed_root_id"`
 }
 
 func defaultSettings() Settings {
-	return Settings{IdentifierLabel: "Expediente", CasesEnabled: true, StructurePattern: "{identificador}/{categoria}", FilenamePattern: "original"}
+	return Settings{RequireClassification: true, IdentifierLabel: "Expediente", CasesEnabled: true, StructurePattern: "{identificador}/{categoria}", FilenamePattern: "original"}
+}
+
+// La ausencia del nuevo ajuste conserva la regla de instalaciones existentes.
+func (settings *Settings) UnmarshalJSON(data []byte) error {
+	type plain Settings
+	value := plain{RequireClassification: true}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*settings = Settings(value)
+	return nil
 }
 func settingsFor(ctx context.Context, query storage.Querier, libraryID string) (Settings, string, error) {
 	var settings Settings
@@ -117,7 +131,7 @@ func (service *Service) updateSettings(ctx context.Context, transaction *sql.Tx,
 			return err
 		}
 	}
-	if settings.ReviewManaged || settings.ReviewLinked {
+	if settings.ReviewManaged || settings.ReviewLinked || settings.ReviewClassification {
 		if err = service.Identity.License.CheckFeatures(ctx, "review_workflow"); err != nil {
 			return err
 		}
@@ -143,15 +157,12 @@ func (service *Service) updateSettings(ctx context.Context, transaction *sql.Tx,
 			return invalid("Conserva ejercicio mientras existan expedientes que lo utilizan.")
 		}
 	}
-	if settings.ManagedRootID != "" {
-		var count int
-		if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM storage_roots WHERE id=? AND library_id=? AND storage_source='managed' AND status='active'", settings.ManagedRootID, libraryID).Scan(&count); err != nil {
+	if settings.ManagedRootID != "" && settings.ManagedRootID != previous.ManagedRootID {
+		if err = validateManagedDestination(ctx, transaction, libraryID, settings.ManagedRootID); err != nil {
 			return err
 		}
-		if count != 1 || mode == "linked" {
-			return invalid("Selecciona un destino administrado activo de esta biblioteca.")
-		}
 	}
+
 	_, err = transaction.ExecContext(ctx, "UPDATE libraries SET mode=?,settings_json=? WHERE id=?", mode, encode(settings), libraryID)
 	return err
 }
@@ -201,9 +212,13 @@ func renderNamingSequence(settings Settings, input NamingInput, stableID string,
 	tokens := strings.NewReplacer("{identificador}", safeComponent(input.Identifier), "{ejercicio}", safeComponent(input.Exercise), "{categoria}", safeComponent(input.Category), "{tipo_documento}", safeComponent(input.DocumentType), "{prefijo}", safeComponent(settings.FilenamePrefix), "{consecutivo}", fmt.Sprintf("%04d", sequence))
 	filename := tokens.Replace(settings.FilenamePattern)
 	if settings.FilenamePattern == "original" {
-		filename = safeComponent(strings.TrimSuffix(input.OriginalFilename, ".pdf"))
+		filename = safeComponent(strings.TrimSuffix(input.OriginalFilename, filepath.Ext(input.OriginalFilename)))
 	}
-	return tokens.Replace(settings.StructurePattern) + "/" + safeComponent(filename) + "_" + stableID + ".pdf"
+	extension := filepath.Ext(input.OriginalFilename)
+	if extension == "" {
+		extension = ".txt"
+	}
+	return tokens.Replace(settings.StructurePattern) + "/" + safeComponent(filename) + "_" + stableID + extension
 }
 func (service *Service) NamingPreview(ctx context.Context, principal domain.Principal, libraryID string, input NamingInput) (map[string]string, error) {
 	if err := service.Read(ctx, principal, libraryID, "libraries.configure"); err != nil {

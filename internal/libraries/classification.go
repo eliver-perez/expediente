@@ -12,12 +12,15 @@ import (
 )
 
 type Classification struct {
-	CaseID     string            `json:"case_id"`
-	CategoryID string            `json:"category_id"`
-	TypeID     string            `json:"document_type_id"`
-	Title      string            `json:"title"`
-	Metadata   map[string]string `json:"metadata"`
-	Reason     string            `json:"reason"`
+	CaseIdentifier string            `json:"case_identifier,omitempty"`
+	CategoryName   string            `json:"category_name,omitempty"`
+	TypeName       string            `json:"document_type_name,omitempty"`
+	CaseID         string            `json:"case_id"`
+	CategoryID     string            `json:"category_id"`
+	TypeID         string            `json:"document_type_id"`
+	Title          string            `json:"title"`
+	Metadata       map[string]string `json:"metadata"`
+	Reason         string            `json:"reason"`
 }
 
 func (service *Service) Classify(ctx context.Context, principal domain.Principal, documentID, operation string, input Classification, revision int64, metadata domain.RequestMetadata) error {
@@ -54,99 +57,139 @@ func (service *Service) Classify(ctx context.Context, principal domain.Principal
 		return err
 	}
 	return service.write(ctx, principal, document.LibraryID, permission, func(transaction *sql.Tx, current domain.Principal) error {
-		if err := service.requireManaged(ctx, transaction, document.LibraryID); err != nil {
+		return service.classifyTransaction(ctx, transaction, current, documentID, operation, input, revision, metadata, false)
+	})
+}
+
+func (service *Service) classifyTransaction(ctx context.Context, transaction *sql.Tx, current domain.Principal, documentID, operation string, input Classification, revision int64, metadata domain.RequestMetadata, reviewed bool) error {
+	document, err := scanDocument(transaction.QueryRowContext(ctx, "SELECT "+documentColumns+documentJoins+" WHERE d.id=? AND d.deleted_at IS NULL AND "+visibleDocumentSQL, documentID, current.User.ID, current.User.ID))
+	if err == sql.ErrNoRows {
+		return notFound()
+	}
+	if err != nil {
+		return err
+	}
+	if err := service.requireManaged(ctx, transaction, document.LibraryID); err != nil {
+		return err
+	}
+	var replacementPending int
+	if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM document_replacements WHERE previous_document_id=? AND status<>'cancelled'", documentID).Scan(&replacementPending); err != nil {
+		return err
+	}
+	if replacementPending > 0 {
+		return domain.Failure("REPLACEMENT_PENDING", "Esta versión tiene una sustitución pendiente o ya es histórica; corrige la versión nueva.", 409)
+	}
+	if document.Revision != revision {
+		return conflict()
+	}
+	if document.Approval != "draft" && document.Approval != "rejected" && document.Approval != "pending_review" && document.Approval != "needs_review" && document.Approval != "approved" {
+		return invalid("No se puede editar un documento cancelado o en materialización.")
+	}
+	if reviewed && document.Approval != "approved" {
+		return conflict()
+	}
+	settings, _, err := settingsFor(ctx, transaction, document.LibraryID)
+	if err != nil {
+		return err
+	}
+	if document.Approval == "approved" {
+		if !reviewed {
+			if err = service.require(ctx, transaction, current, document.LibraryID, "documents.correct_classification"); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(input.Reason) == "" || len(input.Reason) > 1000 {
+			return invalid("Indica el motivo de la corrección.")
+		}
+	}
+	if operation == "associate" && (document.Source != "linked" || document.CaseID != "" || input.CaseID == "") {
+		return domain.Failure("DOCUMENT_ALREADY_ASSOCIATED", "Selecciona un archivo vinculado sin expediente y un expediente de destino.", 409)
+	}
+	if operation == "reassign" && (document.CaseID == "" || input.CaseID == "" || input.CaseID == document.CaseID) {
+		return invalid("Selecciona otro expediente para reasignar.")
+	}
+	if operation == "classification" && ((document.CaseID != "" && input.CaseID != document.CaseID) || (document.Source == "linked" && input.CaseID != document.CaseID)) {
+		return invalid("Utiliza Asociar o Reasignar para cambiar el expediente de este archivo.")
+	}
+	if input.CaseID != "" {
+		if _, err := service.requireOrganization(ctx, transaction, document.LibraryID); err != nil {
 			return err
 		}
-		document, err := scanDocument(transaction.QueryRowContext(ctx, "SELECT "+documentColumns+documentJoins+" WHERE d.id=? AND d.deleted_at IS NULL AND "+visibleDocumentSQL, documentID, current.User.ID, current.User.ID))
-		if err == sql.ErrNoRows {
-			return notFound()
-		}
-		if err != nil {
+		var count int
+		if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM cases WHERE id=? AND library_id=? AND deleted_at IS NULL", input.CaseID, document.LibraryID).Scan(&count); err != nil {
 			return err
 		}
-		if document.Revision != revision {
-			return conflict()
+		if count != 1 {
+			return invalid("Selecciona un expediente de esta biblioteca.")
 		}
-		if document.Approval != "draft" && document.Approval != "rejected" && document.Approval != "pending_review" && document.Approval != "needs_review" {
-			return invalid("No se puede editar un documento aprobado o en materialización.")
+		if settings.RequireClassification && (input.CategoryID == "" || input.TypeID == "") {
+			return invalid("El expediente requiere categoría y tipo de documento.")
 		}
-		if operation == "associate" && (document.Source != "linked" || document.CaseID != "" || input.CaseID == "") {
-			return domain.Failure("DOCUMENT_ALREADY_ASSOCIATED", "Selecciona un archivo vinculado sin expediente y un expediente de destino.", 409)
+	}
+	if input.CategoryID != "" {
+		var count int
+		if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM categories WHERE id=? AND library_id=? AND archived_at IS NULL", input.CategoryID, document.LibraryID).Scan(&count); err != nil {
+			return err
 		}
-		if operation == "reassign" && (document.CaseID == "" || input.CaseID == "" || input.CaseID == document.CaseID) {
-			return invalid("Selecciona otro expediente para reasignar.")
+		if count != 1 {
+			return invalid("Selecciona una categoría activa de esta biblioteca.")
 		}
-		if operation == "classification" && ((document.CaseID != "" && input.CaseID != document.CaseID) || (document.Source == "linked" && input.CaseID != document.CaseID)) {
-			return invalid("Utiliza Asociar o Reasignar para cambiar el expediente de este archivo.")
+	}
+	if input.TypeID != "" {
+		var multiple, titleRequired bool
+		if err = transaction.QueryRowContext(ctx, "SELECT allows_multiple,requires_descriptive_title FROM document_types WHERE id=? AND category_id=? AND library_id=? AND archived_at IS NULL", input.TypeID, input.CategoryID, document.LibraryID).Scan(&multiple, &titleRequired); err == sql.ErrNoRows {
+			return invalid("Selecciona un tipo activo de la categoría elegida.")
+		} else if err != nil {
+			return err
+		}
+		if titleRequired && input.Title == "" {
+			return invalid("Este tipo requiere un título descriptivo.")
 		}
 		if input.CaseID != "" {
-			if _, err := service.requireOrganization(ctx, transaction, document.LibraryID); err != nil {
+			// A case owns its template snapshot; later catalog changes do not rewrite it.
+			err = transaction.QueryRowContext(ctx, "SELECT allows_multiple FROM case_requirements WHERE case_id=? AND document_type_id=?", input.CaseID, input.TypeID).Scan(&multiple)
+			if err != nil && err != sql.ErrNoRows {
 				return err
 			}
-			var count int
-			if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM cases WHERE id=? AND library_id=? AND deleted_at IS NULL", input.CaseID, document.LibraryID).Scan(&count); err != nil {
-				return err
-			}
-			if count != 1 {
-				return invalid("Selecciona un expediente de esta biblioteca.")
-			}
-			if input.CategoryID == "" || input.TypeID == "" {
-				return invalid("El expediente requiere categoría y tipo de documento.")
-			}
-		}
-		if input.CategoryID != "" {
-			var count int
-			if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM categories WHERE id=? AND library_id=? AND archived_at IS NULL", input.CategoryID, document.LibraryID).Scan(&count); err != nil {
-				return err
-			}
-			if count != 1 {
-				return invalid("Selecciona una categoría activa de esta biblioteca.")
-			}
-		}
-		if input.TypeID != "" {
-			var multiple, titleRequired bool
-			if err = transaction.QueryRowContext(ctx, "SELECT allows_multiple,requires_descriptive_title FROM document_types WHERE id=? AND category_id=? AND library_id=? AND archived_at IS NULL", input.TypeID, input.CategoryID, document.LibraryID).Scan(&multiple, &titleRequired); err == sql.ErrNoRows {
-				return invalid("Selecciona un tipo activo de la categoría elegida.")
-			} else if err != nil {
-				return err
-			}
-			if titleRequired && input.Title == "" {
-				return invalid("Este tipo requiere un título descriptivo.")
-			}
-			if input.CaseID != "" {
-				// A case owns its template snapshot; later catalog changes do not rewrite it.
-				err = transaction.QueryRowContext(ctx, "SELECT allows_multiple FROM case_requirements WHERE case_id=? AND document_type_id=?", input.CaseID, input.TypeID).Scan(&multiple)
-				if err != nil && err != sql.ErrNoRows {
+			if !multiple {
+				var count int
+				if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM documents WHERE case_id=? AND document_type_id=? AND id<>? AND deleted_at IS NULL AND approval_status<>'cancelled' AND NOT EXISTS(SELECT 1 FROM document_replacements replacement WHERE replacement.previous_document_id=documents.id AND replacement.new_document_id=? AND replacement.status='pending')", input.CaseID, input.TypeID, documentID, documentID).Scan(&count); err != nil {
 					return err
 				}
-				if !multiple {
-					var count int
-					if err = transaction.QueryRowContext(ctx, "SELECT count(*) FROM documents WHERE case_id=? AND document_type_id=? AND id<>? AND deleted_at IS NULL AND approval_status<>'cancelled'", input.CaseID, input.TypeID, documentID).Scan(&count); err != nil {
-						return err
-					}
-					if count > 0 {
-						return domain.Failure("DOCUMENT_TYPE_OCCUPIED", "El expediente ya tiene un archivo de este tipo único.", 409)
-					}
+				if count > 0 {
+					return domain.Failure("DOCUMENT_TYPE_OCCUPIED", "El expediente ya tiene un archivo de este tipo único.", 409)
 				}
 			}
 		}
-		if _, err = transaction.ExecContext(ctx, "UPDATE documents SET case_id=?,category_id=?,document_type_id=?,title=?,metadata_json=?,created_by=coalesce(created_by,?),approval_status='draft',revision=revision+1 WHERE id=?", nullableID(input.CaseID), nullableID(input.CategoryID), nullableID(input.TypeID), input.Title, encode(input.Metadata), current.User.ID, documentID); err != nil {
-			return err
-		}
-		if _, err = transaction.ExecContext(ctx, "UPDATE review_requests SET status='superseded',decided_at=? WHERE document_id=? AND status='pending'", now(), documentID); err != nil {
-			return err
-		}
-		if _, err = transaction.ExecContext(ctx, "UPDATE upload_items SET retain_until=NULL WHERE document_id=?", documentID); err != nil {
-			return err
-		}
-		eventID := domain.NewID()
-		details := map[string]any{"previous_case_id": document.CaseID, "case_id": input.CaseID, "category_id": input.CategoryID, "document_type_id": input.TypeID, "title": input.Title, "reason": input.Reason}
-		if err = audit.Append(ctx, transaction, time.Now(), audit.Event{ID: eventID, Type: "document." + operation, ActorUserID: current.User.ID, SessionID: current.SessionID, LibraryID: document.LibraryID, CaseID: input.CaseID, DocumentID: documentID, Metadata: metadata, Details: details}); err != nil {
-			return err
-		}
-		_, err = transaction.ExecContext(ctx, "INSERT INTO document_history VALUES(?,?,?,?,?)", domain.NewID(), documentID, revision+1, eventID, encode(details))
+	}
+	// Las etiquetas proceden del catálogo, nunca de valores enviados por cliente.
+	input.CaseIdentifier, input.CategoryName, input.TypeName = "", "", ""
+	if err = transaction.QueryRowContext(ctx, "SELECT coalesce((SELECT identifier FROM cases WHERE id=? AND library_id=?),''),coalesce((SELECT name FROM categories WHERE id=? AND library_id=?),''),coalesce((SELECT name FROM document_types WHERE id=? AND library_id=?),'')", input.CaseID, document.LibraryID, input.CategoryID, document.LibraryID, input.TypeID, document.LibraryID).Scan(&input.CaseIdentifier, &input.CategoryName, &input.TypeName); err != nil {
 		return err
-	})
+	}
+	if document.Approval == "approved" && settings.ReviewClassification && !reviewed {
+		return service.proposeClassificationCorrection(ctx, transaction, current, document, operation, input, metadata)
+	}
+	nextApproval := "draft"
+	if document.Approval == "approved" {
+		nextApproval = "approved"
+	}
+	if _, err = transaction.ExecContext(ctx, "UPDATE documents SET case_id=?,category_id=?,document_type_id=?,title=?,metadata_json=?,created_by=coalesce(created_by,?),approval_status=?,revision=revision+1 WHERE id=?", nullableID(input.CaseID), nullableID(input.CategoryID), nullableID(input.TypeID), input.Title, encode(input.Metadata), current.User.ID, nextApproval, documentID); err != nil {
+		return err
+	}
+	if _, err = transaction.ExecContext(ctx, "UPDATE review_requests SET status='superseded',decided_at=? WHERE document_id=? AND status='pending'", now(), documentID); err != nil {
+		return err
+	}
+	if _, err = transaction.ExecContext(ctx, "UPDATE upload_items SET retain_until=NULL WHERE document_id=?", documentID); err != nil {
+		return err
+	}
+	eventID := domain.NewID()
+	details := map[string]any{"previous": classificationSnapshot(document), "new": input, "content_approval_preserved": nextApproval == "approved", "previous_case_id": document.CaseID, "case_id": input.CaseID, "category_id": input.CategoryID, "document_type_id": input.TypeID, "title": input.Title, "reason": input.Reason}
+	if err = audit.Append(ctx, transaction, time.Now(), audit.Event{ID: eventID, Type: "document." + operation, ActorUserID: current.User.ID, SessionID: current.SessionID, LibraryID: document.LibraryID, CaseID: input.CaseID, DocumentID: documentID, Metadata: metadata, Details: details}); err != nil {
+		return err
+	}
+	_, err = transaction.ExecContext(ctx, "INSERT INTO document_history VALUES(?,?,?,?,?)", domain.NewID(), documentID, revision+1, eventID, encode(details))
+	return err
 }
 func (service *Service) CancelUpload(ctx context.Context, principal domain.Principal, documentID, reason string, revision int64, metadata domain.RequestMetadata) error {
 	if strings.TrimSpace(reason) == "" || len(reason) > 1000 {
@@ -170,6 +213,9 @@ func (service *Service) CancelUpload(ctx context.Context, principal domain.Princ
 		}
 		if status != "draft" && status != "rejected" && status != "pending_review" {
 			return invalid("Solo puedes cancelar cargas en borrador, rechazadas o pendientes de revisión.")
+		}
+		if _, err := transaction.ExecContext(ctx, "UPDATE document_replacements SET status='cancelled' WHERE new_document_id=? AND status='pending'", documentID); err != nil {
+			return err
 		}
 		if _, err := transaction.ExecContext(ctx, "UPDATE documents SET approval_status='cancelled',revision=revision+1 WHERE id=?", documentID); err != nil {
 			return err

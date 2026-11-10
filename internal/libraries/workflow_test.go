@@ -70,6 +70,93 @@ func temporaryPath(t *testing.T, f workflowFixture) string {
 	requireNoError(t, f.service.Database.Reader.QueryRow("SELECT private_temporary_locator FROM upload_items WHERE document_id=?", f.document.ID).Scan(&locator))
 	return filepath.Join(f.service.Identity.Config.PrivateUploadDirectory(), locator)
 }
+
+func TestContributorSecondDocumentReviewAndDirectGuidance(t *testing.T) {
+	ctx := context.Background()
+	f := workflowSetup(t, true)
+	s := f.service
+	contributor := member(t, s, f.author, f.library, "second-contributor", "library_contributor")
+	otherContributor := member(t, s, f.author, f.library, "other-contributor", "library_contributor")
+	reviewer := member(t, s, f.author, f.library, "independent-reviewer", "library_reviewer")
+	secondCase, err := s.SaveCase(ctx, f.author, f.library, "", Case{Identifier: "PR-009"}, 0, domain.RequestMetadata{})
+	requireNoError(t, err)
+	for index := 0; index < 2; index++ {
+		item := uploadFixture(t, s, contributor, f.library)
+		if _, err := s.Document(ctx, otherContributor, item.DocumentID); err == nil {
+			t.Fatal("another contributor saw a private upload")
+		}
+		if _, err := s.Document(ctx, reviewer, item.DocumentID); err != nil {
+			t.Fatal("reviewer cannot inspect pending upload", err)
+		}
+		document, err := s.Document(ctx, contributor, item.DocumentID)
+		requireNoError(t, err)
+		before, err := s.Workflow(ctx, contributor, item.DocumentID)
+		requireNoError(t, err)
+		if before.CanSubmit || before.ActionHint == "" {
+			t.Fatal("unclassified document has an invalid action or no guidance")
+		}
+		requireNoError(t, s.Classify(ctx, contributor, item.DocumentID, "classification", Classification{CaseID: secondCase, CategoryID: f.document.CategoryID, TypeID: f.document.TypeID}, document.Revision, domain.RequestMetadata{}))
+		document, err = s.Document(ctx, contributor, item.DocumentID)
+		requireNoError(t, err)
+		workflow, err := s.Workflow(ctx, contributor, item.DocumentID)
+		requireNoError(t, err)
+		if !workflow.CanSubmit {
+			t.Fatal("classified contributor upload cannot be submitted", index, workflow)
+		}
+		assigned := ""
+		if index == 0 {
+			assigned = reviewer.User.ID
+		}
+		reviewID, err := s.SubmitReview(ctx, contributor, item.DocumentID, assigned, document.Revision, domain.RequestMetadata{})
+		requireNoError(t, err)
+		queue, err := s.PendingReviews(ctx, reviewer, f.library, "")
+		requireNoError(t, err)
+		if len(queue.Items) != 1 || queue.Items[0].ID != reviewID {
+			t.Fatal("reviewer queue did not update", queue)
+		}
+		document, err = s.Document(ctx, reviewer, item.DocumentID)
+		requireNoError(t, err)
+		_, err = s.DecideReview(ctx, reviewer, reviewID, document.Revision, true, "", domain.RequestMetadata{})
+		requireNoError(t, err)
+		queue, err = s.PendingReviews(ctx, reviewer, f.library, "")
+		requireNoError(t, err)
+		if len(queue.Items) != 0 {
+			t.Fatal("resolved request remains in queue")
+		}
+		drain(t, s)
+	}
+	settings, _, err := settingsFor(ctx, s.Database.Reader, f.library)
+	requireNoError(t, err)
+	settings.ReviewManaged = false
+	updateWorkflowSettings(t, s, f.author, f.library, settings)
+	item := uploadFixture(t, s, contributor, f.library)
+	document, err := s.Document(ctx, contributor, item.DocumentID)
+	requireNoError(t, err)
+	requireNoError(t, s.Classify(ctx, contributor, item.DocumentID, "classification", Classification{CaseID: secondCase, CategoryID: f.document.CategoryID, TypeID: f.document.TypeID}, document.Revision, domain.RequestMetadata{}))
+	workflow, err := s.Workflow(ctx, contributor, item.DocumentID)
+	requireNoError(t, err)
+	if workflow.CanSubmit || workflow.CanFinalize || workflow.ActionHint == "" {
+		t.Fatal("direct confirmation lacks contributor guidance", workflow)
+	}
+	document, err = s.Document(ctx, f.author, item.DocumentID)
+	requireNoError(t, err)
+	if err = s.Classify(ctx, contributor, item.DocumentID, "reassign", Classification{CaseID: f.document.CaseID, CategoryID: f.document.CategoryID, TypeID: f.document.TypeID, Reason: "Sin permiso"}, document.Revision, domain.RequestMetadata{}); err == nil {
+		t.Fatal("contributor reassigned another case without manager permission")
+	}
+	requireNoError(t, s.Classify(ctx, f.author, item.DocumentID, "reassign", Classification{CaseID: f.document.CaseID, CategoryID: f.document.CategoryID, TypeID: f.document.TypeID, Reason: "Corrección de expediente"}, document.Revision, domain.RequestMetadata{}))
+	document, err = s.Document(ctx, f.author, item.DocumentID)
+	requireNoError(t, err)
+	if document.CaseID != f.document.CaseID {
+		t.Fatal("manager reassignment did not persist")
+	}
+	managerWorkflow, err := s.Workflow(ctx, f.author, item.DocumentID)
+	requireNoError(t, err)
+	if !managerWorkflow.CanFinalize {
+		t.Fatal("manager cannot finalize direct document")
+	}
+	_, err = s.FinalizeDocument(ctx, f.author, item.DocumentID, document.Revision, domain.RequestMetadata{})
+	requireNoError(t, err)
+}
 func TestH5DirectPublicationAndManagedIntegrity(t *testing.T) {
 	f := workflowSetup(t, false)
 	s := f.service

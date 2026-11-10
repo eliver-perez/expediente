@@ -1,0 +1,46 @@
+/private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-kn5zg88g/root/Library/Application Support/AIDEX/bin/aidex-server: replacing existing signature
+/private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-kn5zg88g/root/Library/Application Support/AIDEX/bin/aidex-folder-helper: replacing existing signature
+.: replacing existing signature
+/private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-kn5zg88g/root/Applications/AIDEX/Desinstalar AIDEX.app: replacing existing signature
+.: replacing existing signature
+/private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-kn5zg88g/root/Applications/AIDEX/Autorizar carpeta AIDEX.app: replacing existing signature
+/private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-kn5zg88g/root/Library/Application Support/AIDEX/bin/aidex-folder-picker: replacing existing signature
+.: replacing existing signature
+/private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-kn5zg88g/root/Applications/AIDEX/Seleccionar carpeta AIDEX.app: replacing existing signature
+pkgbuild: Inferring bundle components from contents of /private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-kn5zg88g/root
+pkgbuild: Adding component at Applications/AIDEX/Seleccionar carpeta AIDEX.app
+pkgbuild: Adding component at Applications/AIDEX/Desinstalar AIDEX.app
+pkgbuild: Adding component at Applications/AIDEX/Autorizar carpeta AIDEX.app
+pkgbuild: Adding top-level preinstall script
+pkgbuild: Adding top-level postinstall script
+pkgbuild: Wrote package to /private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-kn5zg88g/component.pkg
+productbuild: Wrote product to /Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-seleccion-carpetas-20261103/AIDEX-1.0.0-macOS-arm64.pkg
+Windows PowerShell payload: encoding, syntax and parameters OK (parser 7.6.9)
+Windows PowerShell payload: encoding, syntax and parameters OK (parser 7.6.9)
+Command line defined: "VERSION=1.0.0"
+Command line defined: "STAGE=/private/var/folders/95/73gsxch94r5bc9zgyxz3_q740000gn/T/aidex-package-21_3jgsh/root"
+Command line defined: "OUTPUT=/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-seleccion-carpetas-20261103/AIDEX-1.0.0-Windows-amd64.exe"
+Processing script file: "/Applications/XAMPP/xamppfiles/htdocs/expediente/packaging/windows/installer.nsi" (UTF8)
+
+Processed 1 file, writing output (x86-unicode):
+
+Output: "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-seleccion-carpetas-20261103/AIDEX-1.0.0-Windows-amd64.exe"
+Install: 4 pages (256 bytes), 1 section (4120 bytes), 1932 instructions (54096 bytes), 1131 strings (51842 bytes), 1 language table (270 bytes).
+Uninstall: 3 pages (256 bytes), 1 section (4120 bytes), 161 instructions (4508 bytes), 145 strings (6794 bytes), 1 language table (254 bytes).
+Datablock optimizer saved 26030 KiB (~14.4%).
+
+Using lzma (compress whole) compression.
+
+EXE header size:              152064 / 38912 bytes
+Install code:                          (109000 bytes)
+Install data:                          (157907185 bytes)
+Uninstall code+data:                   (157691 bytes)
+Compressed data:            41869873 / 158173876 bytes
+CRC (0xD1F90542):                  4 / 4 bytes
+
+Total size:                 42021941 / 158212792 bytes (26.5%)
+Windows icon resources: aidex-server.exe: [16, 24, 32, 40, 48, 64, 128, 256] OK
+Windows icon resources: AIDEX.exe: [16, 24, 32, 40, 48, 64, 128, 256] OK
+Verified 1092 Windows OCR runtime files against prior installer manifest
+Windows runtime PE/amd64 import closure: OK (native test still required)
+Installers: /Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-seleccion-carpetas-20261103

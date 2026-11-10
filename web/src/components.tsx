@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, message, type Page } from './api';
+import { toast } from './feedback';
 
 export function Notice({ text, kind = 'error' }: { text: string; kind?: 'error' | 'success' }) {
-  return text ? <div className={`notice ${kind}`} role={kind === 'error' ? 'alert' : 'status'}>{text}</div> : null;
+  useEffect(() => { if (text && kind === 'success') toast(text); }, [text, kind]);
+  return text && kind !== 'success' ? <div className={`notice ${kind}`} role="alert">{text}</div> : null;
 }
 
 export function usePage<T>(endpoint: string, enabled = true) {
@@ -12,24 +14,32 @@ export function usePage<T>(endpoint: string, enabled = true) {
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const previousEndpoint = useRef(endpoint);
+  const activeRequest = useRef<AbortController | null>(null);
   useEffect(() => {
     if (!enabled) { setBusy(false); return; }
     const controller = new AbortController();
+    activeRequest.current?.abort(); activeRequest.current = controller;
     setBusy(true); setError('');
     if (previousEndpoint.current !== endpoint) { setItems([]); setCursor(null); previousEndpoint.current = endpoint; }
     api<Page<T>>(endpoint, { signal: controller.signal }).then(page => {
+      if (controller.signal.aborted) return;
       setItems(page.items); setCursor(page.next_cursor);
     }).catch(error => { if (!controller.signal.aborted) setError(message(error)); })
       .finally(() => { if (!controller.signal.aborted) setBusy(false); });
-    return () => controller.abort();
+    return () => { activeRequest.current?.abort(); activeRequest.current = null; };
   }, [endpoint, revision, enabled]);
   async function more() {
-    if (!cursor || busy) return;
+    if (!cursor || busy || activeRequest.current?.signal.aborted) return;
+    // More belongs to the same scope as the first page, including reloads.
+    const controller = activeRequest.current;
+    if (!controller) return;
     setBusy(true); setError('');
     try {
-      const page = await api<Page<T>>(`${endpoint}${endpoint.includes('?') ? '&' : '?'}cursor=${encodeURIComponent(cursor)}`);
+      const page = await api<Page<T>>(`${endpoint}${endpoint.includes('?') ? '&' : '?'}cursor=${encodeURIComponent(cursor)}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setItems(previous => [...previous, ...page.items]); setCursor(page.next_cursor);
-    } catch (error) { setError(message(error)); } finally { setBusy(false); }
+    } catch (error) { if (!controller.signal.aborted) setError(message(error)); }
+    finally { if (!controller.signal.aborted) setBusy(false); }
   }
   return { items, busy, error, cursor, more, reload: () => setRevision(value => value + 1) };
 }

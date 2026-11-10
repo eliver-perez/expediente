@@ -1,0 +1,26 @@
+{
+  "result": "PASS",
+  "checks": [
+    {
+      "target": "ubuntu-amd64",
+      "result": "PASS",
+      "scope": "control, ELF, ownership, templates, unit, current wrappers and documentation"
+    },
+    {
+      "target": "ubuntu-arm64",
+      "result": "PASS",
+      "scope": "control, ELF, ownership, templates, unit, current wrappers and documentation"
+    },
+    {
+      "target": "windows-amd64",
+      "result": "PASS",
+      "scope": "installer metadata, UTF-8 BOM/parser/template, both scripts, complete SHA manifest, icons, DLL closure, current documentation"
+    },
+    {
+      "target": "macos-arm64",
+      "result": "PASS",
+      "scope": "distribution/plist, ownership, complete SHA manifest, UTF-8 docs, native plutil Unicode, ad-hoc signature, packaged binary version"
+    }
+  ],
+  "native_installation": "not performed"
+}

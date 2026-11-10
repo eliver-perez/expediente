@@ -1,9 +1,15 @@
+import { DeleteEntity, ResumeRoot, DeletionHistory } from './Lifecycle';
+import { confirmAction } from './feedback';
+import { useToastState } from './feedback';
 import { Accordion } from './Accordion';
 import { RootInterval } from './RootInterval';
-import { useEffect, useState, type FormEvent } from 'react';
-import { api, formatDate, message } from './api';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { api, APIError, formatDate, message } from './api';
 import { Notice, usePage } from './components';
 import { diagnosticLabel, type Library, type Root, type RootPlan } from './libraryTypes';
+import { ModalCloseButton, ShieldCheckIcon, SettingsIcon, RefreshIcon } from './ActionButtons';
+import { FolderSelector } from './FolderSelector';
+import { useModalDialog } from './useModalDialog';
 
 export function Roots({ library, refresh }: { library: Library; refresh: () => void }) {
   const roots = usePage<Root>(`/libraries/${library.id}/roots`);
@@ -14,39 +20,133 @@ export function Roots({ library, refresh }: { library: Library; refresh: () => v
     return () => clearTimeout(timer);
   }, [roots.busy, roots.reload]);
   const [plan, setPlan] = useState<RootPlan | null>(null);
+  const [serverOS, setServerOS] = useState('');
+  const [accessIssue, setAccessIssue] = useState<{ path: string; source: string; code: string } | null>(null);
+  const [launchURL, setLaunchURL] = useState('');
+  const [authorizationTicket, setAuthorizationTicket] = useState('');
+  const [authorizationState, setAuthorizationState] = useState('');
+  const [folderPath, setFolderPath] = useState('');
+  const [folderSource, setFolderSource] = useState(library.mode === 'managed' ? 'managed' : 'linked');
+  const accessDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { void api<{ os: string }>('/about').then(result => setServerOS(result.os)).catch(() => {}); }, []);
+  useModalDialog(accessDialog, clearInspection, !!accessIssue);
   const [retirement, setRetirement] = useState<{ plan_id: string; root_id: string; reference_count: number; affected_case_count: number } | null>(null);
-  const [error, setError] = useState(''); const [success, setSuccess] = useState(''); const [busy, setBusy] = useState(false);
-  async function operation(action: () => Promise<unknown>, text: string) { setBusy(true); setError(''); setSuccess(''); try { await action(); roots.reload(); refresh(); setSuccess(text); } catch (error) { setError(message(error)); } finally { setBusy(false); } }
-  function inspect(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); void operation(async () => setPlan(await api<RootPlan>(`/libraries/${library.id}/root-plans`, { method: 'POST', body: { server_path: data.get('server_path'), storage_source: data.get('source') || 'linked' } })), 'Carpeta inspeccionada. Revisa el resultado antes de confirmar.'); }
+  const [error, setError] = useState(''); const [success, setSuccess] = useToastState(); const [busy, setBusy] = useState(false);
+  async function operation(action: () => Promise<unknown>, text: string) { if (busy) return; setBusy(true); setError(''); setSuccess(''); try { await action(); roots.reload(); refresh(); setSuccess(text); } catch (error) { setError(message(error)); } finally { setBusy(false); } }
+  const inspectionVersion = useRef(0);
+  function clearInspection() { inspectionVersion.current++; setPlan(null); setAccessIssue(null); setLaunchURL(''); setAuthorizationTicket(''); setAuthorizationState(''); setError(''); setSuccess(''); }
+  useEffect(() => { clearInspection(); setFolderPath(''); setFolderSource(library.mode === 'managed' ? 'managed' : 'linked'); }, [library.id, library.mode]);
+  async function inspectPath(path: string, source: string) {
+    if (busy) return;
+    clearInspection(); const version = inspectionVersion.current;
+    setBusy(true);
+    try {
+      const inspected = await api<RootPlan>(`/libraries/${library.id}/root-plans`, { method: 'POST', body: { server_path: path, storage_source: source } });
+      if (version !== inspectionVersion.current) return;
+      setPlan(inspected);
+      setAccessIssue(null); setLaunchURL(''); setSuccess('Carpeta inspeccionada. Revisa el resultado antes de confirmar.'); roots.reload(); refresh();
+    } catch (cause) {
+      if (version !== inspectionVersion.current) return;
+      if (cause instanceof APIError && (cause.code === 'ROOT_PERMISSION_DENIED' || cause.code === 'ROOT_PRIVACY_DENIED')) {
+        setAccessIssue({ path, source, code: cause.code }); setLaunchURL('');
+      } else setError(message(cause));
+    } finally { setBusy(false); }
+  }
+  function inspect(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); void inspectPath(String(data.get('server_path') || ''), String(data.get('source') || 'linked')); }
+  async function authorizeFolder() {
+    if (!accessIssue || busy) return;
+    const version = inspectionVersion.current;
+    setBusy(true); setError('');
+    try {
+      const result = await api<{ launch_url: string }>('/local-folder-authorizations', { method: 'POST', body: { library_id: library.id, server_path: accessIssue.path, storage_source: accessIssue.source } });
+      if (version !== inspectionVersion.current) return;
+      setLaunchURL(result.launch_url);
+      setAuthorizationState('Confirma la autorización en la ventana del sistema. Puedes comprobar el acceso en cualquier momento.');
+      const ticket = result.launch_url.match(/authorize\/([a-f0-9]{64})/)?.[1];
+      if (ticket && serverOS === 'windows') setAuthorizationTicket(ticket);
+      window.location.href = result.launch_url;
+    } catch (cause) { if (version === inspectionVersion.current) setError(message(cause)); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => {
+    if (!authorizationTicket || !accessIssue) return;
+    let stopped = false, working = false;
+    const deadline = Date.now() + 115_000;
+    const timer = setInterval(async () => {
+      if (stopped || working) return;
+      if (Date.now() > deadline) { clearInterval(timer); setAuthorizationTicket(''); setAuthorizationState('La autorización no confirmó el resultado. Usa Comprobar acceso para revisar la carpeta o vuelve a autorizarla.'); return; }
+      working = true;
+      try {
+        const result = await api<{done: boolean; accessible: boolean}>(`/local-folder-authorizations/${authorizationTicket}/status`);
+        if (stopped || !result.done) return;
+        clearInterval(timer); setAuthorizationTicket('');
+        if (result.accessible) { setAuthorizationState('Acceso verificado. Inspeccionando carpeta…'); void inspectPath(accessIssue.path, accessIssue.source); }
+        else setAuthorizationState('El servicio aún no puede acceder a la carpeta. Comprueba el acceso o consulta el registro de autorización.');
+      } catch (cause) { if (!stopped) {clearInterval(timer); setAuthorizationTicket(''); setAuthorizationState(message(cause));} }
+      finally {working = false;}
+    }, 1000);
+    return () => {stopped = true; clearInterval(timer);};
+  }, [authorizationTicket, accessIssue]);
   const parent = plan ? roots.items.find(root => root.id === plan.related_root_ids[0]) : undefined;
   const prefix = parent?.server_path && plan ? plan.server_path.replaceAll('\\', '/').slice(parent.server_path.replaceAll('\\', '/').length + 1) : '';
   return <><Notice text={error || roots.error} /><Notice text={success} kind="success" />
+    <dialog ref={accessDialog} className={`contract-dialog folder-access-dialog ${serverOS === 'darwin' ? 'macos-folder-access' : ''}`} aria-labelledby="folder-access-title" onCancel={clearInspection}>
+      <header><h2 id="folder-access-title">Autorizar acceso a carpeta</h2><ModalCloseButton aria-label="Cerrar autorización" onClick={clearInspection} /></header>
+      <p>AIDEX necesita permiso para acceder a la carpeta <strong className="path-text">{accessIssue?.path.replace(/[\\/]$/, '').split(/[\\/]/).pop()}</strong>.</p>
+      {serverOS === 'windows' ? <>
+        <p className="muted folder-access-scope">{accessIssue?.source === 'managed' ? 'AIDEX podrá leer, guardar y administrar documentos y subcarpetas.' : 'AIDEX podrá leer la carpeta y su contenido, sin modificarlos.'}</p>
+        {accessIssue?.path.startsWith('\\\\') ? <p>Es una carpeta compartida. Solicita autorización al administrador del equipo que la comparte y después comprueba el acceso.</p> : <p>Confirma la solicitud de Windows en el equipo donde está instalado AIDEX.</p>}
+        <div className="actions folder-access-actions">
+          {!accessIssue?.path.startsWith('\\\\') && <button className="compact icon-label-button" disabled={busy || !!authorizationTicket} onClick={() => void authorizeFolder()}><ShieldCheckIcon />Autorizar carpeta</button>}
+          <button className="secondary compact icon-label-button" disabled={busy} onClick={() => accessIssue && void inspectPath(accessIssue.path, accessIssue.source)}><RefreshIcon />Comprobar acceso</button>
+        </div>
+        {launchURL && <small>Si Windows no abrió la utilidad, <a href={launchURL}>abrir autorización de Windows</a>.</small>}
+      </>
+        : serverOS === 'darwin' ? <>
+          <p className="muted folder-access-scope">{accessIssue?.source === 'managed' ? 'AIDEX podrá leer, guardar y administrar documentos y subcarpetas. Tu usuario de Finder tendrá acceso de lectura.' : 'AIDEX podrá leer la carpeta y su contenido, sin modificarlos.'}</p>
+          {accessIssue?.code === 'ROOT_PRIVACY_DENIED' && <p className="folder-privacy-help">Si macOS sigue bloqueando el acceso, abre los ajustes de privacidad y habilita <strong>aidex-server</strong> en “Acceso total al disco”. Después, comprueba nuevamente el acceso.</p>}
+          <div className="actions folder-access-actions">
+            <button className="compact icon-label-button" disabled={busy} onClick={() => void authorizeFolder()}><ShieldCheckIcon />Autorizar carpeta</button>
+            <button className="secondary compact icon-label-button" disabled={busy} onClick={() => accessIssue && void inspectPath(accessIssue.path, accessIssue.source)}><RefreshIcon />Comprobar acceso</button>
+            <button className="secondary compact icon-label-button" disabled={busy} onClick={() => {window.location.href='x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles';}}><SettingsIcon />Abrir ajustes de privacidad</button>
+          </div>
+          {launchURL && <small>Si macOS no abrió la aplicación, <a href={launchURL}>abrir autorización nativa</a>.</small>}
+        </>
+        : <p>El administrador debe conceder lectura y recorrido al usuario del servicio en esta carpeta y sus directorios superiores. En Linux comprueba las ACL de la ruta exacta para <code>aidex</code>; no es necesario abrir permisos para todos los usuarios.</p>}
+      {authorizationState && <p role="status">{authorizationState}</p>}
+      {serverOS !== 'darwin' && serverOS !== 'windows' && <div className="actions folder-access-actions"><button className="secondary compact icon-label-button" disabled={busy} onClick={() => accessIssue && void inspectPath(accessIssue.path, accessIssue.source)}><RefreshIcon />Comprobar acceso</button></div>}
+      <Notice text={error} />
+    </dialog>
     <section className="card"><div className="section-heading"><div><h2>Carpetas de la biblioteca</h2><p className="muted">Las vinculadas se consultan sin mover originales. Las administradas guardan los documentos confirmados y verifican su integridad.</p></div><button className="secondary" onClick={roots.reload}>Actualizar raíces</button></div>
+      {library.mode !== 'linked' && (!library.settings.default_managed_root_id || roots.items.some(root => root.id === library.settings.default_managed_root_id && root.status !== 'active')) && <p className="notice warning">Selecciona un destino administrado activo antes de incorporar nuevos documentos. Los documentos ya incorporados conservan su ubicación.</p>}
       {roots.items.length === 0 && <p className="empty-state">Añade la primera carpeta para comenzar a indexar.</p>}
-      {roots.items.filter(root => root.status !== 'superseded').map(root => <div className="root-row" key={root.id}><strong className="path-text">{root.server_path || 'Carpeta vinculada'}</strong><div className="document-badges"><span className="badge">{root.storage_source === 'managed' ? 'Destino administrado' : 'Vinculada'}</span><span className={`badge ${root.status === 'active' ? 'positive' : ''}`}>{({ active: 'Activa', inaccessible: 'Sin acceso', disabled: 'Pausada', retired: 'Retirada' } as Record<string, string>)[root.status]}</span><span className="muted">{root.storage_source === 'managed' ? root.watch_mode === 'paused' ? 'Verificación pausada' : 'Verificación periódica' : root.watch_mode === 'native' ? 'Vigilancia nativa' : root.watch_mode === 'paused' ? 'Vigilancia pausada' : 'Reconciliación periódica'}</span></div><small>Última comprobación: {formatDate(root.last_scan_at || null)}</small>{root.last_scan_result && <small>Último recorrido: {({running:'En curso',complete:'Terminado',partial:'Terminado con incidencias',failed:'Con errores',superseded:'Sustituido'} as Record<string,string>)[root.last_scan_result] || 'Interrumpido'} · {formatDate(root.last_scan_completed_at || null)} · {root.last_scan_changes} altas o cambios de contenido</small>}{root.last_error_code && <p className="diagnostic">{diagnosticLabel[root.last_error_code] || root.last_error_code}</p>}
-        <Accordion title="Configurar carpeta"><RootInterval key={root.revision} root={root} busy={busy} save={operation} /><button className="secondary" disabled={busy} onClick={() => void operation(async () => setRetirement(await api(`/roots/${root.id}/retirement-plans`, { method: 'POST' })), 'Revisa el alcance del retiro.')}>Dejar de supervisar esta carpeta…</button><small>Primero se mostrará el alcance. Podrás conservar sus documentos en las búsquedas o retirarlos del índice. La carpeta y sus archivos permanecerán intactos.</small></Accordion>
+      {roots.items.filter(root => root.status !== 'superseded').map(root => <div className="root-row" key={root.id}><strong className="path-text">{root.server_path || 'Carpeta vinculada'}</strong><div className="document-badges"><span className="badge">{root.storage_source === 'managed' ? 'Destino administrado' : 'Vinculada'}</span><span className={`badge ${root.status === 'active' ? 'positive' : ''}`}>{({ active: 'Activa', inaccessible: 'Sin acceso', disabled: 'Pausada', retired: 'Retirada' } as Record<string, string>)[root.status]}</span>{root.id === library.settings.default_managed_root_id && <span className="badge positive">Destino predeterminado</span>}<span className="muted">{root.storage_source === 'managed' ? root.watch_mode === 'paused' ? 'Verificación pausada' : 'Verificación periódica' : root.watch_mode === 'native' ? 'Vigilancia nativa' : root.watch_mode === 'paused' ? 'Vigilancia pausada' : 'Reconciliación periódica'}</span></div><small>Última comprobación: {formatDate(root.last_scan_at || null)}</small>{root.last_scan_result && <small>Último recorrido: {({running:'En curso',complete:'Terminado',partial:'Terminado con incidencias',failed:'Con errores',superseded:'Sustituido'} as Record<string,string>)[root.last_scan_result] || 'Interrumpido'} · {formatDate(root.last_scan_completed_at || null)} · {root.last_scan_changes} altas o cambios de contenido</small>}{root.last_error_code && <p className="diagnostic">{diagnosticLabel[root.last_error_code] || root.last_error_code}</p>}
+        {root.storage_source === 'managed' && root.status === 'active' && root.id !== library.settings.default_managed_root_id && library.permissions.includes('storage.manage_roots') && <button className="secondary" disabled={busy} onClick={() => void operation(() => api(`/libraries/${library.id}/managed-destination`, {method:'PUT',revision:library.revision,body:{root_id:root.id}}), 'Destino predeterminado actualizado. Los documentos existentes conservan su ubicación.')}>Establecer como destino</button>}
+        <Accordion title="Configurar carpeta">{(serverOS==='darwin'||serverOS==='windows')&&root.server_path&&root.status!=='retired'&&<button className="secondary" disabled={busy} onClick={()=>{clearInspection();setAccessIssue({path:root.server_path!,source:root.storage_source,code:root.storage_source==='managed'?'FINDER_REPAIR':'ROOT_PERMISSION_DENIED'});setLaunchURL('');setError('');}}>Autorizar carpeta{serverOS==='darwin'&&root.storage_source==='managed'?' y reparar acceso desde Finder':''}</button>}{root.status === 'retired' ? <ResumeRoot root={root} disabled={busy} done={() => { roots.reload(); refresh(); }} /> : <><RootInterval key={root.revision} root={root} busy={busy} save={operation} /><button className="secondary" disabled={busy} onClick={() => void operation(async () => setRetirement(await api(`/roots/${root.id}/retirement-plans`, { method: 'POST' })), 'Revisa el alcance del retiro.')}>Dejar de supervisar esta carpeta…</button><small>Primero se mostrará el alcance. Podrás conservar sus documentos en las búsquedas o retirarlos del índice. La carpeta y sus archivos permanecerán intactos.</small></>}{library.permissions.includes('documents.remove_index') && <DeleteEntity kind="root" id={root.id} disabled={busy} done={() => { roots.reload(); refresh(); }} />}</Accordion>
       </div>)}
     </section>
-    {retirement && <section className="card"><h2>Dejar de supervisar la carpeta</h2><p>Afecta {retirement.reference_count} referencias. Los originales permanecen en disco.</p>{retirement.affected_case_count > 0 && <p className="notice error">Hay documentos asociados a {retirement.affected_case_count} expedientes. Retirar sus referencias del índice reduce sus conteos y puede cambiar su avance.</p>}<form className="form-grid" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); void operation(async () => { await api(`/roots/${retirement.root_id}/retire`, { method: 'POST', body: { plan_id: retirement.plan_id, reference_policy: data.get('policy') } }); setRetirement(null); }, 'Carpeta retirada.'); }}><label>Referencias existentes<select name="policy"><option value="retain_index">Conservar texto y resultados de búsqueda</option><option value="remove_index_references">Retirar sus documentos del índice</option></select></label><label className="check"><input type="checkbox" required />Confirmo que se detendrá la supervisión y se aplicará la opción elegida al índice. Los archivos físicos se conservarán.</label><div className="actions"><button disabled={busy}>Confirmar retiro de carpeta</button><button className="secondary" type="button" onClick={() => setRetirement(null)}>Cancelar</button></div></form></section>}
-    <section className="card"><h2>Añadir carpeta</h2><p className="muted">Introduce una ruta absoluta del equipo donde corre el servicio.</p><form className="filters" onSubmit={inspect}>{library.mode !== 'linked' && <label>Origen de la carpeta<select name="source" defaultValue={library.mode === 'managed' ? 'managed' : 'linked'}>{library.mode === 'hybrid' && <option value="linked">Vinculada: consultar originales</option>}<option value="managed">Administrada: guardar definitivos</option></select></label>}<label>Ruta de la carpeta en el servidor<input name="server_path" required placeholder="/ruta/a/documentos" /></label><button disabled={busy}>Inspeccionar carpeta</button></form>
+    {retirement && <section className="card"><h2>Dejar de supervisar la carpeta</h2><p>Afecta {retirement.reference_count} referencias. Los originales permanecen en disco.</p>{retirement.affected_case_count > 0 && <p className="notice error">Hay documentos asociados a {retirement.affected_case_count} expedientes. Retirar sus referencias del índice reduce sus conteos y puede cambiar su avance.</p>}<form className="form-grid" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); void (async () => { if (!await confirmAction('Dejar de supervisar la carpeta', `Se detendrá la vigilancia de esta carpeta. Afecta ${retirement.reference_count} referencias y ${retirement.affected_case_count} expedientes. Política elegida: ${data.get('policy') === 'retain_index' ? 'conservar el índice' : 'retirar referencias del índice'}. Los documentos físicos se conservarán.`, 'Confirmar retiro de carpeta')) return; await operation(async () => { await api(`/roots/${retirement.root_id}/retire`, { method: 'POST', body: { plan_id: retirement.plan_id, reference_policy: data.get('policy') } }); setRetirement(null); }, 'Carpeta retirada.'); })(); }}><label>Referencias existentes<select name="policy"><option value="retain_index">Conservar texto y resultados de búsqueda</option><option value="remove_index_references">Retirar sus documentos del índice</option></select></label><label className="check"><input type="checkbox" required />Confirmo que se detendrá la supervisión y se aplicará la opción elegida al índice. Los archivos físicos se conservarán.</label><div className="actions"><button disabled={busy}>Confirmar retiro de carpeta</button><button className="secondary" type="button" onClick={() => setRetirement(null)}>Cancelar</button></div></form></section>}
+    <section className="card"><h2>Añadir carpeta</h2><p className="muted">Selecciona una carpeta del servidor o introduce su ruta absoluta.</p><form className="filters" onChange={clearInspection} onSubmit={inspect}>{library.mode !== 'linked' && <label>Origen de la carpeta<select name="source" value={folderSource} onChange={event => setFolderSource(event.target.value)}>{library.mode === 'hybrid' && <option value="linked">Vinculada: consultar originales</option>}<option value="managed">Administrada: guardar definitivos</option></select></label>}<label>Ruta de la carpeta en el servidor<input name="server_path" required placeholder={serverOS === 'windows' ? 'C:\\Documentos' : '/ruta/a/documentos'} value={folderPath} onChange={event => setFolderPath(event.target.value)} /></label><FolderSelector libraryID={library.id} disabled={busy} select={path => {setFolderPath(path); void inspectPath(path, folderSource);}} /><button disabled={busy}>Inspeccionar carpeta</button></form>
       {plan && <div className="root-plan"><p className="path-text"><strong>{plan.server_path}</strong></p>
-        {plan.relation === 'equal' ? <p>Esta carpeta ya está registrada. Puedes administrarla en la lista de raíces.</p> : plan.relation === 'descendant' ? <><p>Esta subcarpeta ya pertenece a una raíz. Puedes crear una vista para consultarla por separado.</p><form className="filters" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); void operation(async () => { await api(`/libraries/${library.id}/folder-views`, { method: 'POST', body: { root_id: plan.related_root_ids[0], relative_prefix: prefix, name: data.get('name') } }); setPlan(null); }, 'Vista creada.'); }}><label>Nombre de la vista<input name="name" required maxLength={160} defaultValue={prefix} /></label><button disabled={busy}>Crear vista lógica</button></form></> : <><p>{plan.relation === 'ancestor' ? `Contiene ${plan.related_root_ids.length} raíces existentes. La consolidación conservará sus documentos, texto e historial.` : plan.storage_source === 'managed' ? 'Carpeta disponible como destino administrado.' : 'Carpeta disponible para registrar e indexar.'}</p>{plan.relation === 'ancestor' && <ul>{plan.related_root_ids.map(identifier => <li className="path-text" key={identifier}>{roots.items.find(root => root.id === identifier)?.server_path}</li>)}</ul>}<button disabled={busy} onClick={() => void operation(async () => { await api(`/libraries/${library.id}/${plan.relation === 'ancestor' ? 'root-consolidations' : 'roots'}`, { method: 'POST', body: { plan_id: plan.id, expected_configuration_revision: plan.expected_configuration_revision } }); setPlan(null); }, plan.storage_source === 'managed' ? 'Destino administrado registrado. Selecciónalo en Configuración.' : 'Raíz registrada. El escaneo está en cola.')}>{plan.relation === 'ancestor' ? 'Confirmar consolidación' : plan.storage_source === 'managed' ? 'Registrar destino administrado' : 'Registrar e indexar'}</button></>}
+        {plan.relation === 'equal' ? <p>{plan.notice || 'Esta carpeta ya está registrada. Puedes administrarla en la lista de raíces.'}</p> : plan.relation === 'descendant' ? <><p>Esta subcarpeta ya pertenece a una raíz. Puedes crear una vista para consultarla por separado.</p><form className="filters" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); void operation(async () => { await api(`/libraries/${library.id}/folder-views`, { method: 'POST', body: { root_id: plan.related_root_ids[0], relative_prefix: prefix, name: data.get('name') } }); setPlan(null); }, 'Vista creada.'); }}><label>Nombre de la vista<input name="name" required maxLength={160} defaultValue={prefix} /></label><button disabled={busy}>Crear vista lógica</button></form></> : <><p>{plan.relation === 'ancestor' ? `Contiene ${plan.related_root_ids.length} raíces existentes. La consolidación conservará sus documentos, texto e historial.` : plan.storage_source === 'managed' ? 'Carpeta disponible como destino administrado.' : 'Carpeta disponible para registrar e indexar.'}</p>{plan.relation === 'ancestor' && <ul>{plan.related_root_ids.map(identifier => <li className="path-text" key={identifier}>{roots.items.find(root => root.id === identifier)?.server_path}</li>)}</ul>}<button disabled={busy} onClick={() => void operation(async () => { await api(`/libraries/${library.id}/${plan.relation === 'ancestor' ? 'root-consolidations' : 'roots'}`, { method: 'POST', body: { plan_id: plan.id, expected_configuration_revision: plan.expected_configuration_revision } }); setPlan(null); }, plan.storage_source === 'managed' ? 'Destino administrado registrado. Puedes consultar o cambiar el destino predeterminado en Carpetas.' : 'Raíz registrada. El escaneo está en cola.')}>{plan.relation === 'ancestor' ? 'Confirmar consolidación' : plan.storage_source === 'managed' ? 'Registrar destino administrado' : 'Registrar e indexar'}</button></>}
       </div>}
     </section>
+    <DeletionHistory />
   </>;
 }
 
 export function LibraryMembers({ library }: { library: Library }) {
   const members = usePage<{ user_id: string; display_name: string; role_ids: string[] }>(`/libraries/${library.id}/members`);
   const [filter, setFilter] = useState(''); const candidates = usePage<{ id: string; display_name: string; username: string }>(`/libraries/${library.id}/member-candidates?q=${encodeURIComponent(filter)}`);
-  const [selected, setSelected] = useState(''); const [error, setError] = useState(''); const [success, setSuccess] = useState('');
+  const [selected, setSelected] = useState(''); const [error, setError] = useState(''); const [success, setSuccess] = useToastState();
+  const [busy, setBusy] = useState(false);
   const existing = members.items.find(member => member.user_id === selected);
   return <section className="card"><h2>Personas y permisos</h2><p className="muted">El acceso se concede por biblioteca. Puedes combinar perfiles.</p><Notice text={error || members.error || candidates.error} /><Notice text={success} kind="success" />
     <div className="editor-grid"><div>{members.items.map(member => <div className="member-row" key={member.user_id}><strong>{member.display_name}</strong><small>{member.role_ids.map(role => ({ library_reader: 'Lector', library_manager: 'Gestor', library_auditor: 'Auditor', library_contributor: 'Colaborador', library_reviewer: 'Revisor' }[role])).join(', ')}</small><button className="text-button" onClick={() => setSelected(member.user_id)}>Editar permisos</button></div>)}</div><div>
       <form className="filters" onSubmit={event => { event.preventDefault(); setFilter(String(new FormData(event.currentTarget).get('query') || '')); }}><label>Buscar persona<input name="query" maxLength={120} /></label><button className="secondary">Buscar persona</button></form>
       <label>Persona<select value={selected} onChange={event => setSelected(event.target.value)}><option value="">Selecciona una cuenta</option>{candidates.items.map(candidate => <option value={candidate.id} key={candidate.id}>{candidate.display_name} · {candidate.username}</option>)}</select></label>
-      {selected && <form key={selected + ':' + existing?.role_ids.join(',')} className="form-grid member-editor" onSubmit={async event => { event.preventDefault(); const data = new FormData(event.currentTarget); try { await api(`/libraries/${library.id}/members/${selected}`, { method: 'PUT', body: { role_ids: data.getAll('roles') } }); setSuccess('Permisos guardados.'); setError(''); members.reload(); } catch (error) { setError(message(error)); } }}>
-        <label className="check"><input name="roles" type="checkbox" value="library_reader" defaultChecked={existing?.role_ids.includes('library_reader')} />Lector: consulta y descarga</label><label className="check"><input name="roles" type="checkbox" value="library_manager" defaultChecked={existing?.role_ids.includes('library_manager')} />Gestor: documentos, raíces y personas</label><label className="check"><input name="roles" type="checkbox" value="library_auditor" defaultChecked={existing?.role_ids.includes('library_auditor')} />Auditor: eventos y consultas exactas</label><label className="check"><input name="roles" type="checkbox" value="library_contributor" defaultChecked={existing?.role_ids.includes('library_contributor')} />Colaborador: cargar y clasificar</label><label className="check"><input name="roles" type="checkbox" value="library_reviewer" defaultChecked={existing?.role_ids.includes('library_reviewer')} />Revisor: consultar, aprobar y rechazar</label><button>Guardar permisos de biblioteca</button>
+      {selected && <form key={selected + ':' + existing?.role_ids.join(',')} className="form-grid member-editor" onSubmit={async event => { event.preventDefault(); if (busy) return; setBusy(true); const data = new FormData(event.currentTarget); try { await api(`/libraries/${library.id}/members/${selected}`, { method: 'PUT', body: { role_ids: data.getAll('roles') } }); setSuccess('Permisos guardados.'); setError(''); members.reload(); } catch (error) { setError(message(error)); } finally { setBusy(false); } }}>
+        <label className="check"><input name="roles" type="checkbox" value="library_reader" defaultChecked={existing?.role_ids.includes('library_reader')} />Lector: consulta y descarga</label><label className="check"><input name="roles" type="checkbox" value="library_manager" defaultChecked={existing?.role_ids.includes('library_manager')} />Gestor: documentos, raíces y personas</label><label className="check"><input name="roles" type="checkbox" value="library_auditor" defaultChecked={existing?.role_ids.includes('library_auditor')} />Auditor: eventos y consultas exactas</label><label className="check"><input name="roles" type="checkbox" value="library_contributor" defaultChecked={existing?.role_ids.includes('library_contributor')} />Colaborador: cargar y clasificar</label><label className="check"><input name="roles" type="checkbox" value="library_reviewer" defaultChecked={existing?.role_ids.includes('library_reviewer')} />Revisor: consultar, aprobar y rechazar</label><button disabled={busy}>{busy ? 'Guardando permisos…' : 'Guardar permisos de biblioteca'}</button>
       </form>}
     </div></div>
   </section>;

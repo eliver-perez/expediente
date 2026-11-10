@@ -1,8 +1,8 @@
-# Icono AIBID
+# Icono AIDEX
 
-`aibid-icon.svg` extrae únicamente las carpetas y la lupa de
+`aidex-icon.svg` extrae únicamente las carpetas y la lupa de
 `web/public/assets/brand/logo-v.svg`; los originales no cambian.
-`aibid.ico` contiene 16, 24, 32, 40, 48, 64, 128 y 256 px con transparencia.
+`aidex.ico` contiene 16, 24, 32, 40, 48, 64, 128 y 256 px con transparencia.
 Los recursos COFF `cmd/*/resource_windows_amd64.syso` se incluyen automáticamente
 por Go solo en Windows amd64. NSIS usa el mismo ICO para instalar/desinstalar.
 

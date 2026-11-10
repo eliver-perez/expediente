@@ -3,10 +3,12 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"gestor-documental/internal/licensing"
 	"os"
 	"strings"
 
+	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 )
 
@@ -17,7 +19,19 @@ func rootJobKind(root Root) string {
 	}
 	return "scan"
 }
+func deletionPendingForRoot(ctx context.Context, q interface{ QueryRowContext(context.Context, string, ...any) *sql.Row }, root Root) (bool, error) {
+	var count int
+	err := q.QueryRowContext(ctx, "SELECT count(*) FROM entity_deletions WHERE execution_status IN ('pending','running') AND ((kind='library' AND entity_id=?) OR (kind='root' AND entity_id=?))", root.LibraryID, root.ID).Scan(&count)
+	return count > 0, err
+}
 func enqueueVerification(ctx context.Context, transaction *sql.Tx, root Root) error {
+	blocked, err := deletionPendingForRoot(ctx, transaction, root)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return domain.Failure("DELETION_ALREADY_RUNNING", "Esta biblioteca o carpeta tiene una eliminación en proceso.", 409)
+	}
 	if root.Source != "managed" {
 		return enqueueScan(ctx, transaction, root.LibraryID, root.ID)
 	}
@@ -29,7 +43,7 @@ func enqueueVerification(ctx context.Context, transaction *sql.Tx, root Root) er
 		return nil
 	}
 	identifier := domain.NewID()
-	_, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'verify_managed',?,?,'{}','queued',?,?)", identifier, root.LibraryID, root.ID, identifier, now(), now())
+	_, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'verify_managed',?,?,'{}','queued',?,?)", identifier, root.LibraryID, root.ID, identifier, now(), now())
 	return err
 }
 
@@ -51,6 +65,7 @@ func (service *Service) VerifyManagedRoot(ctx context.Context, rootID string) er
 		return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
 	}
 	after := ""
+	partial := false
 	for {
 		rows, err := service.Database.Reader.QueryContext(ctx, "SELECT f.id,l.relative_path FROM physical_files f JOIN physical_file_locations l ON l.id=f.primary_location_id JOIN documents d ON d.physical_file_id=f.id WHERE l.root_id=? AND f.storage_source='managed' AND d.deleted_at IS NULL AND f.id>? ORDER BY f.id LIMIT 100", root.ID, after)
 		if err != nil {
@@ -76,7 +91,15 @@ func (service *Service) VerifyManagedRoot(ctx context.Context, rootID string) er
 		}
 		for _, item := range targets {
 			if err = service.verifyManagedFile(ctx, root, item.ID, item.Relative); err != nil {
-				return service.scanError(ctx, root, err)
+				if ctx.Err() != nil || !managedFileReadFailure(err) {
+					return service.scanError(ctx, root, err)
+				}
+				if err = service.scanPathError(ctx, root, item.Relative, err); err != nil {
+					return err
+				}
+				partial = true
+			} else if _, err = service.Database.Writer.ExecContext(ctx, "DELETE FROM scan_errors WHERE root_id=? AND relative_path=?", root.ID, item.Relative); err != nil {
+				return err
 			}
 			after = item.ID
 		}
@@ -85,9 +108,30 @@ func (service *Service) VerifyManagedRoot(ctx context.Context, rootID string) er
 	if err != nil || inspected.Identity != root.Identity {
 		return service.scanError(ctx, root, scanFailure("ROOT_UNAVAILABLE"))
 	}
+	if partial {
+		return service.scanError(ctx, root, scanFailure("SCAN_PARTIAL"))
+	}
 	_, err = service.Database.Writer.ExecContext(ctx, "UPDATE storage_roots SET status='active',last_verified_at=?,last_scan_at=?,last_error_code='' WHERE id=? AND configuration_revision=?", now(), now(), root.ID, root.Revision)
 	return err
 }
+
+// Isolate file I/O failures, but never mistake SQL, root revision, licensing or
+// cancellation errors for a damaged file and continue a compromised operation.
+func managedFileReadFailure(err error) bool {
+	var pathError *os.PathError
+	if errors.As(err, &pathError) {
+		return true
+	}
+	var failure *domain.Error
+	if errors.As(err, &failure) {
+		switch failure.Code {
+		case "SOURCE_UNAVAILABLE", "PATH_ACCESS_DENIED", "PATH_NOT_FOUND", "FILE_SIZE_LIMIT", "FILE_UNSTABLE", "INVALID_OFFICE_DOCUMENT", "DOCUMENT_COMPLEXITY_LIMIT":
+			return true
+		}
+	}
+	return false
+}
+
 func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID, relative string) error {
 	file, err := openLinked(root, relative)
 	if err != nil {
@@ -117,7 +161,16 @@ func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID
 		})
 	}
 	defer file.Close()
-	digest, size, err := hashFile(ctx, file, int64(service.Identity.Config.Indexing.MaximumFileMB)<<20)
+	configuration, err := service.fileConfiguration(ctx, service.Database.Reader, root.LibraryID)
+	if err != nil {
+		return err
+	}
+	// Integrity checks also cover already stored files after a limit is lowered.
+	var storedSize int64
+	if err = service.Database.Reader.QueryRowContext(ctx, "SELECT v.size_bytes FROM physical_files f JOIN content_versions v ON v.id=f.current_content_version_id WHERE f.id=?", fileID).Scan(&storedSize); err != nil {
+		return err
+	}
+	digest, size, err := hashFile(ctx, file, max(storedSize, int64(configuration.Effective.MaximumFileMB)<<20))
 	if err != nil {
 		return err
 	}
@@ -128,6 +181,15 @@ func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID
 	info, err := file.Stat()
 	if err != nil {
 		return err
+	}
+	detection, detectionError := documentformat.Detect(ctx, file, relative)
+	if detectionError != nil && !admissionSkip(detectionError) && failureCode(detectionError) != "INVALID_PDF" && failureCode(detectionError) != "FILE_SIZE_LIMIT" {
+		return detectionError
+	}
+	// External corruption is still a real version change requiring review.
+	// Preserve its evidence, but never enqueue rejected bytes for extraction.
+	if detection.Format == "" {
+		detection.Format = "unknown"
 	}
 	return service.Database.Write(ctx, func(transaction *sql.Tx) error {
 		if err := service.checkRootRevision(ctx, transaction, root); err != nil {
@@ -161,8 +223,21 @@ func (service *Service) verifyManagedFile(ctx context.Context, root Root, fileID
 			return err
 		}
 		jobID := domain.NewID()
-		if _, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,'{}','queued',?,?)", jobID, root.LibraryID, fileID, newVersion, "extract:"+newVersion, now(), now()); err != nil {
+		live, err := service.fileConfiguration(ctx, transaction, root.LibraryID)
+		if err != nil {
 			return err
+		}
+		reason := live.Effective.IndexReason(detection, size)
+		if detectionError != nil {
+			reason = "content_rejected"
+		}
+		if err = saveDetection(ctx, transaction, newVersion, detection, reason); err != nil {
+			return err
+		}
+		if reason == "" {
+			if _, err := transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,'{}','queued',?,?)", jobID, root.LibraryID, fileID, newVersion, "extract:"+newVersion, now(), now()); err != nil {
+				return err
+			}
 		}
 		return managedObservation(ctx, transaction, root.LibraryID, documentID, newVersion, "managed_changed")
 	})
@@ -179,7 +254,7 @@ func (service *Service) cleanExpiredUploads(ctx context.Context) error {
 	if err := service.Identity.License.CheckFeatures(ctx, "managed_libraries"); err != nil {
 		return err
 	}
-	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT u.id,u.document_id,u.private_temporary_locator,d.library_id,coalesce(d.case_id,'') FROM upload_items u JOIN documents d ON d.id=u.document_id JOIN physical_files f ON f.id=d.physical_file_id WHERE u.retain_until IS NOT NULL AND u.retain_until<=? AND u.status IN ('staged','retained') AND d.approval_status IN ('rejected','cancelled') AND f.primary_location_id IS NULL LIMIT 100", now())
+	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT u.id,u.document_id,u.private_temporary_locator,d.library_id,coalesce(d.case_id,'') FROM upload_items u JOIN documents d ON d.id=u.document_id JOIN physical_files f ON f.id=d.physical_file_id WHERE EXISTS(SELECT 1 FROM libraries b WHERE b.id=d.library_id AND b.disabled_at IS NULL) AND u.retain_until IS NOT NULL AND u.retain_until<=? AND u.status IN ('staged','retained') AND d.approval_status IN ('rejected','cancelled') AND f.primary_location_id IS NULL LIMIT 100", now())
 	if err != nil {
 		return err
 	}
@@ -205,6 +280,13 @@ func (service *Service) cleanExpiredUploads(ctx context.Context) error {
 		// Hold the writer while rechecking and unlinking this one owned filename;
 		// submission/cancellation cannot race retention and the operation is idempotent.
 		err = service.Database.Write(ctx, func(transaction *sql.Tx) error {
+			var active int
+			if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM libraries WHERE id=? AND disabled_at IS NULL", item.LibraryID).Scan(&active); err != nil {
+				return err
+			}
+			if active == 0 {
+				return nil
+			}
 			_, mode, err := settingsFor(ctx, transaction, item.LibraryID)
 			if err != nil {
 				return err

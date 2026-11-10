@@ -81,6 +81,9 @@ func (client *Client) OfflineRequest(ctx context.Context, action, requestID stri
 		if err != nil {
 			return err
 		}
+		if action == "deactivate" && state.DeactivationPending {
+			return failure("OFFLINE_DEACTIVATION_PENDING", "Ya existe una solicitud de desactivación pendiente. Descarga la solicitud anterior.")
+		}
 		payload := OfflinePayload{Action: action, RequestID: requestID, CreatedAt: client.Now().UTC().Format(time.RFC3339Nano), ProductID: ProductID, Binding: client.binding}
 		if action != "activate" {
 			claims, err := client.priorClaims(state.JWS)
@@ -133,7 +136,8 @@ func (client *Client) acceptLicense(ctx context.Context, transaction *sql.Tx, co
 		return err
 	}
 	if err == nil {
-		if deactivated {
+		previous, previousErr := client.priorClaims(state.JWS)
+		if deactivated || state.DeactivationPending && previousErr == nil && claims.ActivationID == previous.ActivationID {
 			return failure("ACTIVATION_DEACTIVATED", "Esta activación ya fue desactivada; solicita una nueva autorización.")
 		}
 		if licenseID != claims.LicenseID || claims.Revision < revision || claims.Revision == revision && digest != domain.Digest(compact) {
@@ -163,7 +167,7 @@ func (client *Client) acceptLicense(ctx context.Context, transaction *sql.Tx, co
 	if _, err = transaction.ExecContext(ctx, "INSERT INTO license_revision_floors VALUES(?,?,?,?,0) ON CONFLICT(activation_id) DO UPDATE SET highest_revision=excluded.highest_revision,jws_sha256=excluded.jws_sha256", claims.ActivationID, claims.LicenseID, claims.Revision, domain.Digest(compact)); err != nil {
 		return err
 	}
-	if _, err = transaction.ExecContext(ctx, "UPDATE license_state SET current_jws=?,deactivated=0,last_trusted_at=?,last_observed_at=?,last_error_code='' WHERE singleton=1", compact, trusted.UTC().Format(time.RFC3339Nano), effective.UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err = transaction.ExecContext(ctx, "UPDATE license_state SET current_jws=?,deactivated=0,offline_deactivation_pending=0,last_trusted_at=?,last_observed_at=?,last_error_code='' WHERE singleton=1", compact, trusted.UTC().Format(time.RFC3339Nano), effective.UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	artifact, err := saveArtifact(ctx, transaction, principal, "response", action, requestID, compact)

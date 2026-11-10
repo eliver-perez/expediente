@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -135,6 +136,7 @@ func (service *Service) LoadPrincipal(ctx context.Context, query storage.Querier
 		return principal, err
 	}
 	principal.TokenDigest = tokenDigest
+	principal.LastActivityAt = lastActivity
 	if closedAt != "" {
 		if closeReason == "new_login" {
 			return principal, domain.Failure("SESSION_REPLACED", SessionReplacedMessage, 401)
@@ -206,13 +208,24 @@ func (service *Service) Authenticate(ctx context.Context, token string, touch bo
 	if err != nil || !touch {
 		return principal, err
 	}
-	err = service.Database.Write(ctx, func(transaction *sql.Tx) error {
-		if _, err := service.LoadPrincipal(ctx, transaction, principal.TokenDigest); err != nil {
+	// Most reads must not queue behind a long-running writer. A session needs
+	// a durable touch only once per minute; when the writer is busy, the next
+	// request retries. Authentication itself is always checked on the WAL reader.
+	if principal.LastActivityAt > domain.Timestamp(service.Now().Add(-time.Minute)) {
+		return principal, nil
+	}
+	touchCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	err = service.Database.Write(touchCtx, func(transaction *sql.Tx) error {
+		if _, err := service.LoadPrincipal(touchCtx, transaction, principal.TokenDigest); err != nil {
 			return err
 		}
-		_, err := transaction.ExecContext(ctx, "UPDATE sessions SET last_activity_at=? WHERE id=? AND last_activity_at<?", domain.Timestamp(service.Now()), principal.SessionID, domain.Timestamp(service.Now().Add(-time.Minute)))
+		_, err := transaction.ExecContext(touchCtx, "UPDATE sessions SET last_activity_at=? WHERE id=? AND last_activity_at<?", domain.Timestamp(service.Now()), principal.SessionID, domain.Timestamp(service.Now().Add(-time.Minute)))
 		return err
 	})
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return principal, nil
+	}
 	return principal, err
 }
 

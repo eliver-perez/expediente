@@ -1,24 +1,40 @@
+# -*- coding: utf-8 -*-
 Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
 !include "LogicLib.nsh"
 !include "WinVer.nsh"
 !include "nsDialogs.nsh"
+!include "FileFunc.nsh"
+Var LogPath
+VIProductVersion "1.0.0.0"
+VIAddVersionKey /LANG=1034 "ProductName" "AIDEX"
+VIAddVersionKey /LANG=1034 "FileDescription" "Instalador de AIDEX"
+VIAddVersionKey /LANG=1034 "FileVersion" "1.0.0"
+VIAddVersionKey /LANG=1034 "ProductVersion" "1.0.0"
+VIAddVersionKey /LANG=1034 "LegalCopyright" "AIDEX"
 Var EraseData
 Var EraseCheckbox
-Name "AIBID Pruebas ${VERSION}"
-!define MUI_ICON "${STAGE}/aibid.ico"
-!define MUI_UNICON "${STAGE}/aibid.ico"
+Var SelectedPort
+Var PortInput
+Var ExistingInstall
+Name "AIDEX"
+!define MUI_ICON "${STAGE}/aidex.ico"
+!define MUI_UNICON "${STAGE}/aidex.ico"
 OutFile "${OUTPUT}"
-InstallDir "$PROGRAMFILES64\AIBID-Test"
+InstallDir "$PROGRAMFILES64\AIDEX"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
-BrandingText "AIBID — Tu biblioteca digital, ordenada y al alcance."
+BrandingText "AIDEX — Tu biblioteca digital, ordenada y al alcance."
 !define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TEXT "Instalación de pruebas independiente. Usa http://127.0.0.1:18090.$\r$\n$\r$\nDespués abre Configurar AIBID Pruebas para crear tu administrador (mínimo 6 caracteres) y activa tu licencia desde AIBID.$\r$\n$\r$\nAl desinstalar, los datos internos se conservan por defecto."
+; Texto informativo de bienvenida; el CLUF se acepta en la aplicación.
+!define MUI_WELCOMEPAGE_TITLE "Bienvenido al Asistente de Instalación de AIDEX 1.0.0."
+!define MUI_WELCOMEPAGE_TITLE_3LINES
+!define MUI_WELCOMEPAGE_TEXT "Al finalizar la instalación, abre Configurar AIDEX para crear la cuenta del administrador e iniciar el servicio.$\r$\n$\r$\nEn el primer acceso deberás leer y aceptar el Contrato de Licencia de Usuario Final (CLUF) para utilizar las funciones de AIDEX. Posteriormente podrás activar tu licencia.$\r$\n$\r$\nSi ya tienes una instalación de AIDEX, el asistente conservará sus datos y configuración durante la actualización."
 !insertmacro MUI_PAGE_WELCOME
+Page custom PortPage PortPageLeave
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TEXT "Primera vez: abre Configurar AIBID Pruebas desde Inicio para crear el administrador e iniciar el servicio.$\r$\n$\r$\nDespués usa AIBID Pruebas en el Escritorio o Abrir AIBID en Inicio: abre el navegador sin pedir permisos de administrador."
+!define MUI_FINISHPAGE_TEXT "Abre Configurar AIDEX desde Inicio para crear el administrador e iniciar el servicio. Al entrar por primera vez, lee y acepta el CLUF antes de utilizar el sistema.$\r$\n$\r$\nDespués usa AIDEX desde el Escritorio o Inicio: abrirá el navegador sin pedir permisos de administrador."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.DataOptions un.ConfirmDataOptions
@@ -37,16 +53,107 @@ Function .onInit
     SetRegView 64
     SetShellVarContext all
     ${DisableX64FSRedirection}
+    ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "InstallLocation"
+    ${If} $0 != ""
+        StrCpy $INSTDIR $0
+    ${EndIf}
+    ReadRegStr $1 HKLM "Software\Classes\aidex-auth\shell\open\command" ""
+    ${If} $1 != ""
+    ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        MessageBox MB_ICONSTOP "Otro programa registra el protocolo local aidex-auth. Se conserva ese registro; AIDEX no se instalará sobre él."
+        Abort
+    ${EndIf}
+    ReadRegStr $1 HKLM "Software\Classes\aidex-pick\shell\open\command" ""
+    ${If} $1 != ""
+    ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        MessageBox MB_ICONSTOP "Otro programa registra el protocolo local aidex-pick. Se conserva ese registro; AIDEX no se instalará sobre él."
+        Abort
+    ${EndIf}
+    ReadRegStr $SelectedPort HKLM "Software\AIDEX" "Port"
+    ${If} $SelectedPort == ""
+        StrCpy $SelectedPort "18090"
+    ${EndIf}
+    StrCpy $ExistingInstall "0"
+    ; SetShellVarContext all makes $APPDATA the common ProgramData location.
+    IfFileExists "$APPDATA\AIDEX\config.json" 0 +2
+        StrCpy $ExistingInstall "1"
 FunctionEnd
+
+Function PortPage
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File "${STAGE}/manage.ps1"
+    nsDialogs::Create 1018
+    Pop $0
+    ${If} $ExistingInstall == "1"
+        ${NSD_CreateLabel} 0 0u 100% 60u "Se detectó una instalación AIDEX. La actualización conservará el puerto y toda la configuración privada existente. Para cambiar el puerto, usa Configurar servidor AIDEX después de instalar."
+        Pop $1
+        nsDialogs::Show
+        Return
+    ${EndIf}
+    ${NSD_CreateLabel} 0 0u 100% 28u "Puerto TCP de AIDEX. Se propone 18090; elige otro si ya lo usa una aplicación distinta."
+    Pop $1
+    ${NSD_CreateText} 0 35u 50% 13u "$SelectedPort"
+    Pop $PortInput
+    ${NSD_CreateLabel} 0 56u 100% 32u "Al actualizar, la configuración privada existente se conserva. Después puedes cambiar el puerto desde Configurar servidor AIDEX en Inicio."
+    Pop $1
+    nsDialogs::Show
+FunctionEnd
+
+Function PortPageLeave
+    ${If} $ExistingInstall == "1"
+        Return
+    ${EndIf}
+    ${NSD_GetText} $PortInput $SelectedPort
+    IntFmt $1 "%d" $SelectedPort
+    ${If} $1 != $SelectedPort
+        MessageBox MB_ICONEXCLAMATION "Introduce un número de puerto sin espacios ni caracteres adicionales."
+        Abort
+    ${EndIf}
+    ${If} $1 < 1
+        MessageBox MB_ICONEXCLAMATION "El puerto debe estar entre 1 y 65535."
+        Abort
+    ${EndIf}
+    ${If} $1 > 65535
+        MessageBox MB_ICONEXCLAMATION "El puerto debe estar entre 1 y 65535."
+        Abort
+    ${EndIf}
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\manage.ps1" -Action CheckPort -InstallRoot "$INSTDIR" -Port $SelectedPort'
+    Pop $0
+    Pop $2
+    ${If} $0 != 0
+        MessageBox MB_ICONEXCLAMATION "No se puede usar ese puerto. $\r$\n$2$\r$\nSelecciona otro puerto."
+        Abort
+    ${EndIf}
+FunctionEnd
+
+!macro ReadAidexLog Prefix
+Function ${Prefix}ReadAidexLog
+    ClearErrors
+    FileOpen $1 $LogPath r
+    IfErrors done
+    read:
+    FileReadUTF16LE $1 $2
+    IfErrors close
+    DetailPrint $2
+    Goto read
+    close:
+    FileClose $1
+    done:
+    DetailPrint "Registro de instalación: $LogPath"
+FunctionEnd
+!macroend
+!insertmacro ReadAidexLog ""
+!insertmacro ReadAidexLog "un."
 
 Function un.DataOptions
     StrCpy $EraseData ""
     nsDialogs::Create 1018
     Pop $0
-    ${NSD_CreateCheckbox} 0 10u 100% 20u "Eliminar los datos de AIBID al desinstalar"
+    ${NSD_CreateCheckbox} 0 10u 100% 20u "Eliminar los datos de AIDEX al desinstalar"
     Pop $EraseCheckbox
     ${NSD_Uncheck} $EraseCheckbox
-    ${NSD_CreateLabel} 0 40u 100% 65u "Se eliminarán la base de datos, los índices, el contenido extraído, los usuarios y la configuración. Tus documentos físicos, incluidas las bibliotecas administradas y cargas, permanecerán intactos en sus rutas.$\r$\n$\r$\nPara usar la licencia en una instalación nueva, desactívala primero desde AIBID. Esta limpieza no libera la activación en el servidor."
+    ${NSD_CreateLabel} 0 40u 100% 65u "Se eliminarán la base de datos, los índices, el contenido extraído, los usuarios y la configuración. Tus documentos físicos, incluidas las bibliotecas administradas y cargas, permanecerán intactos en sus rutas.$\r$\n$\r$\nPara usar la licencia en una instalación nueva, desactívala primero desde AIDEX. Esta limpieza no libera la activación en el servidor."
     Pop $0
     nsDialogs::Show
 FunctionEnd
@@ -55,7 +162,7 @@ Function un.ConfirmDataOptions
     ${NSD_GetState} $EraseCheckbox $0
     StrCpy $EraseData ""
     ${If} $0 == ${BST_CHECKED}
-        MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "¿Eliminar los datos internos de AIBID? Se perderán usuarios, bibliotecas registradas, índices, historial y configuración. Los documentos físicos permanecerán intactos.$\r$\n$\r$\nUna reinstalación comenzará desde cero y requerirá activar la licencia." IDYES confirmed
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "¿Eliminar los datos internos de AIDEX? Se perderán usuarios, bibliotecas registradas, índices, historial y configuración. Los documentos físicos permanecerán intactos.$\r$\n$\r$\nUna reinstalación comenzará desde cero y requerirá activar la licencia." IDYES confirmed
         Abort
         confirmed:
         StrCpy $EraseData "-EraseInternalData"
@@ -66,50 +173,90 @@ Section "Instalar"
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "${STAGE}/manage.ps1"
-    File /oname=gestor-documental-repair.exe "${STAGE}/gestor-documental.exe"
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\manage.ps1" -Action Preflight -InstallRoot "$INSTDIR" -PreflightBinary "$PLUGINSDIR\gestor-documental-repair.exe"'
+    File "${STAGE}/installer-action.ps1"
+    File /oname=aidex-repair.exe "${STAGE}/aidex-server.exe"
+    GetTempFileName $LogPath
+    nsExec::ExecToStack /TIMEOUT=660000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\installer-action.ps1" -ManageScript "$PLUGINSDIR\manage.ps1" -LogPath "$LogPath" -Action Preflight -InstallRoot "$INSTDIR" -PreflightBinary "$PLUGINSDIR\aidex-repair.exe"'
     Pop $0
+    Pop $1
+    Call ReadAidexLog
     ${If} $0 != 0
         Abort "No se pudo preparar la instalación; consulta el detalle."
     ${EndIf}
     SetOutPath "$INSTDIR"
     File /r "${STAGE}/*"
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\manage.ps1" -Action Configure -InstallRoot "$INSTDIR"'
+    GetTempFileName $LogPath
+    nsExec::ExecToStack /TIMEOUT=660000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Configure -InstallRoot "$INSTDIR" -Port $SelectedPort'
     Pop $0
+    Pop $1
+    Call ReadAidexLog
     ${If} $0 != 0
         Abort "La configuración falló. No se inició el servicio. Consulta el detalle."
     ${EndIf}
     WriteUninstaller "$INSTDIR\Desinstalar.exe"
-    CreateDirectory "$SMPROGRAMS\AIBID Pruebas"
-    CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Configurar AIBID Pruebas.lnk" "$INSTDIR\admin.cmd"
-    CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.url"
-    CreateShortCut "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.lnk" "$INSTDIR\AIBID.exe"
-    CreateShortCut "$DESKTOP\AIBID Pruebas.lnk" "$INSTDIR\AIBID.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayName" "AIBID Pruebas"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayVersion" "${VERSION}"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "UninstallString" '$\"$INSTDIR\Desinstalar.exe$\"'
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "DisplayIcon" "$INSTDIR\AIBID.exe,0"
-    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "NoModify" 1
-    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest" "NoRepair" 1
+    CreateDirectory "$SMPROGRAMS\AIDEX"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk" "$INSTDIR\admin.cmd"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar servidor AIDEX.lnk" "$INSTDIR\server-port.cmd"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
+    Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk" "$INSTDIR\AIDEX.exe"
+    CreateShortCut "$DESKTOP\AIDEX.lnk" "$INSTDIR\AIDEX.exe"
+    ; The browser sends only a one-use random ticket to the local launcher.
+    ; The launcher invokes the installed utility with UAC; no path is accepted
+    ; from the URL, and the service API itself never modifies ACLs.
+    ReadRegStr $1 HKLM "Software\Classes\aidex-auth\shell\open\command" ""
+    ${If} $1 != ""
+    ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        Abort "Otro programa registra el protocolo de autorización aidex-auth. No se reemplazó su registro."
+    ${EndIf}
+    WriteRegStr HKLM "Software\Classes\aidex-auth" "" "AIDEX - autorización local de carpetas"
+    WriteRegStr HKLM "Software\Classes\aidex-auth" "URL Protocol" ""
+    WriteRegStr HKLM "Software\Classes\aidex-auth\shell\open\command" "" '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+    ReadRegStr $1 HKLM "Software\Classes\aidex-pick\shell\open\command" ""
+    ${If} $1 != ""
+    ${AndIf} $1 != '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        Abort "Otro programa registra el protocolo de autorización aidex-pick. No se reemplazó su registro."
+    ${EndIf}
+    WriteRegStr HKLM "Software\Classes\aidex-pick" "" "AIDEX - selección local de carpetas"
+    WriteRegStr HKLM "Software\Classes\aidex-pick" "URL Protocol" ""
+    WriteRegStr HKLM "Software\Classes\aidex-pick\shell\open\command" "" '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayName" "AIDEX"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayVersion" "${VERSION}"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "UninstallString" '$\"$INSTDIR\Desinstalar.exe$\"'
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "DisplayIcon" "$INSTDIR\AIDEX.exe,0"
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "NoModify" 1
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX" "NoRepair" 1
 SectionEnd
 
 Section "Uninstall"
     SetRegView 64
     SetShellVarContext all
     ${DisableX64FSRedirection}
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\manage.ps1" -Action Remove -InstallRoot "$INSTDIR" $EraseData'
+    GetTempFileName $LogPath
+    nsExec::ExecToStack /TIMEOUT=660000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Remove -InstallRoot "$INSTDIR" $EraseData'
     Pop $0
+    Pop $1
+    Call un.ReadAidexLog
     ${If} $0 != 0
         Abort "No se pudo completar la preparación de la desinstalación. Consulta el detalle; se conserva el programa."
     ${EndIf}
-    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIBIDTest"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Configurar AIBID Pruebas.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Desinstalar.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.lnk"
-    Delete "$SMPROGRAMS\AIBID Pruebas\Abrir AIBID.url"
-    RMDir "$SMPROGRAMS\AIBID Pruebas"
-    Delete "$DESKTOP\AIBID Pruebas.lnk"
+    ReadRegStr $1 HKLM "Software\Classes\aidex-auth\shell\open\command" ""
+    ${If} $1 == '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        DeleteRegKey HKLM "Software\Classes\aidex-auth"
+    ${EndIf}
+    ReadRegStr $1 HKLM "Software\Classes\aidex-pick\shell\open\command" ""
+    ${If} $1 == '$\"$INSTDIR\AIDEX.exe$\" $\"%1$\"'
+        DeleteRegKey HKLM "Software\Classes\aidex-pick"
+    ${EndIf}
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX"
+    Delete "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Configurar servidor AIDEX.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Desinstalar.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"
+    RMDir "$SMPROGRAMS\AIDEX"
+    Delete "$DESKTOP\AIDEX.lnk"
     ; Packaged files were checked by hash. Keep unknown and modified files.
     RMDir "$INSTDIR\tools"
     RMDir "$INSTDIR\docs"

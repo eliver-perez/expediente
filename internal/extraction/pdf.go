@@ -5,6 +5,7 @@ package extraction
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,18 +21,20 @@ import (
 )
 
 type Options struct {
-	Progress           func(operation string, completed, total int) `json:"-"`
-	Concurrency        Concurrency                                  `json:"concurrency"`
-	FontconfigFile     string                                       `json:"fontconfig_file,omitempty"`
-	TessdataDirectory  string                                       `json:"tessdata_directory,omitempty"`
-	PDFInfo            string                                       `json:"pdfinfo"`
-	PDFText            string                                       `json:"pdftotext"`
-	PDFRender          string                                       `json:"pdftoppm"`
-	Tesseract          string                                       `json:"tesseract"`
-	Workers            int                                          `json:"workers"`
-	MaximumFileMB      int                                          `json:"maximum_file_mb"`
-	MaximumPages       int                                          `json:"maximum_pages"`
-	PageTimeoutSeconds int                                          `json:"page_timeout_seconds"`
+	DisableOCR              bool                                         `json:"-"`
+	MinimumNativeCharacters int                                          `json:"-"`
+	Progress                func(operation string, completed, total int) `json:"-"`
+	Concurrency             Concurrency                                  `json:"concurrency"`
+	FontconfigFile          string                                       `json:"fontconfig_file,omitempty"`
+	TessdataDirectory       string                                       `json:"tessdata_directory,omitempty"`
+	PDFInfo                 string                                       `json:"pdfinfo"`
+	PDFText                 string                                       `json:"pdftotext"`
+	PDFRender               string                                       `json:"pdftoppm"`
+	Tesseract               string                                       `json:"tesseract"`
+	Workers                 int                                          `json:"workers"`
+	MaximumFileMB           int                                          `json:"maximum_file_mb"`
+	MaximumPages            int                                          `json:"maximum_pages"`
+	PageTimeoutSeconds      int                                          `json:"page_timeout_seconds"`
 }
 
 func Defaults() Options {
@@ -61,9 +64,12 @@ func (options Options) Validate() error {
 }
 
 type Page struct {
-	Number int    `json:"page_number"`
-	Method string `json:"extraction_method"`
-	Text   string `json:"text"`
+	Number  int            `json:"page_number"`
+	Method  string         `json:"extraction_method"`
+	Text    string         `json:"text"`
+	Kind    string         `json:"unit_kind"`
+	Label   string         `json:"context_label"`
+	Context map[string]any `json:"context"`
 }
 type limitedOutput struct {
 	bytes.Buffer
@@ -102,11 +108,17 @@ func (options Options) run(ctx context.Context, timeout int, maximum int, progra
 	command.Stdout = stdout
 	command.Stderr = stderr
 	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if processContext.Err() != nil {
 			return nil, domain.Failure("PROCESS_TIMEOUT", "Se agotó el tiempo de extracción.", 409)
 		}
 		if _, err := exec.LookPath(program); err != nil {
 			return nil, domain.Failure("EXTRACTOR_UNAVAILABLE", "Falta una herramienta PDF/OCR configurada.", 409)
+		}
+		if program == options.Tesseract {
+			return nil, domain.Failure("OCR_FAILED", "No se pudo reconocer el texto con OCR.", 409)
 		}
 		return nil, domain.Failure("EXTRACTION_FAILED", "El PDF no pudo procesarse: comprueba formato, cifrado e idiomas instalados.", 409)
 	}
@@ -116,6 +128,10 @@ func (options Options) ValidatePDF(ctx context.Context, documentPath string) (in
 	directory := filepath.Dir(documentPath)
 	info, err := options.run(ctx, options.PageTimeoutSeconds, 1<<20, options.PDFInfo, directory, documentPath)
 	if err != nil {
+		var failure *domain.Error
+		if errors.As(err, &failure) && failure.Code == "EXTRACTION_FAILED" {
+			return 0, domain.Failure("INVALID_PDF", "No se pudo validar el PDF; puede estar dañado o cifrado.", 409)
+		}
 		return 0, err
 	}
 	pageCount := 0
@@ -168,7 +184,11 @@ func (options Options) Prepare(ctx context.Context, documentPath string) ([]Page
 				}
 			}
 			method := "native"
-			if letters < 32 {
+			threshold := options.MinimumNativeCharacters
+			if threshold <= 0 {
+				threshold = 32
+			}
+			if letters < threshold && !options.DisableOCR {
 				method = "pending_ocr"
 			}
 			pages = append(pages, Page{Number: start + index, Method: method, Text: text})

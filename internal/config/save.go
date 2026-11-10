@@ -21,7 +21,7 @@ func Save(path string, configuration Config) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".aibid-config-*")
+	file, err := os.CreateTemp(filepath.Dir(path), ".aidex-config-*")
 	if err != nil {
 		return err
 	}

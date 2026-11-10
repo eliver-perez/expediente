@@ -8,6 +8,7 @@ import (
 	"gestor-documental/db"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"modernc.org/sqlite"
@@ -137,8 +138,8 @@ func TestEmptyMigrationRollbackAndRefusalWithEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.RollbackEmpty(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := database.RollbackEmpty(context.Background()); err == nil {
+		t.Fatal("rollback accepted for a schema newer than the initial H2 schema")
 	}
 	database.Close()
 	database, err = Open(context.Background(), directory)
@@ -215,7 +216,17 @@ func TestUpgradePreservesPopulatedH2AndRefusesDestructiveRollback(t *testing.T) 
 		t.Fatal("rollback destroyed populated H2")
 	}
 	var migrations, evidence int
-	if err = database.Reader.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 8 {
+	entries, err := db.Migrations.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".up.sql") {
+			expected++
+		}
+	}
+	if err = database.Reader.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != expected {
 		t.Fatal("partial down migration", err)
 	}
 	if err = database.Reader.QueryRow("SELECT count(*) FROM audit_events WHERE id='old-audit'").Scan(&evidence); err != nil || evidence != 1 {
@@ -272,6 +283,14 @@ INSERT INTO documents(id,library_id,physical_file_id,original_filename,filename_
 	}
 	if fileID != "old-file" || versionID != "old-version" || extractionID != "old-extraction" || availability != "missing" || metadata != "{}" || !unclassified {
 		t.Fatal("H4 changed H3 identity/classification")
+	}
+	var format, mime, extension, reason string
+	var mismatch bool
+	if err = database.Reader.QueryRow("SELECT document_format,detected_mime,original_extension,extension_mismatch,index_block_reason FROM content_versions WHERE id='old-version'").Scan(&format, &mime, &extension, &mismatch, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if format != "pdf" || mime != "application/pdf" || extension != ".pdf" || mismatch || reason != "" {
+		t.Fatal("multiformat migration changed legacy PDF eligibility")
 	}
 	var text string
 	if err = database.Reader.QueryRow("SELECT page_text FROM pages_fts WHERE pages_fts MATCH 'metalica'").Scan(&text); err != nil || text != "conservación metálica H3" {

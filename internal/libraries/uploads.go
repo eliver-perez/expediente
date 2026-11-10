@@ -12,19 +12,26 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/storage"
 )
 
 type UploadItem struct {
-	ID         string `json:"id"`
-	DocumentID string `json:"document_id"`
-	Filename   string `json:"original_filename"`
-	Status     string `json:"status"`
-	Error      string `json:"error_code"`
-	Size       int64  `json:"size_bytes"`
+	Format          string `json:"format"`
+	ProcessingState string `json:"processing_state"`
+	IndexReason     string `json:"index_block_reason"`
+	CanView         bool   `json:"can_view"`
+	Created         string `json:"created_at"`
+	ID              string `json:"id"`
+	DocumentID      string `json:"document_id"`
+	Filename        string `json:"original_filename"`
+	Status          string `json:"status"`
+	Error           string `json:"error_code"`
+	Size            int64  `json:"size_bytes"`
 }
 type UploadBatch struct {
+	Count     int          `json:"file_count"`
 	ID        string       `json:"id"`
 	LibraryID string       `json:"library_id"`
 	CreatedBy string       `json:"created_by"`
@@ -70,7 +77,7 @@ func (service *Service) CreateBatch(ctx context.Context, principal domain.Princi
 	})
 	return identifier, err
 }
-func (service *Service) Batch(ctx context.Context, principal domain.Principal, identifier string) (UploadBatch, error) {
+func (service *Service) batchHeader(ctx context.Context, principal domain.Principal, identifier string) (UploadBatch, error) {
 	batch := UploadBatch{Items: []UploadItem{}}
 	err := service.Database.Reader.QueryRowContext(ctx, "SELECT id,library_id,created_by,created_at FROM upload_batches WHERE id=?", identifier).Scan(&batch.ID, &batch.LibraryID, &batch.CreatedBy, &batch.Created)
 	if err == sql.ErrNoRows {
@@ -84,6 +91,13 @@ func (service *Service) Batch(ctx context.Context, principal domain.Principal, i
 	}
 	if batch.CreatedBy != principal.User.ID && service.require(ctx, service.Database.Reader, principal, batch.LibraryID, "documents.review") != nil {
 		return UploadBatch{}, notFound()
+	}
+	return batch, nil
+}
+func (service *Service) Batch(ctx context.Context, principal domain.Principal, identifier string) (UploadBatch, error) {
+	batch, err := service.batchHeader(ctx, principal, identifier)
+	if err != nil {
+		return batch, err
 	}
 	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,coalesce(document_id,''),original_filename,status,error_code,size_bytes FROM upload_items WHERE batch_id=? ORDER BY created_at,id", identifier)
 	if err != nil {
@@ -109,14 +123,14 @@ func (service *Service) Batches(ctx context.Context, principal domain.Principal,
 	if err != nil {
 		return result, err
 	}
-	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,library_id,created_by,created_at FROM upload_batches WHERE library_id=? AND created_by=? AND (?='' OR created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51", libraryID, principal.User.ID, after.Time, after.Time, after.Time, after.ID)
+	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,library_id,created_by,created_at,(SELECT count(*) FROM upload_items u WHERE u.batch_id=upload_batches.id) FROM upload_batches WHERE library_id=? AND created_by=? AND (?='' OR created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51", libraryID, principal.User.ID, after.Time, after.Time, after.Time, after.ID)
 	if err != nil {
 		return result, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item UploadBatch
-		if err = rows.Scan(&item.ID, &item.LibraryID, &item.CreatedBy, &item.Created); err != nil {
+		if err = rows.Scan(&item.ID, &item.LibraryID, &item.CreatedBy, &item.Created, &item.Count); err != nil {
 			return result, err
 		}
 		item.Items = []UploadItem{}
@@ -182,8 +196,8 @@ func (service *Service) openUpload(ctx context.Context, fileID string) (*os.File
 // the physical file, document, content version and extraction job atomically.
 func (service *Service) Upload(ctx context.Context, principal domain.Principal, batchID, clientID, filename string, reader io.Reader, finish func() error, metadata domain.RequestMetadata) (UploadItem, error) {
 	result := UploadItem{}
-	if !validClientKey(clientID) || utf8.RuneCountInString(filename) > 250 || strings.ContainsAny(filename, "/\\\x00\r\n") || !strings.EqualFold(filepath.Ext(filename), ".pdf") {
-		return result, invalid("Carga un archivo PDF con nombre válido.")
+	if !validClientKey(clientID) || strings.TrimSpace(filename) == "" || utf8.RuneCountInString(filename) > 250 || strings.ContainsAny(filename, "/\\:\x00\r\n") || strings.TrimRight(filename, " .") != filename {
+		return result, invalid("Carga un documento con nombre válido.")
 	}
 	batch, err := service.Batch(ctx, principal, batchID)
 	if err != nil {
@@ -201,7 +215,11 @@ func (service *Service) Upload(ctx context.Context, principal domain.Principal, 
 	if err = service.prepareUploads(ctx); err != nil {
 		return result, err
 	}
-	maximum := int64(service.Identity.Config.Indexing.MaximumFileMB) << 20
+	configuration, err := service.fileConfiguration(ctx, service.Database.Reader, batch.LibraryID)
+	if err != nil {
+		return result, err
+	}
+	maximum := int64(configuration.Effective.MaximumFileMB) << 20
 	available, err := storage.AvailableBytes(service.Identity.Config.PrivateUploadDirectory())
 	if err != nil {
 		return result, privateUploadError()
@@ -210,7 +228,7 @@ func (service *Service) Upload(ctx context.Context, principal domain.Principal, 
 		return result, domain.Failure("UPLOAD_SPACE", "No hay espacio suficiente para recibir la carga.", 507)
 	}
 	identifier := domain.NewID()
-	locator := identifier + ".pdf"
+	locator := identifier + ".document"
 	replay := false
 	err = service.write(ctx, principal, batch.LibraryID, "documents.upload", func(transaction *sql.Tx, current domain.Principal) error {
 		if err := service.requireManaged(ctx, transaction, batch.LibraryID); err != nil {
@@ -297,7 +315,7 @@ func (service *Service) Upload(ctx context.Context, principal domain.Principal, 
 		return result, invalid("La transferencia no se completó.")
 	}
 	if size > maximum {
-		return result, domain.Failure("FILE_SIZE_LIMIT", "El PDF supera el tamaño máximo configurado.", 413)
+		return result, domain.Failure("FILE_SIZE_LIMIT", "El archivo supera el tamaño máximo configurado.", 413)
 	}
 	if syncErr != nil || closeErr != nil {
 		return result, privateUploadError()
@@ -314,14 +332,22 @@ func (service *Service) Upload(ctx context.Context, principal domain.Principal, 
 	if err != nil {
 		return result, privateUploadError()
 	}
-	header := make([]byte, 5)
-	_, err = io.ReadFull(probe, header)
+	detection, err := documentformat.Detect(ctx, probe, filename)
 	probe.Close()
-	if err != nil || string(header) != "%PDF-" {
-		return result, invalid("El contenido no es un PDF válido.")
+	if _, saveErr := service.Database.Writer.ExecContext(ctx, "UPDATE upload_items SET detection_json=? WHERE id=? AND status='receiving'", encode(detection), identifier); saveErr != nil {
+		return result, saveErr
 	}
-	if _, err = service.Identity.Config.Indexing.ValidatePDF(ctx, filepath.Join(service.Identity.Config.PrivateUploadDirectory(), locator+".part")); err != nil {
+	if err == nil {
+		err = configuration.Effective.Admit(detection, size)
+	}
+	if err != nil {
+		_ = service.failUpload(identifier, failureCode(err))
 		return result, err
+	}
+	if detection.Format == "pdf" {
+		if _, err = service.Identity.Config.Indexing.ValidatePDF(ctx, filepath.Join(service.Identity.Config.PrivateUploadDirectory(), locator+".part")); err != nil {
+			return result, err
+		}
 	}
 	if err = root.Rename(locator+".part", locator); err != nil {
 		return result, privateUploadError()
@@ -340,6 +366,13 @@ func (service *Service) Upload(ctx context.Context, principal domain.Principal, 
 	digest := fmt.Sprintf("%x", hash.Sum(nil))
 	err = service.write(ctx, principal, batch.LibraryID, "documents.upload", func(transaction *sql.Tx, current domain.Principal) error {
 		if err := service.requireManaged(ctx, transaction, batch.LibraryID); err != nil {
+			return err
+		}
+		live, err := service.fileConfiguration(ctx, transaction, batch.LibraryID)
+		if err != nil {
+			return err
+		}
+		if err = live.Effective.Admit(detection, size); err != nil {
 			return err
 		}
 		if _, err := transaction.ExecContext(ctx, "INSERT INTO physical_files(id,library_id,storage_source,os_identity_key,availability,integrity_status,current_content_version_id,created_at) VALUES(?,?,'managed',?,'staged','verified',?,?)", fileID, batch.LibraryID, identity, versionID, now()); err != nil {
@@ -362,10 +395,16 @@ func (service *Service) Upload(ctx context.Context, principal domain.Principal, 
 		if count != 1 {
 			return conflict()
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,'{}','queued',?,?)", jobID, batch.LibraryID, fileID, versionID, "upload:"+identifier, now(), now()); err != nil {
+		reason := live.Effective.IndexReason(detection, size)
+		if err = saveDetection(ctx, transaction, versionID, detection, reason); err != nil {
 			return err
 		}
-		return record(ctx, transaction, current, metadata, "document.uploaded", batch.LibraryID, documentID, map[string]any{"batch_id": batchID, "size_bytes": size, "sha256": digest})
+		if reason == "" {
+			if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,?,'extract',?,?,'{}','queued',?,?)", jobID, batch.LibraryID, fileID, versionID, "upload:"+identifier, now(), now()); err != nil {
+				return err
+			}
+		}
+		return record(ctx, transaction, current, metadata, "document.uploaded", batch.LibraryID, documentID, map[string]any{"batch_id": batchID, "size_bytes": size, "sha256": digest, "detection": detection, "index_block_reason": reason})
 	})
 	if err != nil {
 		return result, err

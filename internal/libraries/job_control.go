@@ -3,10 +3,49 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"time"
 
+	"gestor-documental/internal/diagnostics"
 	"gestor-documental/internal/domain"
 )
+
+// A completed operation must not be abandoned in running/generating when its
+// final database write fails. Retry only the journal, never extraction/conversion.
+// SQLite bounds lock waits; the context cancels writes/backoff on shutdown.
+// Do not impose a small deadline on startup cleanup of a large preview cache.
+// Shutdown leaves restart recovery
+// in charge. Log once outside SQLite because the database itself may be full.
+func retryWorkerWrite(ctx context.Context, details diagnostics.Context, write func(context.Context) error) bool {
+	details = details.Safe()
+	delay := time.Second
+	failed := false
+	for ctx.Err() == nil {
+		err := write(ctx)
+		if err == nil {
+			if failed {
+				slog.Info("worker state recovered", "code", "WORKER_STATE_RECOVERED", "context", details)
+			}
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		if !failed {
+			slog.Error("worker state could not be saved; retrying journal", "code", "WORKER_STATE_WRITE_FAILED", "context", details)
+			failed = true
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+		delay = min(delay*2, 30*time.Second)
+	}
+	return false
+}
 
 func (service *Service) reportProgress(ctx context.Context, job Job, operation, relative string, completed, total int) error {
 	var totalValue any
@@ -35,6 +74,12 @@ func (service *Service) monitorCancellation(ctx context.Context, job Job, cancel
 	}
 }
 func (service *Service) CancelJob(ctx context.Context, principal domain.Principal, jobID string, metadata domain.RequestMetadata) error {
+	return service.stopJob(ctx, principal, jobID, metadata, false)
+}
+func (service *Service) PauseJob(ctx context.Context, principal domain.Principal, jobID string, metadata domain.RequestMetadata) error {
+	return service.stopJob(ctx, principal, jobID, metadata, true)
+}
+func (service *Service) stopJob(ctx context.Context, principal domain.Principal, jobID string, metadata domain.RequestMetadata, pause bool) error {
 	job, err := service.Job(ctx, principal, jobID)
 	if err != nil {
 		return err
@@ -54,8 +99,22 @@ func (service *Service) CancelJob(ctx context.Context, principal domain.Principa
 			return err
 		}
 		if job.Kind == "scan" {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO root_scan_controls VALUES(?,1) ON CONFLICT(root_id) DO UPDATE SET paused=1", target); err != nil {
-				return err
+			if pause {
+				if _, err := tx.ExecContext(ctx, "INSERT INTO root_scan_controls VALUES(?,1) ON CONFLICT(root_id) DO UPDATE SET paused=1", target); err != nil {
+					return err
+				}
+			} else {
+				if _, err := tx.ExecContext(ctx, "DELETE FROM root_scan_controls WHERE root_id=?", target); err != nil {
+					return err
+				}
+				// The terminated traversal is complete for scheduling purposes. A
+				// future interval or an explicit manual request can start a new one.
+				if _, err := tx.ExecContext(ctx, "UPDATE storage_roots SET last_scan_at=? WHERE id=?", now(), target); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE root_scans SET status='superseded',completed_at=? WHERE root_id=? AND status IN ('running','paused') AND NOT EXISTS(SELECT 1 FROM jobs WHERE job_type='scan' AND target_version=? AND status='running')", now(), target, target); err != nil {
+					return err
+				}
 			}
 			if _, err := tx.ExecContext(ctx, "UPDATE jobs SET status='cancelled',last_error_code='USER_CANCELLED' WHERE job_type='scan' AND target_version=? AND status IN ('queued','retry_wait','paused')", target); err != nil {
 				return err
@@ -64,7 +123,11 @@ func (service *Service) CancelJob(ctx context.Context, principal domain.Principa
 		if _, err := tx.ExecContext(ctx, "UPDATE jobs SET status='cancelled',last_error_code='USER_CANCELLED' WHERE id=? AND status<>'running'", jobID); err != nil {
 			return err
 		}
-		return record(ctx, tx, current, metadata, "indexing.cancel_requested", job.LibraryID, "", map[string]any{"job_id": jobID})
+		action := "indexing.cancel_requested"
+		if pause {
+			action = "indexing.pause_requested"
+		}
+		return record(ctx, tx, current, metadata, action, job.LibraryID, "", map[string]any{"job_id": jobID})
 	})
 }
 func (service *Service) RetryScanErrors(ctx context.Context, principal domain.Principal, rootID string, metadata domain.RequestMetadata) error {
@@ -108,7 +171,7 @@ func (service *Service) RetryScanErrors(ctx context.Context, principal domain.Pr
 			return err
 		}
 		id := domain.NewID()
-		if _, err = tx.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'scan',?, ?,?,'queued',?,?)", id, root.LibraryID, rootID, id, encode(map[string]any{"paths": paths}), now(), now()); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'scan',?, ?,?,'queued',?,?)", id, root.LibraryID, rootID, id, encode(map[string]any{"paths": paths, "manual": true}), now(), now()); err != nil {
 			return err
 		}
 		return record(ctx, tx, current, metadata, "indexing.errors_retry_requested", root.LibraryID, "", map[string]any{"root_id": rootID, "paths_count": len(paths)})

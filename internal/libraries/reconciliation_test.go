@@ -4,6 +4,7 @@ package libraries
 
 import (
 	"context"
+	"fmt"
 	"gestor-documental/internal/domain"
 	"github.com/fsnotify/fsnotify"
 	"os"
@@ -61,6 +62,37 @@ func TestRootRequestsCoalesceAndRecoverAfterRestart(t *testing.T) {
 	requireNoError(t, err)
 	if saved.Interval != 1800 {
 		t.Fatal("interval not preserved")
+	}
+}
+
+func TestDailyPeriodicFailureDoesNotScheduleHundredsOfScans(t *testing.T) {
+	service, principal, directory := fixture(t)
+	ctx := context.Background()
+	library := addLibrary(t, service, principal, "Daily cadence")
+	path := filepath.Join(directory, "files")
+	requireNoError(t, os.Mkdir(path, 0700))
+	root := addRoot(t, service, principal, library, path)
+	_, err := service.Database.Writer.Exec("UPDATE jobs SET status='succeeded' WHERE job_type='scan' AND target_version=?", root)
+	requireNoError(t, err)
+	_, err = service.Database.Writer.Exec("UPDATE storage_roots SET last_scan_at=? WHERE id=?", domain.Timestamp(time.Now().Add(-48*time.Hour)), root)
+	requireNoError(t, err)
+	newRuntime := func() *Runtime {
+		return &Runtime{Service: service, directories: map[string]string{}, dirty: map[string]time.Time{}, degraded: map[string]string{}, watchInitialized: map[string]bool{root: true}}
+	}
+	runtime := newRuntime()
+	runtime.scheduleOnce(ctx)
+	job, err := service.claimLane(ctx, "scan")
+	requireNoError(t, err)
+	requireNoError(t, service.finish(ctx, job, scanFailure("SCAN_PARTIAL")))
+	for i := 0; i < 120; i++ {
+		runtime.scheduleOnce(ctx)
+	}
+	// A fresh runtime represents a restart; the cadence is in SQLite, not RAM.
+	newRuntime().scheduleOnce(ctx)
+	var count int
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT count(*) FROM jobs WHERE target_version=? AND job_type='scan' AND json_extract(payload_json,'$.periodic')=1", root).Scan(&count))
+	if count != 1 {
+		t.Fatalf("periodic scans after 121 ticks: %d", count)
 	}
 }
 
@@ -162,7 +194,7 @@ func TestRetirementAndIndexRemovalPreserveOriginalAndHistory(t *testing.T) {
 	if retired.Status != "retired" || retired.WatchMode != "paused" || query(t, service, principal, library, "estructura").Count != 1 {
 		t.Fatal("retirement lost index or kept watcher", retired)
 	}
-	requireNoError(t, service.ConfigureRoot(ctx, principal, root, true, 86400, retired.Revision, domain.RequestMetadata{}))
+	requireNoError(t, service.ResumeRoot(ctx, principal, root, retired.Revision, domain.RequestMetadata{}))
 	requireNoError(t, service.RemoveIndex(ctx, principal, doc.ID, "Prueba", doc.Revision, domain.RequestMetadata{}))
 	requireNoError(t, service.Scan(ctx, root, 256<<20, nil))
 	if query(t, service, principal, library, "estructura").Count != 0 {
@@ -236,4 +268,67 @@ func TestRootWatchRegistrationDoesNotHideIncompleteCoverage(t *testing.T) {
 	if saved.WatchMode != "polling" || saved.LastError != "WATCH_LIMIT" {
 		t.Fatal("registering only the root hid incomplete coverage", saved)
 	}
+}
+
+// Hold the watcher coordinator to keep claimed scans alive without slow disks,
+// large fixtures or test-only hooks. This exercises the production Start pool.
+func TestRuntimeReconcilesDifferentRootsConcurrentlyWithPerRootExclusion(t *testing.T) {
+	service, admin, directory := fixture(t)
+	ctx := context.Background()
+	library := addLibrary(t, service, admin, "Concurrent roots")
+	allowContentFormats(t, service, admin)
+	path := filepath.Join(directory, "first")
+	copyFixture(t, filepath.Join(path, "first.txt"), "sample.txt")
+	first := addRoot(t, service, admin, library, path)
+	policy, err := service.ProcessingPolicy(ctx)
+	requireNoError(t, err)
+	policy.Paused = true
+	requireNoError(t, service.ConfigureProcessingPolicy(ctx, admin, policy, domain.RequestMetadata{}))
+	runtime, err := service.Start(ctx)
+	requireNoError(t, err)
+	defer runtime.Close()
+	runtime.mutex.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			runtime.mutex.Unlock()
+		}
+	}()
+	policy, err = service.ProcessingPolicy(ctx)
+	requireNoError(t, err)
+	policy.Paused = false
+	requireNoError(t, service.ConfigureProcessingPolicy(ctx, admin, policy, domain.RequestMetadata{}))
+	awaitCount := func(query string, expected int) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			var count int
+			requireNoError(t, service.Database.Reader.QueryRow(query).Scan(&count))
+			if count == expected {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("count %d, want %d: %s", count, expected, query)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	awaitCount("SELECT count(*) FROM jobs WHERE job_type='scan' AND status='running'", 1)
+	for i := 0; i < 4; i++ {
+		folder := filepath.Join(directory, fmt.Sprintf("added-%d", i))
+		copyFixture(t, filepath.Join(folder, "added.txt"), "sample.txt")
+		addRoot(t, service, admin, library, folder)
+		requireNoError(t, service.Verify(ctx, admin, library, first, domain.RequestMetadata{}))
+	}
+	awaitCount("SELECT count(*) FROM jobs WHERE job_type='scan' AND status='running'", 4)
+	awaitCount("SELECT count(*) FROM jobs WHERE job_type='scan' AND status='queued'", 1)
+	var firstJobs int
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT count(*) FROM jobs WHERE job_type='scan' AND target_version=?", first).Scan(&firstJobs))
+	if firstJobs != 1 {
+		t.Fatal("same root scheduled twice", firstJobs)
+	}
+	runtime.mutex.Unlock()
+	locked = false
+	awaitCount("SELECT count(DISTINCT root_id) FROM root_scans WHERE status='complete'", 5)
+	awaitCount("SELECT count(*) FROM physical_files WHERE extraction_freshness='current'", 5)
 }

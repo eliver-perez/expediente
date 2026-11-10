@@ -9,10 +9,10 @@ frontend:
 	npm --prefix web run build
 
 build: frontend
-	$(GO) build -trimpath -o build/gestor-documental ./cmd/gestor-documental
+	$(GO) build -trimpath -o build/aidex-server ./cmd/gestor-documental
 
 build-dev: frontend
-	$(GO) build -tags development -trimpath -o build/gestor-documental-dev ./cmd/gestor-documental
+	$(GO) build -tags development -trimpath -o build/aidex-server-dev ./cmd/gestor-documental
 
 test:
 	$(GO) test -race ./...
@@ -28,7 +28,7 @@ check: frontend
 test-e2e: frontend
 	npm --prefix web run test:e2e
 
-# Internal H7 previews: isolated service/data, production licensing, no release signing.
+# AIDEX installers: production identity/licensing; release signing is separate.
 installer-macos: frontend
 	python3 scripts/build_installers.py --target macos
 

@@ -1,0 +1,24 @@
+?   	gestor-documental/cmd/aidex-folder-picker	[no test files]
+ok  	gestor-documental/cmd/gestor-documental	0.589s
+ok  	gestor-documental/cmd/macos-folder-helper	(cached)
+?   	gestor-documental/db	[no test files]
+?   	gestor-documental/internal/audit	[no test files]
+?   	gestor-documental/internal/backups	[no test files]
+ok  	gestor-documental/internal/buildinfo	(cached)
+ok  	gestor-documental/internal/config	(cached)
+?   	gestor-documental/internal/diagnostics	[no test files]
+ok  	gestor-documental/internal/documentformat	(cached)
+?   	gestor-documental/internal/domain	[no test files]
+ok  	gestor-documental/internal/extraction	(cached)
+ok  	gestor-documental/internal/folderpicker	0.785s
+ok  	gestor-documental/internal/httpapi	(cached)
+ok  	gestor-documental/internal/identity	(cached)
+ok  	gestor-documental/internal/launcher	(cached)
+ok  	gestor-documental/internal/libraries	(cached)
+ok  	gestor-documental/internal/licensing	(cached)
+ok  	gestor-documental/internal/macosfolders	(cached)
+ok  	gestor-documental/internal/maintenance	(cached)
+ok  	gestor-documental/internal/network	(cached)
+ok  	gestor-documental/internal/previews	(cached)
+ok  	gestor-documental/internal/storage	(cached)
+ok  	gestor-documental/internal/windowsfolders	(cached)

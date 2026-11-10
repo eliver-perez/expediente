@@ -1,0 +1,17 @@
+{
+  "result": "PASS",
+  "package": "/Applications/XAMPP/xamppfiles/htdocs/expediente/dist/aidex-1.0.0-macos-destino-20261030/AIDEX-1.0.0-macOS-arm64.pkg",
+  "size_bytes": 10038213,
+  "sha256": "21e1bd63906e190a5324c5dc6e776a15de46e3ba19e0e08e58872be0b34d66a0",
+  "manifest_files_verified": 41,
+  "program_arguments": [
+    "/Library/Application Support/AIDEX/bin/aidex-server",
+    "serve",
+    "--config",
+    "/Library/Application Support/AIDEX/data/config.json"
+  ],
+  "version": "AIDEX 1.0.0 (production; darwin/arm64)",
+  "authorization_app": "present; aidex-auth; icon; ad-hoc signature verified",
+  "graphical_uninstaller": "present; icon; ad-hoc signature verified",
+  "native_installation": false
+}

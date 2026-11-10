@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+if [ "$(id -u)" -ne 0 ]; then exec sudo "$0"; fi
+. /usr/lib/aidex/profile.sh
+aidex_select_profile
+ERASE=no
+echo 'Por defecto se conservarán los datos de AIDEX.'
+printf '¿Eliminar base de datos, índices, texto extraído y configuración? [s/N]: '
+read -r ANSWER || ANSWER=no
+case "$ANSWER" in
+    s|S|si|sí)
+        echo 'Se perderán usuarios, bibliotecas registradas, historial y activación local.'
+        echo 'Todos los documentos físicos, incluidas cargas privadas, permanecerán intactos.'
+        printf 'Escribe ELIMINAR para confirmar: '
+        read -r ANSWER || ANSWER=no
+        [ "$ANSWER" != ELIMINAR ] || ERASE=yes ;;
+esac
+systemctl stop "$UNIT"
+if [ -f "$CONFIG" ]; then
+    "$BINARY" check-state --config "$CONFIG"
+    if [ "$ERASE" = yes ]; then
+        "$BINARY" erase-internal-data --config "$CONFIG" --confirm-erase-internal-data
+        # Ubuntu stores these package-owned markers next to state, while the
+        # configuration is in /etc. Leave all other files and directories intact.
+        rm -f "$DATA/service-enabled" "$DATA/package-version"
+    fi
+fi
+apt-get remove aidex

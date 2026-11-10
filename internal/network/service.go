@@ -1,4 +1,4 @@
-// Package network owns the HTTP listener and read-only operating system diagnostics.
+// Package network owns the HTTP listener and operating system diagnostics.
 package network
 
 import (
@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 
@@ -92,31 +93,6 @@ func listen(configuration config.Config) (net.Listener, error) {
 	return net.Listen(protocol, configuration.ListenAddress)
 }
 
-// BSD may allow a wildcard listener beside a listener bound to a specific IP.
-// Binding alone therefore cannot establish that every advertised URL is ours.
-// Probe only this machine's addresses, on our configured port, before binding.
-func checkLANPort(address string) error {
-	_, port, _ := net.SplitHostPort(address)
-	available, err := interfaces(port)
-	if err != nil {
-		return err
-	}
-	available = append(available, Interface{Address: "127.0.0.1"})
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	for _, device := range available {
-		connection, err := (&net.Dialer{Timeout: 250 * time.Millisecond}).DialContext(ctx, "tcp4", net.JoinHostPort(device.Address, port))
-		if err == nil {
-			_ = connection.Close()
-			return fmt.Errorf("configured port already accepts connections on %s", device.Address)
-		}
-		if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-			return fmt.Errorf("could not verify configured port availability")
-		}
-	}
-	return nil
-}
-
 func mode(configuration config.Config) string {
 	if configuration.NetworkMode != "" {
 		return configuration.NetworkMode
@@ -138,9 +114,23 @@ func (s *Service) LocalOnly() bool {
 	return mode(s.configuration) == "local"
 }
 
-// Apply changes only the listener. Indexing, sessions and license jobs continue.
-// The requested port is deliberately fixed for 1.0, preserving installed shortcuts.
+// Apply preserves the current port for callers changing only the access mode.
 func (s *Service) Apply(selected, expectedRevision string) error {
+	_, raw, _ := net.SplitHostPort(s.currentAddress())
+	port, _ := strconv.Atoi(raw)
+	return s.ApplyPort(selected, port, expectedRevision)
+}
+
+func (s *Service) currentAddress() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.configuration.ListenAddress
+}
+
+// ApplyPort changes the listener without restarting indexing or sessions. A new
+// port can be bound before the old listener closes; the response on the old
+// connection remains available long enough to tell the browser the new URL.
+func (s *Service) ApplyPort(selected string, port int, expectedRevision string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || s.listener == nil {
@@ -148,6 +138,9 @@ func (s *Service) Apply(selected, expectedRevision string) error {
 	}
 	if selected != "local" && selected != "lan" {
 		return domain.Failure("INVALID_REQUEST", "Selecciona acceso local o desde la red.", 422)
+	}
+	if port < 1 || port > 65535 {
+		return domain.Failure("INVALID_REQUEST", "El puerto debe estar entre 1 y 65535.", 422)
 	}
 	if mode(s.configuration) == "custom" {
 		return domain.Failure("NETWORK_CUSTOM", "Esta instalación utiliza una configuración HTTPS o de red personalizada. Se conserva su configuración actual.", 409)
@@ -160,20 +153,21 @@ func (s *Service) Apply(selected, expectedRevision string) error {
 		return domain.Failure("NETWORK_CONFIG_READ", "No se pudo leer la configuración privada. Se conserva el acceso actual.", 500)
 	}
 	if !reflect.DeepEqual(disk, s.configuration) {
-		return domain.Failure("REVISION_CONFLICT", "El archivo de configuración cambió fuera de AIBID. Reinicia el servicio para cargarlo.", 409)
+		return domain.Failure("REVISION_CONFLICT", "El archivo de configuración cambió fuera de AIDEX. Reinicia el servicio para cargarlo.", 409)
 	}
-	if mode(s.configuration) == selected {
+	_, oldPort, _ := net.SplitHostPort(s.configuration.ListenAddress)
+	if mode(s.configuration) == selected && oldPort == strconv.Itoa(port) {
 		return nil
 	}
 	old := s.configuration
 	next := old
 	next.NetworkMode = selected
-	_, port, _ := net.SplitHostPort(old.ListenAddress)
 	host := "127.0.0.1"
 	if selected == "lan" {
 		host = "0.0.0.0"
 	}
-	next.ListenAddress = net.JoinHostPort(host, port)
+	next.ListenAddress = net.JoinHostPort(host, strconv.Itoa(port))
+	next.PublicURL = "http://127.0.0.1:" + strconv.Itoa(port)
 	if err := next.Validate(); err != nil {
 		return err
 	}
@@ -182,21 +176,50 @@ func (s *Service) Apply(selected, expectedRevision string) error {
 	// only acceptance, bind the candidate, then persist. Roll back on either
 	// failure; accepted requests drain after their response, including this PUT.
 	previousServer := s.server
-	_ = s.listener.Close()
-	defer s.drain(previousServer)
+	samePort := oldPort == strconv.Itoa(port)
+	if samePort {
+		_ = s.listener.Close()
+		defer s.drain(previousServer)
+	}
 	listener, err := listen(next)
 	if err != nil {
-		if restoreErr := s.restore(old); restoreErr != nil {
-			return restoreErr
+		if samePort {
+			if restoreErr := s.restore(old); restoreErr != nil {
+				return restoreErr
+			}
 		}
-		return domain.Failure("NETWORK_PORT_UNAVAILABLE", "El puerto no está disponible en todas las interfaces o faltan permisos. Se restauró el acceso anterior.", 409)
+		if errors.Is(err, errPortInspection) {
+			return domain.Failure("NETWORK_PORT_CHECK_FAILED", "Windows no permitió comprobar los puertos en escucha. Se restauró el acceso anterior.", 409)
+		}
+		if errors.Is(err, errPortOccupied) {
+			return domain.Failure("NETWORK_PORT_IN_USE", "Otro servicio ya utiliza el puerto de AIDEX. Se restauró el acceso anterior.", 409)
+		}
+		return domain.Failure("NETWORK_PORT_UNAVAILABLE", "No se pudo abrir el puerto de AIDEX en la dirección solicitada. Se restauró el acceso anterior.", 409)
 	}
 	if err = config.Save(s.path, next); err != nil {
 		_ = listener.Close()
-		if restoreErr := s.restore(old); restoreErr != nil {
-			return restoreErr
+		if samePort {
+			if restoreErr := s.restore(old); restoreErr != nil {
+				return restoreErr
+			}
 		}
 		return domain.Failure("NETWORK_CONFIG_WRITE", "No se pudo guardar la configuración privada. Se restauró el acceso anterior; revisa los permisos del servicio.", 500)
+	}
+	if err = publishEndpoint(s.path, next.PublicURL); err != nil {
+		_ = listener.Close()
+		if saveErr := config.Save(s.path, old); saveErr != nil {
+			return domain.Failure("NETWORK_RESTART_REQUIRED", "No se pudo restaurar la configuración anterior. Ejecuta Configurar servidor AIDEX.", 503)
+		}
+		if samePort {
+			if restoreErr := s.restore(old); restoreErr != nil {
+				return restoreErr
+			}
+		}
+		return domain.Failure("NETWORK_LAUNCHER_WRITE", "No se pudo actualizar el lanzador. Se conservó el puerto anterior.", 500)
+	}
+	if !samePort {
+		_ = s.listener.Close()
+		defer s.drain(previousServer)
 	}
 	s.configuration = next
 	s.serve(listener, next)
@@ -213,7 +236,7 @@ func (s *Service) restore(configuration config.Config) error {
 		case s.errors <- err:
 		default:
 		}
-		return domain.Failure("NETWORK_RESTART_REQUIRED", "Otro proceso ocupó el puerto durante el cambio. La configuración anterior se conserva; reinicia AIBID cuando el puerto esté libre.", 503)
+		return domain.Failure("NETWORK_RESTART_REQUIRED", "Otro proceso ocupó el puerto durante el cambio. La configuración anterior se conserva; reinicia AIDEX cuando el puerto esté libre.", 503)
 	}
 	s.serve(listener, configuration)
 	return nil

@@ -10,7 +10,7 @@ import (
 
 // Diagnose uses the same restricted environment as extraction, including bundled languages.
 func (options Options) Diagnose(ctx context.Context) ([]string, error) {
-	directory, err := os.MkdirTemp("", "aibid-doctor-")
+	directory, err := os.MkdirTemp("", "aidex-doctor-")
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func (options Options) Diagnose(ctx context.Context) ([]string, error) {
 
 // DiagnoseSamples validates real extraction using the two shipped, non-sensitive PDFs.
 func (options Options) DiagnoseSamples(ctx context.Context, sourceDirectory string) error {
-	directory, err := os.MkdirTemp("", "aibid-pdf-check-")
+	directory, err := os.MkdirTemp("", "aidex-pdf-check-")
 	if err != nil {
 		return err
 	}

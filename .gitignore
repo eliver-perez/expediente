@@ -31,3 +31,4 @@ coverage.out
 !/internal/httpapi/assets/.gitkeep
 # Los vectores públicos de desarrollo futuros usarán nombres .json/.txt
 # explícitos; nunca una excepción global para claves o licencias reales.
+INDAUTOR_AIDEX_1.0.0/

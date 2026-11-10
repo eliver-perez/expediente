@@ -272,3 +272,96 @@ Las suites Go normal/desarrollo, el detector de carreras de las áreas afectadas
 pasan. Ver decisiones, archivos y comprobaciones manuales en [CIERRE-1.0.md](CIERRE-1.0.md).
 Se conserva la versión base del canal de pruebas; el cierre comercial y la validación nativa en los
 sistemas destino siguen dependiendo de las pruebas indicadas en el informe.
+
+## AIBID 2.0 — fase 1 (2026-10-02)
+
+Base multiformato PDF/DOCX/XLSX/TXT/CSV sobre los servicios existentes. Catálogo y validación
+de contenido centralizados, reglas independientes para almacenamiento/indexación con herencia
+por campo, admisión segura, omisiones vinculadas y descarga del original. Migración aditiva 9
+con instantánea SQLite previa. Conserva PDF/OCR, usuarios, licencias y expedientes.
+[Archivos, decisiones, validación, límites y pruebas manuales](AIBID-2.0-FASE-1.md).
+La fase 2 y sus extractores quedan pendientes de autorización expresa.
+
+## AIBID 2.0 — fase 2 (2026-10-03)
+
+Autorizada por el propietario. Registro central de extractores y extracción estática
+DOCX/XLSX/TXT/CSV, conservando las etapas PDF/OCR existentes y sus grupos de workers.
+Los resultados incluyen contexto, versión, fecha, formato, advertencias y contadores.
+Migración aditiva 10 con respaldo previo; no reconstruye índices ni modifica originales.
+Las reglas actuales se conservan y los documentos sin primera extracción se encolan
+cuando su configuración permite indexarlos.
+[Archivos, decisiones, validación, límites y pruebas manuales](AIBID-2.0-FASE-2.md).
+La fase 3 queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 3 (2026-10-04)
+
+Autorizada junto con las correcciones de Word, Excel e iconos de la fase 2.
+Pausa persistente de nuevas tareas, presupuestos por trabajo, espera creciente,
+tiempo por documento, aislamiento y diagnósticos claros sobre las colas existentes.
+Migración aditiva 11 con respaldo previo. Word abre su primera unidad con texto;
+Excel admite las partes válidas de impresión sin habilitar binarios arbitrarios.
+Tres documentos reales comprobados; fixtures sintéticos para la regresión.
+[Archivos, decisiones, validación y pruebas manuales](AIBID-2.0-FASE-3.md).
+La fase 4 (previews y caché) queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 4 (2026-10-04)
+
+Autorizada por el propietario. Vistas PDF de DOCX/XLSX bajo demanda con LibreOffice
+opcional, proceso independiente, copia privada y perfil sin macros ni referencias
+externas. Caché limitada con LRU real, caducidad, uso visible, limpieza manual e
+invalidación por original/generador. No crea documentos ni modifica el índice.
+Migración aditiva 12 con respaldo previo y actualización desde fase 3.
+[Archivos, conversor, validación y pruebas manuales](AIBID-2.0-FASE-4.md).
+La fase 5 queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 5 (2026-10-05)
+
+Autorizada por el propietario, incluyendo reconciliaciones simultáneas por carpeta.
+Filtros por formato detectado, contexto estructurado en resultados, reindexación
+individual con comprobación de tipo y hash, historial y publicación atómica del
+índice. Hasta cuatro recorridos de carpetas distintas; coalescencia y exclusión
+por raíz conservadas. Mantiene el esquema 12 y los datos de la fase 4.
+[Archivos, validación y pruebas manuales](AIBID-2.0-FASE-5.md).
+La fase 6 queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 6
+
+Configuración avanzada, herencia por biblioteca, automatización, OCR y watcher.
+Unificación de seis acordeones e Historial de cargas paginado. Migración aditiva 13.
+Detalle y evidencia en [AIBID-2.0-FASE-6.md](AIBID-2.0-FASE-6.md).
+La fase 7 permanece pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 7 (2026-10-06)
+
+Autorizada por el propietario. Panel general, indicadores agregados y registro
+operacional independiente de Auditoría, con filtros, revisión y diagnóstico seguro
+para soporte. Retención acotada y configurable; migración aditiva 14 con respaldo.
+Conserva la corrección Windows f6r1 y acepta actualizar desde fase 6.
+[Decisiones, validación y pruebas manuales](AIBID-2.0-FASE-7.md).
+La fase 8 queda pendiente de autorización expresa.
+
+## AIBID 2.0 — fase 8 (2026-10-06)
+
+Autorizada por el propietario. Revisión final y estabilización; Dashboard con
+gráficas locales, serie diaria de incorporaciones y tablas accesibles. Ajustes
+agrupa cinco secciones con contraste corregido y conserva rutas anteriores.
+Chart.js 4.5.1 empaquetado; dependencia de LibreOffice explícita. Se mantiene el
+esquema 14 y la actualización conserva datos. Regresión automática, conversión
+Office real, inspección de paquetes y actualización nativa de fase 7 en datos
+temporales; la ejecución de instaladores en los equipos destino sigue documentada.
+[Alcance, dependencias, validación y comprobación manual](AIBID-2.0-FASE-8.md).
+
+## AIBID 2.0 RC1 — ajustes de cierre (2026-10-07)
+
+Corrección específica de la comprobación de puertos Windows: tabla TCP del sistema
+en lugar de conectar a puertos cerrados con timeout de 250 ms. Regla de firewall
+limitada a AIBID preparada por el instalador; el servicio conserva su cuenta virtual.
+Cursor `not-allowed` en controles deshabilitados. Nombres visibles AIBID, con
+identificadores internos anteriores conservados por compatibilidad. Sin migración
+de base de datos ni movimiento del estado. [Detalle y validación](AIBID-2.0-RC1.md).
+
+QA final: correcciones reproducidas de paginación al cambiar filtros, solicitudes
+sin respuesta/errores inválidos, persistencia del estado final de trabajos y
+aislamiento de errores de archivos administrados. Regresiones, concurrencia,
+9.000 archivos y Chrome; sin refactorización ni funciones nuevas.
+[Cobertura, evidencia y comprobaciones nativas pendientes](QA-V2-RC1.md).

@@ -1,4 +1,4 @@
-# AIBID — API HTTP interna
+# AIDEX — API HTTP interna
 
 Base: `/api/v1`, mismo origen que React. **H2–H6 implementados:** identidad, cuenta,
 usuarios, permisos, sesiones, auditoría, bibliotecas, búsqueda, cargas, expedientes

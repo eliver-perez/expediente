@@ -1,0 +1,33 @@
+go: downloading golang.org/x/term v0.46.0
+ok  	gestor-documental/cmd/gestor-documental	0.909s
+?   	gestor-documental/cmd/license-mock	[no test files]
+?   	gestor-documental/db	[no test files]
+?   	gestor-documental/internal/audit	[no test files]
+ok  	gestor-documental/internal/buildinfo	1.073s
+ok  	gestor-documental/internal/config	0.537s
+?   	gestor-documental/internal/diagnostics	[no test files]
+ok  	gestor-documental/internal/documentformat	1.330s
+?   	gestor-documental/internal/domain	[no test files]
+ok  	gestor-documental/internal/extraction	2.962s
+ok  	gestor-documental/internal/httpapi	11.975s
+ok  	gestor-documental/internal/identity	2.999s
+ok  	gestor-documental/internal/launcher	2.110s
+--- FAIL: TestH4UploadValidationRecoveryAndRootOverlap (0.55s)
+    organization_test.go:338: linked overlapped managed
+2026/10/21 08:48:55 ERROR worker state could not be saved; retrying journal code=WORKER_STATE_WRITE_FAILED context="{OperationID: LibraryID: RootID: JobID: DocumentID: RequestID: Operation:extract Attempt:0 HTTPStatus:0}"
+--- FAIL: TestRetirementAndIndexRemovalPreserveOriginalAndHistory (0.55s)
+    reconciliation_test.go:166: VERSION_CONFLICT
+FAIL
+FAIL	gestor-documental/internal/libraries	90.953s
+?   	gestor-documental/internal/licensefixture	[no test files]
+ok  	gestor-documental/internal/licensing	4.438s
+ok  	gestor-documental/internal/maintenance	2.757s
+ok  	gestor-documental/internal/network	2.718s
+ok  	gestor-documental/internal/previews	3.183s
+--- FAIL: TestEmptyMigrationRollbackAndRefusalWithEvidence (0.05s)
+    database_test.go:141: empty rollback is only supported for the initial H2 schema
+--- FAIL: TestUpgradePreservesPopulatedH2AndRefusesDestructiveRollback (0.06s)
+    database_test.go:219: partial down migration <nil>
+FAIL
+FAIL	gestor-documental/internal/storage	4.740s
+FAIL

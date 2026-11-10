@@ -131,6 +131,123 @@ func (database *Database) RollbackEmpty(ctx context.Context) error {
 		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
 			return err
 		}
+		if count == 19 {
+			contents, err := db.Migrations.ReadFile("migrations/0019_scale_indexes.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 18 {
+			contents, err := db.Migrations.ReadFile("migrations/0018_library_description.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 17 {
+			contents, err := db.Migrations.ReadFile("migrations/0017_deletion_execution.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 16 {
+			contents, err := db.Migrations.ReadFile("migrations/0016_eula.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 15 {
+			var evidence int
+			if err := transaction.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM entity_deletions)+(SELECT count(*) FROM root_retired_documents)").Scan(&evidence); err != nil {
+				return err
+			}
+			if evidence > 0 {
+				return fmt.Errorf("rollback would discard lifecycle evidence")
+			}
+			contents, err := db.Migrations.ReadFile("migrations/0015_library_lifecycle.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 14 {
+			contents, err := db.Migrations.ReadFile("migrations/0014_observability.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 13 {
+			contents, err := db.Migrations.ReadFile("migrations/0013_advanced_settings.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 12 {
+			contents, err := db.Migrations.ReadFile("migrations/0012_preview_cache.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 11 {
+			contents, err := db.Migrations.ReadFile("migrations/0011_processing_policy.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 10 {
+			contents, err := db.Migrations.ReadFile("migrations/0010_document_extractors.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
+		if count == 9 {
+			contents, err := db.Migrations.ReadFile("migrations/0009_document_formats.down.sql")
+			if err != nil {
+				return err
+			}
+			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
+				return err
+			}
+			count--
+		}
 		if count == 8 {
 			contents, err := db.Migrations.ReadFile("migrations/0008_reconciliation.down.sql")
 			if err != nil {

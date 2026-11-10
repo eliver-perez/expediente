@@ -1,0 +1,14 @@
+Windows icon resources: AIDEX.exe: [16, 24, 32, 40, 48, 64, 128, 256] OK
+Windows icon resources: aidex-server.exe: [16, 24, 32, 40, 48, 64, 128, 256] OK
+Windows runtime PE/amd64 import closure: OK (native test still required)
+{
+  "result": "PASS",
+  "target": "windows-amd64",
+  "version": "1.0.0",
+  "manifest_files_verified": 1114,
+  "unchanged_gui_uac_helper": true,
+  "unchanged_OCR_files": 478,
+  "effective_access_diagnostics_embedded": true,
+  "native_execution_performed": false,
+  "sha256": "20c188b79da2c50b0be8ec2d4de5589072841355877dbbe4903617dfeff20ba0"
+}

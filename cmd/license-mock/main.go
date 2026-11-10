@@ -34,7 +34,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("use init|serve|issue|vectors --directory PRIVATE_DIR [--listen 127.0.0.1:9443] [--request FILE.licreq --out FILE.lic --key DEMO-PERPETUAL]")
+		return fmt.Errorf("use init|serve|issue|vectors --directory PRIVATE_DIR [--listen 127.0.0.1:9443] [--request FILE.licreq --out FILE.lic --key K7M-9R3X-6TVP-8CHD]")
 	}
 	command := os.Args[1]
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -42,7 +42,7 @@ func run() error {
 	listen := flags.String("listen", "127.0.0.1:9443", "Loopback HTTPS address")
 	requestPath := flags.String("request", "", "Offline request")
 	output := flags.String("out", "", "Response file or vector directory")
-	key := flags.String("key", "DEMO-PERPETUAL", "Public demonstration scenario, never a real key")
+	key := flags.String("key", "K7M-9R3X-6TVP-8CHD", "Public demonstration scenario, never a real key")
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func run() error {
 		return fmt.Errorf("simulator must listen on an explicit loopback IP")
 	}
 	server := &http.Server{Addr: *listen, Handler: mock, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, MaxHeaderBytes: 8192}
-	fmt.Println("AIBID development license simulator: https://" + *listen)
+	fmt.Println("AIDEX development license simulator: https://" + *listen)
 	return server.ListenAndServeTLS(cert, private)
 }
 func writeNew(path string, contents []byte) error {
@@ -141,7 +141,7 @@ func createCertificate(certPath, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "AIBID DEVELOPMENT LOCAL ONLY"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(365 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IsCA: true, DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}}
+	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "AIDEX DEVELOPMENT LOCAL ONLY"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(365 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IsCA: true, DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &private.PublicKey, private)
 	if err != nil {
 		return err

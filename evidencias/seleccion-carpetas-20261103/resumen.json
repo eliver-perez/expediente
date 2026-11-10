@@ -1,0 +1,50 @@
+{
+  "date": "2026-11-03",
+  "version": "1.0.0",
+  "packages": [
+    {
+      "file": "AIDEX-1.0.0-Windows-amd64.exe",
+      "version": "1.0.0",
+      "size_bytes": 42021941,
+      "sha256": "12cdc6d3a41fde57289d5abac77d935a8c4ef21188c0dc66d8f9f203a079d40d"
+    },
+    {
+      "file": "AIDEX-1.0.0-macOS-arm64.pkg",
+      "version": "1.0.0",
+      "size_bytes": 13352409,
+      "sha256": "530b168e723c3f015d96be06a874384b48d7643f29e0de6032ca7bf48716cd04"
+    },
+    {
+      "file": "aidex_1.0.0_amd64.deb",
+      "version": "1.0.0",
+      "size_bytes": 9618146,
+      "sha256": "7c11653e56161782b6a9db14c8241a45ecb8ec13fb6b4d22ffdfa2bee1e41121"
+    },
+    {
+      "file": "aidex_1.0.0_arm64.deb",
+      "version": "1.0.0",
+      "size_bytes": 8809376,
+      "sha256": "c5c01d688536637a7643fa26e584d66e6587d75b41bcd49c83780042623b1884"
+    }
+  ],
+  "tests": {
+    "go": "PASS",
+    "python_packaging": {
+      "passed": 44
+    },
+    "browser": {
+      "distinct_scenarios_passed": 5,
+      "final_affected_scenarios_passed": 3
+    },
+    "macos_native_listener": "PASS",
+    "macos_native_acl_on_owned_fixtures": "PASS",
+    "macos_isolated_package_lifecycle": "PASS",
+    "package_inspection": "PASS"
+  },
+  "native_pending": [
+    "Windows installed service/UAC/ACL/GUI",
+    "macOS system picker and installed _aidex/Finder/TCC",
+    "Ubuntu amd64/arm64 system picker and installed service"
+  ],
+  "native_installation_performed": false
+}

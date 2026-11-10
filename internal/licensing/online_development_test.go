@@ -76,7 +76,7 @@ func TestOnlineIdempotentRestartRevocationAndConfirmedDeactivation(t *testing.T)
 	defer server.Close()
 	client, directory := developmentClient(t, server)
 	id := domain.NewID()
-	if _, err = client.Online(ctx, "activate", id, "DEMO-PERPETUAL", nil, domain.RequestMetadata{}); err == nil {
+	if _, err = client.Online(ctx, "activate", id, "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{}); err == nil {
 		t.Fatal("lost response not detected")
 	}
 	pending, err := client.PendingOperations(ctx)
@@ -91,7 +91,7 @@ func TestOnlineIdempotentRestartRevocationAndConfirmedDeactivation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err = restarted.Online(ctx, "activate", id, "DEMO-PERPETUAL", nil, domain.RequestMetadata{})
+	state, err = restarted.Online(ctx, "activate", id, "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{})
 	if err != nil || state.State != "active" {
 		t.Fatal(state, err)
 	}
@@ -100,11 +100,11 @@ func TestOnlineIdempotentRestartRevocationAndConfirmedDeactivation(t *testing.T)
 	}
 	originalRevision := state.Revision
 	originalLicenseID, originalActivationID := state.LicenseID, state.ActivationID
-	state, err = restarted.Online(ctx, "activate", id, "DEMO-PERPETUAL", nil, domain.RequestMetadata{})
+	state, err = restarted.Online(ctx, "activate", id, "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{})
 	if err != nil || state.Revision != originalRevision || calls.Load() != 2 {
 		t.Fatal("successful replay contacted server")
 	}
-	if _, err = restarted.Online(ctx, "activate", id, "DEMO-SUBSCRIPTION", nil, domain.RequestMetadata{}); err == nil {
+	if _, err = restarted.Online(ctx, "activate", id, "T7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{}); err == nil {
 		t.Fatal("different key reused request")
 	}
 	var leaks int
@@ -113,7 +113,7 @@ func TestOnlineIdempotentRestartRevocationAndConfirmedDeactivation(t *testing.T)
 		t.Fatal("commercial key persisted", err)
 	}
 	second, _ := developmentClient(t, server)
-	if _, err = second.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{}); err == nil {
+	if _, err = second.Online(ctx, "activate", domain.NewID(), "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{}); err == nil {
 		t.Fatal("second installation activated")
 	}
 	if err = mock.Revise(state.ActivationID, func(claims *licensing.Claims) { claims.Status = "revoked" }); err != nil {
@@ -127,7 +127,7 @@ func TestOnlineIdempotentRestartRevocationAndConfirmedDeactivation(t *testing.T)
 	if err != nil || state.Diagnostic != "ACTIVATION_DEACTIVATED" {
 		t.Fatal(state, err)
 	}
-	state, err = second.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{})
+	state, err = second.Online(ctx, "activate", domain.NewID(), "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{})
 	if err != nil || !state.WriteAllowed {
 		t.Fatal("confirmed deactivation did not free simulator slot", err)
 	}
@@ -152,7 +152,7 @@ func TestOfflineActivationRenewalAndPendingDeactivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := mock.Offline([]byte(request.Contents), "DEMO-PERPETUAL")
+	response, err := mock.Offline([]byte(request.Contents), "K7M-9R3X-6TVP-8CHD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +188,8 @@ func TestOfflineActivationRenewalAndPendingDeactivation(t *testing.T) {
 		t.Fatal("uncontracted deactivation JSON imported as license")
 	}
 	state, _ = client.Status(ctx)
-	if !state.WriteAllowed || !state.DeactivationPending {
-		t.Fatal("remote manual decision claimed knowledge on offline client")
+	if state.WriteAllowed || state.ReadAllowed || !state.DeactivationPending || state.State != "deactivated" {
+		t.Fatal("offline deactivation did not block the local installation")
 	}
 }
 
@@ -202,7 +202,7 @@ func TestReactivationPreservesInstallationIdentity(t *testing.T) {
 	server := httptest.NewTLSServer(mock)
 	defer server.Close()
 	client, directory := developmentClient(t, server)
-	first, err := client.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{})
+	first, err := client.Online(ctx, "activate", domain.NewID(), "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestReactivationPreservesInstallationIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := restarted.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{})
+	state, err := restarted.Online(ctx, "activate", domain.NewID(), "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{})
 	if err != nil || !state.WriteAllowed || state.InstallationID != first.InstallationID || state.PublicKey != first.PublicKey || state.ActivationID == first.ActivationID {
 		t.Fatal("reactivation lost binding or reused retired activation", state, err)
 	}
@@ -315,7 +315,7 @@ func TestOnlineInvalidResponsesDoNotReplaceValidLicense(t *testing.T) {
 			defer server.Close()
 			client, _ := developmentClient(t, server)
 			ctx := context.Background()
-			before, err := client.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{})
+			before, err := client.Online(ctx, "activate", domain.NewID(), "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -346,7 +346,7 @@ func TestOnlineRequiresTrustedTLSAndNeverFollowsRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = untrusted.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{}); err == nil {
+	if _, err = untrusted.Online(ctx, "activate", domain.NewID(), "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{}); err == nil {
 		t.Fatal("untrusted TLS certificate accepted")
 	}
 	var redirected atomic.Int32
@@ -357,7 +357,7 @@ func TestOnlineRequiresTrustedTLSAndNeverFollowsRedirects(t *testing.T) {
 	}))
 	defer redirect.Close()
 	client, _ = developmentClient(t, redirect)
-	if _, err = client.Online(ctx, "activate", domain.NewID(), "DEMO-PERPETUAL", nil, domain.RequestMetadata{}); err == nil {
+	if _, err = client.Online(ctx, "activate", domain.NewID(), "K7M-9R3X-6TVP-8CHD", nil, domain.RequestMetadata{}); err == nil {
 		t.Fatal("redirect accepted")
 	}
 	if redirected.Load() != 0 {

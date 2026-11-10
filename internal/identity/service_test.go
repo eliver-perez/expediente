@@ -105,6 +105,31 @@ func TestConcurrentLoginsReplaceAtomically(t *testing.T) {
 	}
 }
 
+func TestReadAuthenticationContinuesWhileWriterIsBusy(t *testing.T) {
+	service := fixtureService(t)
+	login, _ := loginFixture(t, service)
+	// Force a touch to be due, then hold the same writer used by a bulk deletion.
+	if _, err := service.Database.Writer.Exec("UPDATE sessions SET last_activity_at=? WHERE token_digest=?", domain.Timestamp(time.Now().Add(-2*time.Minute)), domain.Digest(login.SessionToken)); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := service.Database.Writer.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE sessions SET last_activity_at=last_activity_at WHERE token_digest=?", domain.Digest(login.SessionToken)); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	principal, err := service.Authenticate(context.Background(), login.SessionToken, true, fixtureMetadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.User.ID == "" || time.Since(start) > time.Second {
+		t.Fatalf("authentication waited for writer: %v", time.Since(start))
+	}
+}
+
 func TestLoginRollbackPreservesPreviousSession(t *testing.T) {
 	service := fixtureService(t)
 	previous, _ := loginFixture(t, service)

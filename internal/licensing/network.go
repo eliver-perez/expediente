@@ -49,7 +49,11 @@ func remoteFailure(code string) error {
 	if !remoteCodes[code] {
 		code = "TEMPORARY_UNAVAILABLE"
 	}
-	return domain.Failure(code, messages[code], 502)
+	status := 502
+	if code == "RATE_LIMITED" {
+		status = 429
+	}
+	return domain.Failure(code, messages[code], status)
 }
 func (client *Client) post(ctx context.Context, path string, body any, result any) error {
 	encoded, err := json.Marshal(body)
@@ -82,6 +86,17 @@ func (client *Client) post(ctx context.Context, path string, body any, result an
 		}
 		if json.Unmarshal(contents, &failureEnvelope) != nil {
 			return remoteFailure("TEMPORARY_UNAVAILABLE")
+		}
+		if response.StatusCode == 429 {
+			// The per-code budget lasts up to 900 seconds; do not consume it by
+			// repeatedly asking for fresh challenges during that interval.
+			wait := 15 * time.Minute
+			if seconds, parseErr := time.ParseDuration(response.Header.Get("Retry-After") + "s"); parseErr == nil && seconds > wait {
+				wait = seconds
+			}
+			client.mutex.Lock()
+			client.rateLimitUntil = client.Now().Add(wait)
+			client.mutex.Unlock()
 		}
 		return remoteFailure(failureEnvelope.Error.Code)
 	}
@@ -123,11 +138,23 @@ func (client *Client) Online(ctx context.Context, action, requestID, commercialK
 	if client.identityError != "" || len(client.privateKey) != ed25519.PrivateKeySize {
 		return Status{}, failure("LICENSE_IDENTITY_INVALID", "Recupera primero la identidad de esta instalación.")
 	}
-	if action == "activate" && (len(commercialKey) < 1 || len(commercialKey) > 1024) || action != "activate" && commercialKey != "" {
+	if action == "activate" {
+		var err error
+		commercialKey, err = NormalizeCommercialKey(commercialKey)
+		if err != nil {
+			return Status{}, err
+		}
+	} else if commercialKey != "" {
 		return Status{}, failure("INVALID_REQUEST", "La clave comercial solo se utiliza al activar.")
 	}
 	client.operationMutex.Lock()
 	defer client.operationMutex.Unlock()
+	client.mutex.Lock()
+	rateLimitUntil := client.rateLimitUntil
+	client.mutex.Unlock()
+	if client.Now().Before(rateLimitUntil) {
+		return Status{}, remoteFailure("RATE_LIMITED")
+	}
 	digest := client.requestDigest(action, commercialKey)
 	var request onlineRequest
 	var operationStatus, storedDigest, storedAction, storedJSON, storedError string

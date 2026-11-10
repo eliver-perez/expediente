@@ -12,7 +12,7 @@ import (
 
 func TestSQLiteWindowsDriveIsNotURIAuthority(t *testing.T) {
 	// This reproduces the reported Windows failure even when running on macOS/Linux.
-	broken := url.URL{Scheme: "file", Path: "C:/ProgramData/AIBID-Test/state/documental.db"}
+	broken := url.URL{Scheme: "file", Path: "C:/ProgramData/AIDEX/state/documental.db"}
 	connection, err := sql.Open("sqlite", broken.String())
 	if err != nil {
 		t.Fatal(err)
@@ -21,7 +21,7 @@ func TestSQLiteWindowsDriveIsNotURIAuthority(t *testing.T) {
 	if err := connection.Ping(); err == nil || !strings.Contains(err.Error(), "invalid uri authority: C:") {
 		t.Fatalf("original failure not reproduced: %v", err)
 	}
-	for _, path := range []string{"C:/ProgramData/AIBID-Test/state/documental.db", "d:/Biblioteca ñ/100% #1/documental.db", "/var/lib/AIBID #1/what?.db"} {
+	for _, path := range []string{"C:/ProgramData/AIDEX/state/documental.db", "d:/Biblioteca ñ/100% #1/documental.db", "/var/lib/AIDEX #1/what?.db"} {
 		uri := sqliteFileURL(path)
 		uri.RawQuery = url.Values{"mode": {"ro"}, "_pragma": {"query_only(1)", "foreign_keys(1)"}}.Encode()
 		parsed, err := url.Parse(uri.String())

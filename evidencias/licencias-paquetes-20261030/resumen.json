@@ -1,0 +1,26 @@
+{
+  "automatic_license_validation": {
+    "result": "PASS",
+    "duration_seconds": 61.322,
+    "real_minute_tick": true,
+    "default_refresh_hours_unchanged": 24,
+    "outage_retry_minutes_unchanged": 15
+  },
+  "frontend_regressions": {
+    "result": "PASS",
+    "tests": 5,
+    "duration_seconds": 23.4
+  },
+  "package_inspection": {
+    "result": "PASS",
+    "platforms": [
+      "windows-amd64",
+      "macos-arm64",
+      "ubuntu-amd64",
+      "ubuntu-arm64"
+    ],
+    "native_installation": false
+  },
+  "server_modified": false,
+  "production_licenses_used": false
+}

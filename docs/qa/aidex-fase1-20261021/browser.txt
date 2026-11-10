@@ -1,0 +1,24 @@
+
+> aidex-web@1.0.0 test:e2e
+> playwright test lifecycle.spec.ts dashboard-settings.spec.ts observability.spec.ts libraries.spec.ts organization.spec.ts workflow.spec.ts processing.spec.ts identity.spec.ts license.spec.ts network.spec.ts
+
+
+Running 13 tests using 1 worker
+
+(node:3195) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 tests/dashboard-settings.spec.ts:3:1 › fase 8: Dashboard con gráficas locales, Ajustes agrupados y contraste (3.3s)
+  ✓   2 tests/identity.spec.ts:11:1 › otro navegador reemplaza la sesión y el sondeo muestra el aviso exacto (31.2s)
+  ✓   3 tests/identity.spec.ts:23:1 › administrar usuarios, cambiar contraseña, ver auditoría y denegar privilegios (2.2s)
+  ✓   4 tests/identity.spec.ts:54:1 › login adaptable en móvil y error de acceso sin enumeración (569ms)
+  ✓   5 tests/libraries.spec.ts:17:1 › biblioteca vinculada: raíz, OCR, búsqueda, texto retenido y vista lógica (4.8s)
+  ✓   6 tests/license.spec.ts:3:1 › licencias: simulador HTTPS, archivos sin conexión y recuperación de solo lectura (1.8s)
+  ✓   7 tests/lifecycle.spec.ts:12:1 › Fase 1: archivo, restauración, confirmación exacta, manifiesto y Toast fijo (3.1s)
+  ✓   8 tests/lifecycle.spec.ts:42:1 › Fase 1: carpetas, omisiones paginadas, filtros, errores, retiro y reanudación (3.7s)
+  ✓   9 tests/network.spec.ts:3:1 › acceso local y LAN real, UUID en HTTP y vuelta a local (1.9s)
+  ✓  10 tests/observability.spec.ts:10:1 › fase 7: indicadores, error real, diagnóstico, revisión, retención y pantallas adaptables (4.6s)
+  ✓  11 tests/organization.spec.ts:4:1 › H4: catálogo, plantilla, expediente y carga múltiple privada con clasificación (2.4s)
+  ✓  12 tests/processing.spec.ts:6:1 › seguimiento automático, duplicados, auditoría y configuración (4.7s)
+  ✓  13 tests/workflow.spec.ts:15:1 › H5: confirmar, detectar modificación administrada y revisar con otra cuenta (15.8s)
+
+  13 passed (1.4m)

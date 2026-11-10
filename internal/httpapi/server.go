@@ -12,10 +12,14 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
+	"gestor-documental/internal/backups"
 	"gestor-documental/internal/config"
+	"gestor-documental/internal/diagnostics"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/libraries"
@@ -27,14 +31,23 @@ import (
 var compiledAssets embed.FS
 
 type Server struct {
-	libraries      *libraries.Service
-	identity       *identity.Service
-	configuration  config.Config
-	logger         *slog.Logger
-	publicHost     string
-	secure         bool
-	trustedProxies []netip.Prefix
-	network        *network.Service
+	backups          *backups.Service
+	libraries        *libraries.Service
+	identity         *identity.Service
+	configuration    config.Config
+	logger           *slog.Logger
+	publicHost       string
+	secure           bool
+	trustedProxies   []netip.Prefix
+	network          *network.Service
+	folderAuthMu     sync.Mutex
+	folderAuth       map[string]*folderAuthorization
+	folderSelections map[string]*folderSelection
+}
+
+func (server *Server) WithBackups(service *backups.Service) *Server {
+	server.backups = service
+	return server
 }
 
 func (server *Server) WithNetwork(service *network.Service) *Server {
@@ -44,7 +57,7 @@ func (server *Server) WithNetwork(service *network.Service) *Server {
 
 func New(service *identity.Service, configuration config.Config, logger *slog.Logger) *Server {
 	publicURL, _ := url.Parse(configuration.PublicURL)
-	server := &Server{libraries: libraries.New(service), identity: service, configuration: configuration, logger: logger, publicHost: publicURL.Host, secure: publicURL.Scheme == "https"}
+	server := &Server{libraries: libraries.New(service), identity: service, configuration: configuration, logger: logger, publicHost: publicURL.Host, secure: publicURL.Scheme == "https", folderAuth: make(map[string]*folderAuthorization)}
 	for _, cidr := range configuration.TrustedProxies {
 		prefix, err := netip.ParsePrefix(cidr)
 		if err == nil {
@@ -65,9 +78,31 @@ func metadata(request *http.Request) domain.RequestMetadata {
 func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	server.libraryRoutes(mux)
+	server.backupRoutes(mux)
+	server.observabilityRoutes(mux)
 	server.licenseRoutes(mux)
+	mux.HandleFunc("GET /api/v1/eula", server.protected("", true, server.eulaGet))
+	mux.HandleFunc("GET /api/v1/about", server.protected("", true, server.about))
+	mux.HandleFunc("POST /api/v1/eula/accept", server.protected("license.manage", true, server.eulaAccept))
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations", server.protected("", true, server.startFolderAuthorization))
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/claim", server.claimFolderAuthorization)
+	mux.HandleFunc("GET /api/v1/local-folder-authorizations/{ticket}/describe", server.describeFolderAuthorization)
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/probe", server.probeFolderAuthorization)
+	mux.HandleFunc("POST /api/v1/local-folder-authorizations/{ticket}/finish", server.finishFolderAuthorization)
+	mux.HandleFunc("GET /api/v1/local-folder-authorizations/{ticket}/status", server.protected("", true, server.folderAuthorizationStatus))
+	mux.HandleFunc("POST /api/v1/folder-selections", server.protected("", true, server.startFolderSelection))
+	mux.HandleFunc("GET /api/v1/folder-selections/{ticket}", server.protected("", true, server.folderSelectionStatus))
+	mux.HandleFunc("POST /api/v1/folder-selections/{ticket}/claim", server.claimFolderSelection)
+	mux.HandleFunc("POST /api/v1/folder-selections/{ticket}/finish", server.finishFolderSelection)
+	mux.HandleFunc("POST /api/v1/libraries/{library}/folder-browser", server.protected("", true, server.browseFolders))
+	mux.HandleFunc("GET /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
+	mux.HandleFunc("PUT /api/v1/system/previews", server.protected("system.configure", true, server.previewConfiguration))
+	mux.HandleFunc("POST /api/v1/system/previews/clear", server.protected("system.configure", true, server.clearPreviews))
+	mux.HandleFunc("GET /api/v1/documents/{document}/preview", server.protected("", true, server.documentPreview))
+	mux.HandleFunc("POST /api/v1/documents/{document}/preview", server.protected("", true, server.documentPreview))
+	mux.HandleFunc("GET /api/v1/documents/{document}/preview/content", server.protected("", true, server.previewContent))
 	mux.HandleFunc("GET /health/live", func(writer http.ResponseWriter, request *http.Request) {
-		writeJSON(writer, 200, map[string]string{"status": "ok"})
+		writeJSON(writer, 200, map[string]string{"status": "ok", "product": "AIDEX"})
 	})
 	mux.HandleFunc("POST /api/v1/auth/login", server.login)
 	mux.HandleFunc("GET /api/v1/auth/session", server.protected("", false, server.session))
@@ -88,7 +123,15 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/audit-options", server.protected("audit.read_global", true, server.auditOptions))
 	mux.HandleFunc("GET /api/v1/audit-events/{id}", server.protected("audit.read_global", true, server.event))
 	mux.HandleFunc("GET /api/v1/system/status", server.protected("system.configure", false, server.status))
+	mux.HandleFunc("GET /api/v1/system/processing-policy", server.protected("system.configure", true, server.processingPolicy))
+	mux.HandleFunc("PUT /api/v1/system/processing-policy", server.protected("system.configure", true, server.processingPolicy))
 	mux.HandleFunc("GET /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
+	mux.HandleFunc("GET /api/v1/system/advanced", server.protected("system.configure", true, server.advancedConfiguration))
+	mux.HandleFunc("PUT /api/v1/system/advanced", server.protected("system.configure", true, server.advancedConfiguration))
+	mux.HandleFunc("GET /api/v1/libraries/{library}/advanced-settings", server.protected("", true, server.advancedConfiguration))
+	mux.HandleFunc("PUT /api/v1/libraries/{library}/advanced-settings", server.protected("", true, server.advancedConfiguration))
+	mux.HandleFunc("GET /api/v1/system/files", server.protected("system.configure", true, server.fileConfiguration))
+	mux.HandleFunc("PUT /api/v1/system/files", server.protected("system.configure", true, server.fileConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/processing", server.protected("system.configure", true, server.processingConfiguration))
 	mux.HandleFunc("GET /api/v1/system/network", server.protected("system.configure", true, server.networkConfiguration))
 	mux.HandleFunc("PUT /api/v1/system/network", server.protected("system.configure", true, server.networkConfiguration))
@@ -121,9 +164,26 @@ func (server *Server) protected(permission string, touch bool, handler authorize
 			server.fail(writer, request, domain.Failure("CSRF_INVALID", "La solicitud no pudo validarse. Recarga la página.", 403))
 			return
 		}
-		if err := server.identity.License.Check(request.Context(), licensing.SecurityAdministration); err != nil {
-			server.fail(writer, request, err)
-			return
+		path := request.URL.Path
+		licenseSetup := strings.HasPrefix(path, "/api/v1/license/") || path == "/api/v1/license" || path == "/api/v1/eula" || path == "/api/v1/eula/accept" || path == "/api/v1/about" || path == "/api/v1/auth/session" || path == "/api/v1/auth/logout"
+		if !licenseSetup {
+			accepted, err := server.eulaAccepted(request.Context())
+			if err != nil {
+				server.fail(writer, request, err)
+				return
+			}
+			if !accepted {
+				server.fail(writer, request, domain.Failure("EULA_ACCEPTANCE_REQUIRED", "El administrador debe aceptar el contrato de licencia vigente antes de utilizar AIDEX.", 403))
+				return
+			}
+			operation := licensing.ReadDocuments
+			if request.Method != "GET" && request.Method != "HEAD" && !(path == "/api/v1/backups" && request.Method == "POST") {
+				operation = licensing.WriteDocuments
+			}
+			if err := server.identity.License.Check(request.Context(), operation); err != nil {
+				server.fail(writer, request, err)
+				return
+			}
 		}
 		handler(writer, request, principal)
 	}
@@ -145,7 +205,7 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 		defer func() {
 			if recover() != nil {
 				server.logger.Error("request panic", "request_id", requestID)
-				server.fail(writer, request, fmt.Errorf("request panic"))
+				server.fail(writer, request, domain.Failure("HTTP_PANIC", "No se pudo completar la operación.", 500))
 			}
 		}()
 		allowedHost := request.Host == server.publicHost
@@ -159,14 +219,15 @@ func (server *Server) boundary(next http.Handler) http.Handler {
 		// A connection accepted before switching to local mode must not retain
 		// LAN access through keep-alive. In-flight responses may finish normally.
 		if server.network != nil && server.network.LocalOnly() && !remoteAddress(request).IsLoopback() {
-			server.fail(writer, request, domain.Failure("NETWORK_LOCAL_ONLY", "AIBID solo permite acceso desde este equipo.", 403))
+			server.fail(writer, request, domain.Failure("NETWORK_LOCAL_ONLY", "AIDEX solo permite acceso desde este equipo.", 403))
 			return
 		}
 		if server.secure && request.TLS == nil && (!server.isTrusted(remoteAddress(request)) || request.Header.Get("X-Forwarded-Proto") != "https") {
 			server.fail(writer, request, domain.Failure("HTTPS_REQUIRED", "Se requiere una conexión HTTPS.", 403))
 			return
 		}
-		if request.Method != "GET" && request.Method != "HEAD" {
+		localFolderHandoff := localOnly(request) && (((runtime.GOOS == "windows" || runtime.GOOS == "darwin") && strings.HasPrefix(request.URL.Path, "/api/v1/local-folder-authorizations/")) || strings.HasPrefix(request.URL.Path, "/api/v1/folder-selections/"))
+		if request.Method != "GET" && request.Method != "HEAD" && !localFolderHandoff {
 			expectedOrigin := server.configuration.PublicURL
 			if server.configuration.NetworkMode == "lan" {
 				expectedOrigin = "http://" + request.Host
@@ -251,6 +312,11 @@ func (server *Server) fail(writer http.ResponseWriter, request *http.Request, er
 		server.logger.Error("request failed", "request_id", metadata(request).RequestID, "error_type", fmt.Sprintf("%T", err))
 	}
 	// An older in-flight request must not delete a cookie issued by a newer login.
+	if failure.Status >= 500 || failure.Code == "ROOT_PERMISSION_DENIED" || failure.Code == "ROOT_PRIVACY_DENIED" || failure.Code == "ROOT_NOT_FOUND" || failure.Code == "ROOT_NETWORK_UNAVAILABLE" || failure.Code == "ROOT_READ_FAILED" {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = diagnostics.Record(ctx, server.identity.Database, "http", failure.Code, diagnostics.Context{RequestID: metadata(request).RequestID, Operation: "http", HTTPStatus: failure.Status})
+	}
 	// Logout/password changes explicitly clear it; stale sessions are already invalid in DB.
 	if failure.Status == 429 {
 		writer.Header().Set("Retry-After", "60")
@@ -280,7 +346,7 @@ func (server *Server) frontend(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	switch request.URL.Path {
-	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/processing", "/admin/network":
+	case "/", "/login", "/account", "/libraries", "/search", "/admin/users", "/admin/access", "/admin/events", "/admin/license", "/admin/eula", "/admin/about", "/admin/processing", "/admin/network", "/admin/files", "/admin/previews", "/admin/advanced", "/admin/settings", "/admin/dashboard", "/admin/errors":
 		contents, err := fs.ReadFile(assets, "index.html")
 		if err != nil {
 			http.Error(writer, "Aplicación no disponible.", 503)

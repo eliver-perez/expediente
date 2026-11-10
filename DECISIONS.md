@@ -1,7 +1,7 @@
 # Decisiones para revisión
 
 Fecha: 2026-09-23. **D-01 a D-05 aprobadas por el propietario** al responder
-«Adelante con las propuestas, continuemos». H2 autorizado. El nombre visible acordado posteriormente es AIBID. No se necesita resolver ahora el dominio del
+«Adelante con las propuestas, continuemos». H2 autorizado. El nombre visible acordado posteriormente es AIDEX. No se necesita resolver ahora el dominio del
 repositorio, tamaño de corpus ni equipo de cada cliente; se documentan después.
 
 ## Alcance ya fijado por el usuario
@@ -149,7 +149,7 @@ Detalles, presupuestos, licencias de terceros y validación en [H3](docs/H3.md).
 
 ## Aplicación en H4 y marca
 
-El propietario autorizó continuar H4 y eligió **AIBID — Aplicación de Indexación
+El propietario autorizó continuar H4 y eligió **AIDEX — Aplicación de Indexación
 de Bibliotecas Digitales**, con el eslogan **Tu biblioteca digital, ordenada y al
 alcance.** Los cuatro SVG originales se conservan íntegros; las variantes oscuras
 se usan sobre fondos oscuros. La marca visual no modifica el product identifier
@@ -186,12 +186,14 @@ El contrato original sigue inalterado. La política de instalación de versiones
 compara su fecha con el corte de licencia; verificar el manifiesto y actualizar
 binarios corresponde a H7. Los respaldos completos también siguen en H7.
 
-## H7 — canal de pruebas y matriz acotada (2026-09-25)
+## Historial: canal y matriz de instaladores (2026-09-25)
+
+Nota de actualización 2026-10-09: este apartado conserva la decisión histórica de desarrollo, no identifica los paquetes vigentes. La producción se describe en [transición](docs/TRANSICION-PRODUCCION.md).
 
 El propietario dispone de Mac M1 Max, Windows y Ubuntu 24.04; pidió excluir macOS Intel.
 La conexión real de licencias se pospone al final de ambos proyectos, sin volver a solicitar URL/claves.
 
-Para probar instaladores sin reemplazar la instalación activa se elige un canal **AIBID Pruebas**
+Para probar instaladores sin reemplazar la instalación activa se elige un canal **AIDEX Pruebas**
 con cuenta/servicio/datos propios y puerto 18090. Reutilizar el servicio 8090 simplificaría rutas,
 pero mezclaría pruebas de permisos y desinstalación con los datos en uso. Se conserva el identificador
 técnico del producto y el esquema 5; no hay migraciones nuevas. El build es development y se identifica
@@ -213,7 +215,7 @@ original queda reproducido por una prueba portátil del motor, junto con casos d
 
 La revisión r2 conserva versión de datos, esquema y configuración. El instalador usa su nuevo
 comprobador de lock sin abrir SQLite: no invoca el `migrate` del ejecutable defectuoso anterior.
-A petición del propietario se añade AIBID.exe y accesos en Escritorio/Inicio para abrir el navegador
+A petición del propietario se añade AIDEX.exe y accesos en Escritorio/Inicio para abrir el navegador
 sin consola/UAC. La administración inicial sigue requiriendo elevación y terminal local.
 [Corrección y pasos de reinstalación](docs/H7-WINDOWS-R2.md).
 
@@ -226,3 +228,7 @@ en migración 0006 aditiva. Recorridos parciales nunca confirman ausencias.
 Cancelación explícita distinta de pausa por configuración/licencia. Los grupos de
 duplicados incluyen únicamente copias de bibliotecas autorizadas y no son destructivos.
 [Detalles y límites](docs/REVISION-PROCESAMIENTO.md).
+
+## Identidad definitiva (2026-10-09)
+
+La primera edición comercial es AIDEX 1.0, versión técnica 1.0.0 y canal production. Todos los componentes distribuidos usan esa identidad. Se mantienen el módulo técnico Go y product_id gestor_documental para el contrato V1. Se elimina la adopción automática de instalaciones previas: el propietario las retira manualmente conservando datos. Los SVG nuevos conservan la carpeta gráfica original. El único proveedor predeterminado es https://licensing.aidex.com.mx con confianza lic-prod-2026-a production/license y comprobación periódica cada 24 horas. No cambian el esquema ni las reglas documentales. Los inventarios anteriores permanecen intactos y no se empaquetan como instrucciones actuales.

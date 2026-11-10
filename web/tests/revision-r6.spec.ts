@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 test('intervalos, páginas acotadas, vistas y confirmación sin borrar originales', async ({ page }) => {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'aibid-r6-')));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'aidex-r6-')));
   const original = await readFile(resolve('../testdata/documents/native.pdf'));
   try {
     // One item beyond the page boundary; no volume or load test.
@@ -21,7 +21,7 @@ test('intervalos, páginas acotadas, vistas y confirmación sin borrar originale
     await page.getByRole('link', { name: 'Bibliotecas', exact: true }).click();
     await page.getByRole('button', { name: 'Nueva biblioteca' }).click();
     await page.getByLabel('Nombre de la biblioteca').fill('Revisión R6');
-    await page.getByLabel('Asignarme como gestor').check();
+
     await page.getByRole('button', { name: 'Crear biblioteca', exact: true }).click();
     await page.getByRole('tab', { name: 'Carpetas', exact: true }).click();
     await page.getByLabel('Ruta de la carpeta en el servidor').fill(directory);
@@ -66,15 +66,15 @@ test('intervalos, páginas acotadas, vistas y confirmación sin borrar originale
     await expect(page.locator('.document-accordion[open]')).toHaveCount(2);
     await page.getByRole('button', { name: 'Consultar historial', exact: true }).click();
     await expect(page.getByRole('table', { name: 'Historial del documento' })).toContainText('Documento detectado');
-    await page.getByRole('table', { name: 'Historial del documento' }).getByRole('button', { name: 'Ver detalles' }).first().click();
-    await page.getByText('Información avanzada · registro original', { exact: true }).click();
-    await expect(page.locator('.audit-dialog .document-accordion[open]')).toContainText('event_type');
-    await page.getByRole('button', { name: 'Cerrar detalle', exact: true }).click();
+    await page.getByRole('table', { name: 'Historial del documento' }).getByRole('button', { name: 'Ver detalles del evento' }).first().click();
+    await expect(page.getByText('Información avanzada · registro original', { exact: true })).toHaveCount(0);
+    await expect(page.locator('.audit-dialog')).toContainText('Documento abierto');
+    await page.getByRole('button', { name: 'Cerrar detalle del evento', exact: true }).click();
     await page.screenshot({ path: 'test-results/r6-document-history.png', fullPage: true });
     await page.getByLabel('Motivo', { exact: true }).fill('Prueba del retiro');
     await page.getByRole('button', { name: 'Confirmar retiro del índice', exact: true }).click();
     await expect(page.getByRole('dialog').first()).toBeVisible();
-    await page.getByLabel('Confirmo que se retirará del índice de AIBID.', { exact: false }).check();
+    await page.getByLabel('Confirmo que se retirará del índice de AIDEX.', { exact: false }).check();
     await page.getByRole('button', { name: 'Confirmar retiro del índice', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     expect(await readFile(join(directory, 'Carpeta-50', 'Ejemplo.pdf'))).toEqual(Buffer.concat([original, Buffer.from('\n% Segundo grupo de prueba\n')]));

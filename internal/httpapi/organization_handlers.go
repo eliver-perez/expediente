@@ -13,14 +13,24 @@ import (
 
 func (server *Server) organizationRoutes(mux *http.ServeMux) {
 	routes := map[string]authorizedHandler{
-		"GET /api/v1/libraries/{library}/categories": server.catalogList, "POST /api/v1/libraries/{library}/categories": server.catalogSave, "PATCH /api/v1/categories/{entry}": server.catalogSave,
+		"POST /api/v1/documents/{document}/request-incorporation": server.requestIncorporation,
+		"GET /api/v1/documents/{document}/corrections":            server.documentCorrections,
+		"POST /api/v1/documents/{document}/corrections":           server.documentCorrections,
+		"GET /api/v1/libraries/{library}/corrections":             server.libraryCorrections,
+		"POST /api/v1/corrections/{correction}/approve":           server.decideCorrection,
+		"POST /api/v1/corrections/{correction}/reject":            server.decideCorrection,
+		"GET /api/v1/documents/{document}/versions":               server.documentVersions,
+		"POST /api/v1/documents/{document}/replacements":          server.documentVersions,
+		"GET /api/v1/libraries/{library}/categories":              server.catalogList, "POST /api/v1/libraries/{library}/categories": server.catalogSave, "PATCH /api/v1/categories/{entry}": server.catalogSave,
 		"GET /api/v1/libraries/{library}/document-types": server.catalogList, "POST /api/v1/libraries/{library}/document-types": server.catalogSave, "PATCH /api/v1/document-types/{entry}": server.catalogSave,
 		"GET /api/v1/libraries/{library}/templates": server.templateList, "POST /api/v1/libraries/{library}/templates": server.templateSave, "POST /api/v1/templates/{template}/versions": server.templateSave,
 		"GET /api/v1/libraries/{library}/cases": server.caseList, "POST /api/v1/libraries/{library}/cases": server.caseSave, "GET /api/v1/cases/{case}": server.getCase, "PATCH /api/v1/cases/{case}": server.caseSave,
-		"GET /api/v1/cases/{case}/requirements": server.caseRequirements, "POST /api/v1/cases/{case}/initialize-requirements": server.initializeCase, "PATCH /api/v1/cases/{case}/requirements/{requirement}": server.updateRequirement,
+		"GET /api/v1/libraries/{library}/exercises":       server.caseExercises,
+		"GET /api/v1/libraries/{library}/case-statistics": server.caseStatistics,
+		"GET /api/v1/cases/{case}/requirements":           server.caseRequirements, "POST /api/v1/cases/{case}/initialize-requirements": server.initializeCase, "PATCH /api/v1/cases/{case}/requirements/{requirement}": server.updateRequirement,
 		"PATCH /api/v1/documents/{document}/classification": server.classifyDocument, "POST /api/v1/documents/{document}/associate": server.classifyDocument, "POST /api/v1/documents/{document}/reassign": server.classifyDocument, "POST /api/v1/documents/{document}/cancel": server.cancelUpload,
 		"POST /api/v1/libraries/{library}/naming-preview": server.namingPreview,
-		"GET /api/v1/libraries/{library}/upload-batches":  server.uploadBatches, "POST /api/v1/libraries/{library}/upload-batches": server.createBatch, "GET /api/v1/upload-batches/{batch}": server.getBatch, "POST /api/v1/upload-batches/{batch}/files": server.uploadFile,
+		"GET /api/v1/libraries/{library}/upload-batches":  server.uploadBatches, "POST /api/v1/libraries/{library}/upload-batches": server.createBatch, "GET /api/v1/upload-batches/{batch}/items": server.batchItems, "GET /api/v1/upload-batches/{batch}": server.getBatch, "POST /api/v1/upload-batches/{batch}/files": server.uploadFile,
 	}
 	for route, handler := range routes {
 		mux.HandleFunc(route, server.protected("", true, handler))
@@ -110,7 +120,15 @@ func (server *Server) templateSave(writer http.ResponseWriter, request *http.Req
 	server.libraryResult(writer, request, 201, map[string]string{"version_id": result}, err)
 }
 func (server *Server) caseList(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
-	result, err := server.libraries.Cases(request.Context(), principal, request.PathValue("library"), request.URL.Query().Get("q"), request.URL.Query().Get("cursor"))
+	result, err := server.libraries.Cases(request.Context(), principal, request.PathValue("library"), request.URL.Query().Get("q"), request.URL.Query().Get("cursor"), request.URL.Query().Get("exercise"), request.URL.Query().Get("status"))
+	server.libraryResult(writer, request, 200, result, err)
+}
+func (server *Server) caseExercises(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
+	result, err := server.libraries.CaseExercises(request.Context(), principal, request.PathValue("library"))
+	server.libraryResult(writer, request, 200, map[string]any{"items": result}, err)
+}
+func (server *Server) caseStatistics(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
+	result, err := server.libraries.CaseStatistics(request.Context(), principal, request.PathValue("library"), request.URL.Query().Get("exercise"))
 	server.libraryResult(writer, request, 200, result, err)
 }
 func (server *Server) getCase(writer http.ResponseWriter, request *http.Request, principal domain.Principal) {
@@ -121,6 +139,7 @@ func (server *Server) caseSave(writer http.ResponseWriter, request *http.Request
 	var input struct {
 		Identifier        string `json:"identifier"`
 		Exercise          string `json:"exercise"`
+		ConfirmFuture     bool   `json:"confirm_future"`
 		TemplateVersionID string `json:"template_version_id"`
 	}
 	if err := decodeJSON(writer, request, &input); err != nil {
@@ -140,7 +159,7 @@ func (server *Server) caseSave(writer http.ResponseWriter, request *http.Request
 			return
 		}
 	}
-	result, err := server.libraries.SaveCase(request.Context(), principal, libraryID, identifier, libraries.Case{Identifier: input.Identifier, Exercise: input.Exercise, TemplateVersionID: input.TemplateVersionID}, revision, metadata(request))
+	result, err := server.libraries.SaveCase(request.Context(), principal, libraryID, identifier, libraries.Case{Identifier: input.Identifier, Exercise: input.Exercise, ConfirmFuture: input.ConfirmFuture, TemplateVersionID: input.TemplateVersionID}, revision, metadata(request))
 	status := 201
 	if identifier != "" {
 		status = 200
@@ -247,9 +266,19 @@ func (server *Server) uploadFile(writer http.ResponseWriter, request *http.Reque
 	_ = controller.SetWriteDeadline(time.Now().Add(5*time.Minute + time.Duration(server.libraries.Identity.Config.Indexing.PageTimeoutSeconds)*time.Second + 30*time.Second))
 	defer controller.SetWriteDeadline(time.Time{})
 	bad := func() {
-		server.fail(writer, request, domain.Failure("INVALID_UPLOAD", "Envía client_file_id seguido de un único archivo PDF en multipart.", 400))
+		server.fail(writer, request, domain.Failure("INVALID_UPLOAD", "Envía client_file_id seguido de un único documento en multipart.", 400))
 	}
-	request.Body = http.MaxBytesReader(writer, request.Body, (int64(server.libraries.Identity.Config.Indexing.MaximumFileMB)<<20)+65536)
+	batch, err := server.libraries.Batch(request.Context(), principal, request.PathValue("batch"))
+	if err != nil {
+		server.fail(writer, request, err)
+		return
+	}
+	settings, err := server.libraries.FileConfiguration(request.Context(), principal, batch.LibraryID)
+	if err != nil {
+		server.fail(writer, request, err)
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, (int64(settings.Effective.MaximumFileMB)<<20)+65536)
 	multipart, err := request.MultipartReader()
 	if err != nil {
 		bad()
@@ -275,10 +304,15 @@ func (server *Server) uploadFile(writer http.ResponseWriter, request *http.Reque
 	finish := func() error {
 		_, err := multipart.NextPart()
 		if err != io.EOF {
-			return domain.Failure("INVALID_UPLOAD", "Cada solicitud debe contener un solo archivo PDF.", 400)
+			return domain.Failure("INVALID_UPLOAD", "Cada solicitud debe contener un solo documento.", 400)
 		}
 		return nil
 	}
 	result, err := server.libraries.Upload(request.Context(), principal, request.PathValue("batch"), string(keyBytes), file.FileName(), file, finish, metadata(request))
 	server.libraryResult(writer, request, 201, result, err)
+}
+
+func (server *Server) batchItems(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	result, err := server.libraries.BatchItems(r.Context(), p, r.PathValue("batch"), r.URL.Query().Get("cursor"))
+	server.libraryResult(w, r, 200, result, err)
 }

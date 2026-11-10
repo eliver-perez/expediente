@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gestor-documental/internal/documentformat"
 	"gestor-documental/internal/domain"
 	"gestor-documental/internal/storage"
 )
@@ -104,7 +105,22 @@ func (service *Service) verifyDecisionContent(ctx context.Context, document Docu
 		return scanFailure("DOCUMENT_UNAVAILABLE")
 	}
 	defer file.Close()
-	digest, _, err := hashFile(ctx, file, int64(service.Identity.Config.Indexing.MaximumFileMB)<<20)
+	configuration, err := service.fileConfiguration(ctx, service.Database.Reader, document.LibraryID)
+	if err != nil {
+		return err
+	}
+	detection, err := documentformat.Detect(ctx, file, document.Filename)
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if err = configuration.Effective.Admit(detection, info.Size()); err != nil {
+		return err
+	}
+	digest, _, err := hashFile(ctx, file, int64(configuration.Effective.MaximumFileMB)<<20)
 	if err != nil {
 		return err
 	}
@@ -115,7 +131,7 @@ func (service *Service) verifyDecisionContent(ctx context.Context, document Docu
 	if digest != document.Hash || identity != document.Identity {
 		return domain.Failure("CONTENT_CHANGED", "El archivo cambió. Verifica la biblioteca y vuelve a revisar el documento.", 409)
 	}
-	if document.Source == "managed" && document.Integrity == "changed" {
+	if document.Source == "managed" && document.Integrity == "changed" && detection.Format == "pdf" {
 		if _, err = file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
@@ -133,7 +149,7 @@ func (service *Service) verifyDecisionContent(ctx context.Context, document Docu
 			return err
 		}
 		hash := sha256.New()
-		_, copyErr := copyDocument(ctx, io.MultiWriter(snapshot, hash), io.LimitReader(file, (int64(service.Identity.Config.Indexing.MaximumFileMB)<<20)+1))
+		_, copyErr := copyDocument(ctx, io.MultiWriter(snapshot, hash), io.LimitReader(file, (int64(configuration.Effective.MaximumFileMB)<<20)+1))
 		closeErr := snapshot.Close()
 		if copyErr != nil {
 			return copyErr
@@ -164,10 +180,16 @@ func (service *Service) beginApproval(ctx context.Context, transaction *sql.Tx, 
 				return "", err
 			}
 		}
+		if err := service.completeReplacement(ctx, transaction, principal, document.ID); err != nil {
+			return "", err
+		}
 		return "", workflowEvent(ctx, transaction, principal, document, metadata, "document.approved", map[string]any{"decision_kind": kind, "review_id": reviewID})
 	}
 	if settings.ManagedRootID == "" {
 		return "", domain.Failure("MANAGED_ROOT_REQUIRED", "Selecciona un destino administrado en Configuración.", 422)
+	}
+	if err := validateManagedDestination(ctx, transaction, document.LibraryID, settings.ManagedRootID); err != nil {
+		return "", err
 	}
 	root, err := scanRoot(transaction.QueryRowContext(ctx, "SELECT "+rootColumns+" FROM storage_roots WHERE id=? AND library_id=? AND storage_source='managed' AND status='active'", settings.ManagedRootID, document.LibraryID))
 	if err == sql.ErrNoRows {
@@ -201,7 +223,7 @@ func (service *Service) beginApproval(ctx context.Context, transaction *sql.Tx, 
 		}
 	}
 	relative := renderNamingSequence(settings, input, document.ID, sequence)
-	partial := filepath.ToSlash(filepath.Join(filepath.Dir(relative), ".aibid-"+operationID+".part"))
+	partial := filepath.ToSlash(filepath.Join(filepath.Dir(relative), ".aidex-"+operationID+".part"))
 	_, err = transaction.ExecContext(ctx, `INSERT INTO materializations(id,document_id,library_id,physical_file_id,content_version_id,document_revision,target_root_id,root_revision,library_configuration_revision,target_relative_path,target_comparison_key,partial_relative_path,expected_sha256,expected_size_bytes,state,approved_by,decision_kind,review_id,created_at,updated_at)
  SELECT ?,d.id,d.library_id,f.id,v.id,d.revision,?,?,?,?,?,?,v.sha256,v.size_bytes,'planned',?,?,?,?,? FROM documents d JOIN physical_files f ON f.id=d.physical_file_id JOIN content_versions v ON v.id=f.current_content_version_id WHERE d.id=?`, operationID, root.ID, root.Revision, configurationRevision, relative, comparison(filepath.Join(root.Path, filepath.FromSlash(relative)), root.CaseSensitive), partial, principal.User.ID, kind, nullableID(reviewID), now(), now(), document.ID)
 	if err != nil {
@@ -607,6 +629,9 @@ func (service *Service) commitMaterialization(ctx context.Context, job Job, oper
 			}
 		}
 		if _, err := transaction.ExecContext(ctx, "UPDATE materializations SET state='committed',published_identity=?,error_code='',updated_at=? WHERE id=?", identity, now(), operation.ID); err != nil {
+			return err
+		}
+		if err := service.completeReplacement(ctx, transaction, principal, operation.DocumentID); err != nil {
 			return err
 		}
 		return workflowEvent(ctx, transaction, principal, Document{ID: operation.DocumentID, LibraryID: operation.LibraryID, CaseID: caseID}, domain.RequestMetadata{}, "document.approved", map[string]any{"decision_kind": operation.DecisionKind, "operation_id": operation.ID, "content_version_id": operation.VersionID, "configuration_revision": operation.ConfigurationRevision})

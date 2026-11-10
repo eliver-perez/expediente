@@ -24,5 +24,5 @@ func MachineFingerprint() (string, error) {
 			return "", failure("LICENSE_FINGERPRINT_UNAVAILABLE", "El identificador del equipo no es válido.")
 		}
 	}
-	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("AIBID-FINGERPRINT-V1\n"+runtime.GOOS+"\n"+compact))), nil
+	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("AIDEX-FINGERPRINT-V1\n"+runtime.GOOS+"\n"+compact))), nil
 }

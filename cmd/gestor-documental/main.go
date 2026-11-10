@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"gestor-documental/internal/backups"
 	"gestor-documental/internal/buildinfo"
 	"gestor-documental/internal/config"
 	"gestor-documental/internal/domain"
@@ -41,11 +42,11 @@ func main() {
 
 func run(ctx context.Context, ready func()) error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("uso: gestor-documental version|init|configure-license|doctor|check-state|erase-internal-data|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
+		return fmt.Errorf("uso: aidex-server version|init|configure-license|doctor|check-state|erase-internal-data|bootstrap|recover-admin|recover-license|migrate|rollback-empty|serve [--config RUTA]")
 	}
 	command := os.Args[1]
 	if command == "version" {
-		fmt.Printf("AIBID %s (%s; %s/%s)\n", buildinfo.DisplayVersion(), buildinfo.Channel, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("AIDEX %s (%s; %s/%s)\n", buildinfo.DisplayVersion(), buildinfo.Channel, runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -55,6 +56,7 @@ func run(ctx context.Context, ready func()) error {
 	configurationPath := flags.String("config", "", "Archivo privado de configuración (por defecto, el del usuario)")
 	initialState := flags.String("state", "", "Directorio de datos (solo init)")
 	initialListen := flags.String("listen", "", "IP:puerto inicial (solo init; HTTP local)")
+	selectedPort := flags.Int("port", 0, "Puerto TCP para configure-port; requiere servicio detenido")
 	initialTools := flags.String("tools", "", "Directorio absoluto de herramientas PDF/OCR (solo init)")
 	initialTessdata := flags.String("tessdata", "", "Directorio absoluto de idiomas OCR (solo init)")
 	initialFontconfig := flags.String("fontconfig", "", "Archivo absoluto de fuentes (solo init)")
@@ -110,6 +112,37 @@ func run(ctx context.Context, ready func()) error {
 	if *initialState != "" || *initialListen != "" || *initialTools != "" || *initialTessdata != "" || *initialFontconfig != "" {
 		return fmt.Errorf("state/listen/tools/tessdata only apply to init")
 	}
+	if command == "recover-macos-installation" {
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("la recuperación del instalador requiere macOS")
+		}
+		removed, err := maintenance.RecoverMacOSInstallerResidues(*configurationPath)
+		for _, path := range removed {
+			fmt.Printf("[AIDEX recuperación] residuo retirado=%q\n", path)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Printf("[AIDEX recuperación] inventario validado; residuos retirados=%d; instalación nueva permitida\n", len(removed))
+		return nil
+	}
+	if command == "erase-macos-installation" {
+		if runtime.GOOS != "darwin" || !*confirmErase {
+			return fmt.Errorf("la eliminación completa requiere macOS y confirmación explícita")
+		}
+		preserved, err := maintenance.EraseMacOSInstallation(*configurationPath)
+		if err != nil {
+			if preserved != "" {
+				fmt.Fprintln(os.Stderr, "Documentos conservados en:", preserved)
+			}
+			return err
+		}
+		fmt.Println("Eliminación completa de datos internos verificada.")
+		if preserved != "" {
+			fmt.Println("Documentos y archivos no reconocidos conservados en:", preserved)
+		}
+		return nil
+	}
 	if command == "erase-internal-data" {
 		if !*confirmErase {
 			return fmt.Errorf("se requiere confirmar la eliminación de los datos internos; los documentos físicos se conservan")
@@ -128,7 +161,7 @@ func run(ctx context.Context, ready func()) error {
 		return nil
 	}
 
-	if command != "serve" && command != "doctor" && command != "check-state" && command != "bootstrap-ready" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
+	if command != "serve" && command != "doctor" && command != "check-state" && command != "configure-port" && command != "bootstrap-ready" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
 		return fmt.Errorf("comando no reconocido")
 	}
 	var configuration config.Config
@@ -149,6 +182,17 @@ func run(ctx context.Context, ready func()) error {
 		return err
 	}
 	defer unlock()
+	if command == "configure-port" {
+		if *selectedPort == 0 {
+			return fmt.Errorf("indica --port entre 1 y 65535")
+		}
+		updated, err := network.ConfigureStopped(*configurationPath, *selectedPort)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Puerto configurado:", updated.ListenAddress)
+		return nil
+	}
 	if command == "check-state" {
 		fmt.Println("Configuración y acceso exclusivo al estado: OK. No se abrió ni migró la base de datos.")
 		return nil
@@ -208,6 +252,15 @@ func run(ctx context.Context, ready func()) error {
 	if !httpapi.AssetsReady() {
 		return fmt.Errorf("compila primero el frontend con npm --prefix web run build y vuelve a compilar Go")
 	}
+	backupService, err := backups.New(database, configuration)
+	if err != nil {
+		return err
+	}
+	// Apply a confirmed restore only while the state lock is held and before any
+	// watcher, queue worker or HTTP listener can observe the database.
+	if err := backupService.ApplyPending(ctx, service.License); err != nil {
+		return err
+	}
 	var administratorReady int
 	if err := database.Reader.QueryRowContext(ctx, "SELECT count(*) FROM bootstrap_state").Scan(&administratorReady); err != nil {
 		return err
@@ -223,7 +276,7 @@ func run(ctx context.Context, ready func()) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	access := network.New(*configurationPath, configuration)
 	if err := access.Start(func(active config.Config) http.Handler {
-		return httpapi.New(service, active, logger).WithNetwork(access).Handler()
+		return httpapi.New(service, active, logger).WithBackups(backupService).WithNetwork(access).Handler()
 	}); err != nil {
 		return err
 	}
