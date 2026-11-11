@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -19,6 +20,11 @@ import (
 type Database struct {
 	Writer *sql.DB
 	Reader *sql.DB
+	// Separate pools prevent long analytical reads from exhausting the connections
+	// used by authentication and live processing progress.
+	ControlReader   *sql.DB
+	StatusReader    *sql.DB
+	AnalyticsReader *sql.DB
 }
 
 func Open(ctx context.Context, stateDirectory string) (*Database, error) {
@@ -88,7 +94,38 @@ func Open(ctx context.Context, stateDirectory string) (*Database, error) {
 		reader.Close()
 		return fail(err)
 	}
-	return &Database{Writer: writer, Reader: reader}, nil
+	openReader := func(limit int) (*sql.DB, error) {
+		pool, err := sql.Open("sqlite", databaseURL.String())
+		if err != nil {
+			return nil, err
+		}
+		pool.SetMaxOpenConns(limit)
+		pool.SetMaxIdleConns(limit)
+		if err = pool.PingContext(ctx); err != nil {
+			pool.Close()
+			return nil, err
+		}
+		return pool, nil
+	}
+	control, err := openReader(2)
+	if err != nil {
+		reader.Close()
+		return fail(err)
+	}
+	status, err := openReader(2)
+	if err != nil {
+		control.Close()
+		reader.Close()
+		return fail(err)
+	}
+	analytics, err := openReader(2)
+	if err != nil {
+		status.Close()
+		control.Close()
+		reader.Close()
+		return fail(err)
+	}
+	return &Database{Writer: writer, Reader: reader, ControlReader: control, StatusReader: status, AnalyticsReader: analytics}, nil
 }
 
 // sqliteFileURL accepts an absolute path with native separators already converted
@@ -103,6 +140,15 @@ func sqliteFileURL(path string) url.URL {
 }
 
 func (database *Database) Close() error {
+	if database.AnalyticsReader != nil {
+		database.AnalyticsReader.Close()
+	}
+	if database.StatusReader != nil {
+		database.StatusReader.Close()
+	}
+	if database.ControlReader != nil {
+		database.ControlReader.Close()
+	}
 	readerError := database.Reader.Close()
 	writerError := database.Writer.Close()
 	if readerError != nil {
@@ -354,11 +400,15 @@ func migrate(ctx context.Context, connection *sql.DB) error {
 		if err != nil {
 			return err
 		}
-		checksum := fmt.Sprintf("%x", sha256.Sum256(contents))
+		// Git may check out migration text with CRLF on Windows. The installed
+		// database can have the LF checksum of the same SQL, so hash canonical
+		// line endings while executing the file's original bytes.
+		checksum := fmt.Sprintf("%x", sha256.Sum256(bytes.ReplaceAll(contents, []byte("\r\n"), []byte("\n"))))
+		rawChecksum := fmt.Sprintf("%x", sha256.Sum256(contents))
 		var previousChecksum string
 		err = transaction.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE name = ?", entry.Name()).Scan(&previousChecksum)
 		if err == nil {
-			if previousChecksum != checksum {
+			if previousChecksum != checksum && previousChecksum != rawChecksum {
 				return fmt.Errorf("migration checksum mismatch: %s", entry.Name())
 			}
 			continue

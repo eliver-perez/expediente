@@ -16,17 +16,19 @@ const dashboardFiles = `WITH base AS (
  SELECT d.id,d.created_at,d.approval_status,f.library_id,f.storage_source,f.extraction_freshness,
  coalesce(v.document_format,'unknown') AS format,coalesce(v.sha256,'') AS hash,coalesce(v.index_block_reason,'') AS reason,
  coalesce(j.status,'') AS job_status,coalesce(e.result_code,'') AS result,
- EXISTS(SELECT 1 FROM extraction_pages ep WHERE ep.extraction_id=f.indexed_extraction_id AND ep.extraction_method IN ('ocr','empty')) AS ocr,
+ CASE WHEN json_type(e.summary_json,'$.ocr_pages') IS NOT NULL
+ THEN json_extract(e.summary_json,'$.ocr_pages')>0
+ ELSE EXISTS(SELECT 1 FROM extraction_pages ep WHERE ep.extraction_id=f.indexed_extraction_id AND ep.extraction_method IN ('ocr','empty')) END AS ocr,
  ((SELECT paused FROM processing_policy WHERE singleton=1) OR NOT coalesce((1=1 ` + advancedJobEligibility + `),1)) AS paused
  FROM documents d JOIN physical_files f ON f.id=d.physical_file_id JOIN libraries b ON b.id=d.library_id
  LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id
  LEFT JOIN jobs j ON j.id=(SELECT id FROM jobs WHERE physical_file_id=f.id AND target_version=f.current_content_version_id AND job_type='extract' ORDER BY created_at DESC,id DESC LIMIT 1)
  WHERE d.deleted_at IS NULL AND b.disabled_at IS NULL
-), files AS (SELECT *,CASE
+), files AS MATERIALIZED (SELECT *,CASE
  WHEN reason<>'' AND extraction_freshness<>'current' THEN 'stored_only'
  WHEN job_status='failed' THEN 'error'
  WHEN job_status='running' THEN 'processing'
- WHEN job_status='paused' OR (paused AND job_status IN ('queued','retry_wait')) THEN 'paused'
+ WHEN job_status='paused' OR (job_status IN ('queued','retry_wait') AND paused) THEN 'paused'
  WHEN job_status IN ('queued','retry_wait') THEN 'pending'
  WHEN job_status='cancelled' THEN 'cancelled'
  WHEN extraction_freshness='current' THEN CASE WHEN result='complete_with_warnings' THEN 'completed_with_warnings' ELSE 'completed' END
@@ -143,6 +145,45 @@ func metricGroups(ctx context.Context, tx *sql.Tx, query string) ([]MetricGroup,
 	return result, rows.Err()
 }
 func (s *Service) Dashboard(ctx context.Context, p domain.Principal) (Dashboard, error) {
+	if err := systemAccess(p); err != nil {
+		return Dashboard{}, err
+	}
+	s.dashboardMutex.Lock()
+	if s.dashboardValid {
+		cached := s.dashboardCached
+		refresh := time.Since(s.dashboardCachedAt) >= 30*time.Second && !s.dashboardRefreshing && time.Since(s.dashboardRefreshAt) >= 15*time.Second
+		if refresh {
+			s.dashboardRefreshing = true
+			s.dashboardRefreshAt = time.Now()
+		}
+		s.dashboardMutex.Unlock()
+		if refresh {
+			go func() {
+				background, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				updated, err := s.computeDashboard(background, p)
+				s.dashboardMutex.Lock()
+				if err == nil {
+					s.dashboardCached, s.dashboardCachedAt, s.dashboardValid = updated, time.Now(), true
+				}
+				s.dashboardRefreshing = false
+				s.dashboardMutex.Unlock()
+			}()
+		}
+		return cached, nil
+	}
+	s.dashboardMutex.Unlock()
+	started := time.Now()
+	result, err := s.computeDashboard(ctx, p)
+	if err == nil && time.Since(started) >= time.Second {
+		s.dashboardMutex.Lock()
+		s.dashboardCached, s.dashboardCachedAt, s.dashboardValid = result, time.Now(), true
+		s.dashboardMutex.Unlock()
+	}
+	return result, err
+}
+
+func (s *Service) computeDashboard(ctx context.Context, p domain.Principal) (Dashboard, error) {
 	result := Dashboard{}
 	if err := systemAccess(p); err != nil {
 		return result, err
@@ -163,7 +204,7 @@ func (s *Service) Dashboard(ctx context.Context, p domain.Principal) (Dashboard,
 	month := time.Date(instant.Year(), instant.Month(), 1, 0, 0, 0, 0, instant.Location())
 	result.Generated = domain.Timestamp(instant)
 	result.Timezone, _ = instant.Zone()
-	tx, err := s.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.Database.AnalyticsReader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return result, err
 	}
@@ -203,7 +244,7 @@ func (s *Service) Dashboard(ctx context.Context, p domain.Principal) (Dashboard,
 	mark(&policyMS)
 	// Final successful attempts only, with valid recorded times. Excludes interrupted
 	// or failed attempts and time spent waiting in the queue before acquisition.
-	if err = tx.QueryRowContext(ctx, `SELECT count(*),avg((julianday(a.finished_at)-julianday(a.started_at))*86400) FROM job_attempts a JOIN jobs j ON j.id=a.job_id AND j.fencing_token=a.fencing_token JOIN libraries b ON b.id=j.library_id WHERE b.disabled_at IS NULL AND j.job_type='extract' AND j.status='succeeded' AND coalesce(a.error_code,'')='' AND a.finished_at>=? AND a.finished_at<=? AND julianday(a.finished_at)>=julianday(a.started_at)`, domain.Timestamp(instant.Add(-24*time.Hour)), result.Generated).Scan(&result.TimingSamples, &result.AverageSeconds); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*),avg((julianday(a.finished_at)-julianday(a.started_at))*86400) FROM job_attempts a INDEXED BY job_attempts_dashboard_cover JOIN jobs j ON j.id=a.job_id AND j.fencing_token=a.fencing_token JOIN libraries b ON b.id=j.library_id WHERE b.disabled_at IS NULL AND j.job_type='extract' AND j.status='succeeded' AND coalesce(a.error_code,'')='' AND a.finished_at IS NOT NULL AND a.finished_at>=? AND a.finished_at<=? AND julianday(a.finished_at)>=julianday(a.started_at)`, domain.Timestamp(instant.Add(-24*time.Hour)), result.Generated).Scan(&result.TimingSamples, &result.AverageSeconds); err != nil {
 		return result, err
 	}
 	mark(&attemptsMS)
@@ -220,6 +261,48 @@ func (s *Service) Dashboard(ctx context.Context, p domain.Principal) (Dashboard,
 	return result, err
 }
 func (s *Service) DashboardLibraries(ctx context.Context, p domain.Principal, cursor string) (Page[DashboardLibrary], error) {
+	if err := systemAccess(p); err != nil {
+		return Page[DashboardLibrary]{}, err
+	}
+	if cursor != "" {
+		return s.computeDashboardLibraries(ctx, p, cursor)
+	}
+	s.dashboardLibrariesMutex.Lock()
+	if s.dashboardLibrariesValid {
+		cached := s.dashboardLibrariesCached
+		refresh := time.Since(s.dashboardLibrariesCachedAt) >= 30*time.Second && !s.dashboardLibrariesRefreshing && time.Since(s.dashboardLibrariesRefreshAt) >= 15*time.Second
+		if refresh {
+			s.dashboardLibrariesRefreshing = true
+			s.dashboardLibrariesRefreshAt = time.Now()
+		}
+		s.dashboardLibrariesMutex.Unlock()
+		if refresh {
+			go func() {
+				background, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				updated, err := s.computeDashboardLibraries(background, p, "")
+				s.dashboardLibrariesMutex.Lock()
+				if err == nil {
+					s.dashboardLibrariesCached, s.dashboardLibrariesCachedAt, s.dashboardLibrariesValid = updated, time.Now(), true
+				}
+				s.dashboardLibrariesRefreshing = false
+				s.dashboardLibrariesMutex.Unlock()
+			}()
+		}
+		return cached, nil
+	}
+	s.dashboardLibrariesMutex.Unlock()
+	started := time.Now()
+	result, err := s.computeDashboardLibraries(ctx, p, "")
+	if err == nil && time.Since(started) >= time.Second {
+		s.dashboardLibrariesMutex.Lock()
+		s.dashboardLibrariesCached, s.dashboardLibrariesCachedAt, s.dashboardLibrariesValid = result, time.Now(), true
+		s.dashboardLibrariesMutex.Unlock()
+	}
+	return result, err
+}
+
+func (s *Service) computeDashboardLibraries(ctx context.Context, p domain.Principal, cursor string) (Page[DashboardLibrary], error) {
 	result := Page[DashboardLibrary]{Items: []DashboardLibrary{}}
 	if err := systemAccess(p); err != nil {
 		return result, err
@@ -238,7 +321,7 @@ func (s *Service) DashboardLibraries(ctx context.Context, p domain.Principal, cu
 	if err != nil {
 		return result, err
 	}
-	connection, err := s.Database.Reader.Conn(ctx)
+	connection, err := s.Database.AnalyticsReader.Conn(ctx)
 	if err != nil {
 		return result, err
 	}

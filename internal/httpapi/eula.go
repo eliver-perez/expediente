@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"gestor-documental/internal/audit"
@@ -23,7 +24,12 @@ var eulaText string
 // placeholder never grants acceptance of the supplied 18-clause contract.
 const eulaVersion = "1.0-borrador-2026-10-22"
 
-func eulaHash() string { sum := sha256.Sum256([]byte(eulaText)); return hex.EncodeToString(sum[:]) }
+func eulaHash() string {
+	// The accepted text was recorded from an LF build. Windows Git checkouts
+	// may embed the identical contract with CRLF line endings.
+	sum := sha256.Sum256([]byte(strings.ReplaceAll(eulaText, "\r\n", "\n")))
+	return hex.EncodeToString(sum[:])
+}
 
 func (server *Server) about(w http.ResponseWriter, r *http.Request, p domain.Principal) {
 	status, err := server.identity.License.Status(r.Context())
@@ -49,7 +55,7 @@ func (server *Server) eulaAccepted(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	var count int
-	err = server.identity.Database.Reader.QueryRowContext(ctx, "SELECT count(*) FROM eula_acceptances WHERE installation_id=? AND version=? AND text_sha256=?", status.InstallationID, eulaVersion, eulaHash()).Scan(&count)
+	err = server.identity.Database.ControlReader.QueryRowContext(ctx, "SELECT count(*) FROM eula_acceptances WHERE installation_id=? AND version=? AND text_sha256=?", status.InstallationID, eulaVersion, eulaHash()).Scan(&count)
 	return count > 0, err
 }
 

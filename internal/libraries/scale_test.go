@@ -83,6 +83,9 @@ func TestSyntheticScale(t *testing.T) {
 	}
 	inserted := 0
 	for _, target := range []int{10000, 50000, 100000} {
+		if os.Getenv("AIDEX_PERF_MAX") == "50000" && target > 50000 {
+			break
+		}
 		started := time.Now()
 		err := s.Database.Write(ctx, func(tx *sql.Tx) error {
 			file, err := tx.PrepareContext(ctx, "INSERT INTO physical_files(id,library_id,storage_source,availability,integrity_status,extraction_freshness,created_at) VALUES(?,?,'linked','available','unknown','none',?)")
@@ -163,6 +166,13 @@ func TestSyntheticScale(t *testing.T) {
 			return e
 		})
 		measure("libraries", func() error { _, e := s.DashboardLibraries(ctx, p, ""); return e })
+		measure("processing", func() error {
+			v, e := s.Processing(ctx, p, libs[0])
+			if e == nil {
+				t.Logf("scale=%d processing_total=%d", target, v.Stats.Total)
+			}
+			return e
+		})
 		measure("case_statistics", func() error { _, e := s.CaseStatistics(ctx, p, libs[0], ""); return e })
 		measure("list", func() error { _, e := s.ListLibraries(ctx, p, false); return e })
 		measure("name_search", func() error {
@@ -170,8 +180,13 @@ func TestSyntheticScale(t *testing.T) {
 			return e
 		})
 	}
+	if os.Getenv("AIDEX_PERF_ONLY_READ") == "1" {
+		return
+	}
 	start := time.Now()
-	if _,err:=s.Database.Writer.Exec("UPDATE jobs SET status='succeeded' WHERE library_id=? AND status IN ('queued','retry_wait','paused')",libs[0]);err!=nil{t.Fatal(err)}
+	if _, err := s.Database.Writer.Exec("UPDATE jobs SET status='succeeded' WHERE library_id=? AND status IN ('queued','retry_wait','paused')", libs[0]); err != nil {
+		t.Fatal(err)
+	}
 	var activeScans, activeJobs, pendingMaterials int
 	_ = s.Database.Reader.QueryRow("SELECT count(*) FROM root_scans WHERE root_id IN (SELECT id FROM storage_roots WHERE library_id=?) AND status IN ('running','paused')", libs[0]).Scan(&activeScans)
 	_ = s.Database.Reader.QueryRow("SELECT count(*) FROM jobs WHERE library_id=? AND status IN ('queued','running','retry_wait','paused')", libs[0]).Scan(&activeJobs)
@@ -195,11 +210,26 @@ func TestSyntheticScale(t *testing.T) {
 	go func() {
 		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		if _, e := s.Dashboard(probeCtx, p); e != nil { probeResult <- fmt.Errorf("dashboard during deletion: %w", e); return }
-		if _, e := s.DashboardLibraries(probeCtx, p, ""); e != nil { probeResult <- fmt.Errorf("library dashboard during deletion: %w", e); return }
-		if _, e := s.CaseStatistics(probeCtx, p, libs[1], ""); e != nil { probeResult <- fmt.Errorf("statistics during deletion: %w", e); return }
-		if _, e := s.JobHistory(probeCtx, p, libs[1], TableFilter{Page: 1, Size: 10, Sort: "date", Direction: "desc"}); e != nil { probeResult <- fmt.Errorf("history during deletion: %w", e); return }
-		if _, e := s.DeletionStatus(probeCtx, p, plan.ID); e != nil { probeResult <- fmt.Errorf("deletion status during deletion: %w", e); return }
+		if _, e := s.Dashboard(probeCtx, p); e != nil {
+			probeResult <- fmt.Errorf("dashboard during deletion: %w", e)
+			return
+		}
+		if _, e := s.DashboardLibraries(probeCtx, p, ""); e != nil {
+			probeResult <- fmt.Errorf("library dashboard during deletion: %w", e)
+			return
+		}
+		if _, e := s.CaseStatistics(probeCtx, p, libs[1], ""); e != nil {
+			probeResult <- fmt.Errorf("statistics during deletion: %w", e)
+			return
+		}
+		if _, e := s.JobHistory(probeCtx, p, libs[1], TableFilter{Page: 1, Size: 10, Sort: "date", Direction: "desc"}); e != nil {
+			probeResult <- fmt.Errorf("history during deletion: %w", e)
+			return
+		}
+		if _, e := s.DeletionStatus(probeCtx, p, plan.ID); e != nil {
+			probeResult <- fmt.Errorf("deletion status during deletion: %w", e)
+			return
+		}
 		probeResult <- nil
 	}()
 	maxLatency := time.Duration(0)
@@ -235,7 +265,9 @@ func TestSyntheticScale(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 done:
-	if err := <-probeResult; err != nil { t.Fatal(err) }
+	if err := <-probeResult; err != nil {
+		t.Fatal(err)
+	}
 	if contents, err := os.ReadFile(originalMarker); err != nil || string(contents) != "AIDEX nunca elimina originales vinculados" {
 		t.Fatalf("original linked file changed or deleted: %v", err)
 	}

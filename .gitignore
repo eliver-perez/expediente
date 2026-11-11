@@ -25,6 +25,7 @@ node_modules/
 __pycache__/
 coverage.out
 /.cache/
+/.tools/
 /web/test-results/
 /web/playwright-report/
 /internal/httpapi/assets/*

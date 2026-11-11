@@ -28,7 +28,7 @@ func (service *Service) ProcessingConfiguration(ctx context.Context) (Processing
 			c.Configuration = extraction.Concurrency{Mode: "manual", Native: n, OCR: 1, Total: n}
 		}
 	}
-	err := service.Database.Reader.QueryRowContext(ctx, "SELECT mode,native_workers,ocr_workers,total_workers,revision FROM processing_settings WHERE singleton=1").Scan(&c.Configuration.Mode, &c.Configuration.Native, &c.Configuration.OCR, &c.Configuration.Total, &c.Revision)
+	err := service.Database.StatusReader.QueryRowContext(ctx, "SELECT mode,native_workers,ocr_workers,total_workers,revision FROM processing_settings WHERE singleton=1").Scan(&c.Configuration.Mode, &c.Configuration.Native, &c.Configuration.OCR, &c.Configuration.Total, &c.Revision)
 	if err != nil && err != sql.ErrNoRows {
 		return c, err
 	}

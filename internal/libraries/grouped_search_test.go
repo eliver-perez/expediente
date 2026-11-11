@@ -49,6 +49,11 @@ func TestGroupedSearchTotalsScopeAndDirectChildren(t *testing.T) {
 	if result.Count != 1 || result.Items[0].Filename != "Match.pdf" {
 		t.Fatal("file explorer included descendants")
 	}
+	fast, err := service.Search(ctx, principal, SearchInput{Libraries: []string{first}, SkipCount: true, Filters: Filters{RootID: root, DirectChildren: true}}, domain.RequestMetadata{}, false)
+	requireNoError(t, err)
+	if fast.Count != -1 || len(fast.Groups) != 0 || len(fast.Items) != 1 || fast.Items[0].ID != result.Items[0].ID {
+		t.Fatal("page navigation changed documents when total was omitted")
+	}
 	result, err = service.Search(ctx, principal, SearchInput{Query: "Match", Type: "name", Libraries: []string{first}, Filters: Filters{RootID: root, Prefix: "Child", Availability: "available"}}, domain.RequestMetadata{}, true)
 	requireNoError(t, err)
 	if result.Count != 1 || result.Items[0].Filename != "Match-child.pdf" {

@@ -54,32 +54,43 @@ type ProcessingPerformance struct {
 	WindowMinutes      int     `json:"window_minutes"`
 }
 type ProcessingReport struct {
-	Paused      bool                   `json:"paused"`
-	Skips       []ScanError            `json:"file_skips"`
-	Workers     extraction.Concurrency `json:"workers"`
-	Performance ProcessingPerformance  `json:"performance"`
-	Stats       ProcessingStats        `json:"stats"`
-	Scans       []ScanProgress         `json:"scans"`
-	Active      []Job                  `json:"active_jobs"`
-	Errors      []ScanError            `json:"scan_errors"`
+	StatsAvailable       bool                   `json:"stats_available"`
+	PerformanceAvailable bool                   `json:"performance_available"`
+	Paused               bool                   `json:"paused"`
+	Skips                []ScanError            `json:"file_skips"`
+	Workers              extraction.Concurrency `json:"workers"`
+	Performance          ProcessingPerformance  `json:"performance"`
+	Stats                ProcessingStats        `json:"stats"`
+	Scans                []ScanProgress         `json:"scans"`
+	Active               []Job                  `json:"active_jobs"`
+	Errors               []ScanError            `json:"scan_errors"`
 }
 
 func (service *Service) Processing(ctx context.Context, principal domain.Principal, libraryID string) (ProcessingReport, error) {
-	report := ProcessingReport{Scans: []ScanProgress{}, Active: []Job{}, Errors: []ScanError{}, Skips: []ScanError{}}
+	report := ProcessingReport{StatsAvailable: true, PerformanceAvailable: true, Scans: []ScanProgress{}, Active: []Job{}, Errors: []ScanError{}, Skips: []ScanError{}}
 	if err := service.Read(ctx, principal, libraryID, "indexing.run"); err != nil {
 		return report, err
 	}
 	// One row per physical file/document, never per location or historical job.
-	err := service.Database.Reader.QueryRowContext(ctx, `WITH file_states AS (
+	statsCtx, cancelStats := context.WithTimeout(ctx, 750*time.Millisecond)
+	err := service.Database.Reader.QueryRowContext(statsCtx, `WITH file_states AS (
  SELECT f.storage_source AS source,f.extraction_freshness AS freshness,coalesce(v.index_block_reason,'') AS index_reason,
  coalesce((SELECT status FROM jobs WHERE physical_file_id=f.id AND target_version=f.current_content_version_id AND job_type='extract' ORDER BY created_at DESC,id DESC LIMIT 1),'') AS status,
- EXISTS(SELECT 1 FROM extraction_pages WHERE extraction_id=f.indexed_extraction_id AND extraction_method IN ('ocr','empty')) AS ocr
- FROM physical_files f JOIN documents d ON d.physical_file_id=f.id LEFT JOIN content_versions v ON v.id=f.current_content_version_id WHERE f.library_id=? AND d.deleted_at IS NULL AND `+visibleDocumentSQL+`)
- SELECT count(*),coalesce(sum(source='linked'),0),coalesce(sum(source='managed'),0),coalesce(sum(freshness='current'),0),coalesce(sum(freshness<>'current' AND status='failed'),0),coalesce(sum(freshness<>'current' AND status<>'failed' AND index_reason=''),0),coalesce(sum(freshness='current' AND ocr=0),0),coalesce(sum(freshness='current' AND ocr=1),0),coalesce(sum(freshness<>'current' AND index_reason<>''),0) FROM file_states`, libraryID, principal.User.ID, principal.User.ID).Scan(&report.Stats.Total, &report.Stats.Linked, &report.Stats.Managed, &report.Stats.Processed, &report.Stats.Errors, &report.Stats.Pending, &report.Stats.Native, &report.Stats.OCR, &report.Stats.StoredOnly)
+ CASE WHEN json_type(e.summary_json,'$.ocr_pages') IS NOT NULL
+ THEN json_extract(e.summary_json,'$.ocr_pages')>0
+ ELSE EXISTS(SELECT 1 FROM extraction_pages WHERE extraction_id=f.indexed_extraction_id AND extraction_method IN ('ocr','empty')) END AS ocr
+ FROM physical_files f JOIN documents d ON d.physical_file_id=f.id LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id WHERE f.library_id=? AND d.deleted_at IS NULL AND `+visibleDocumentSQL+`)
+	 SELECT count(*),coalesce(sum(source='linked'),0),coalesce(sum(source='managed'),0),coalesce(sum(freshness='current'),0),coalesce(sum(freshness<>'current' AND status='failed'),0),coalesce(sum(freshness<>'current' AND status<>'failed' AND index_reason=''),0),coalesce(sum(freshness='current' AND ocr=0),0),coalesce(sum(freshness='current' AND ocr=1),0),coalesce(sum(freshness<>'current' AND index_reason<>''),0) FROM file_states`, libraryID, principal.User.ID, principal.User.ID).Scan(&report.Stats.Total, &report.Stats.Linked, &report.Stats.Managed, &report.Stats.Processed, &report.Stats.Errors, &report.Stats.Pending, &report.Stats.Native, &report.Stats.OCR, &report.Stats.StoredOnly)
+	statsTimedOut := statsCtx.Err() == context.DeadlineExceeded
+	cancelStats()
+	if statsTimedOut && ctx.Err() == nil {
+		report.StatsAvailable = false
+		err = nil
+	}
 	if err != nil {
 		return report, err
 	}
-	rows, err := service.Database.Reader.QueryContext(ctx, `SELECT s.id,s.root_id,r.canonical_path,s.status,s.started_at,coalesce(p.updated_at,s.started_at),coalesce(s.completed_at,''),coalesce(p.current_path,''),s.directories_seen,json_array_length(s.checkpoint_json),s.files_seen,coalesce(p.unchanged_files,0),coalesce(p.hashed_files,0),coalesce(p.excluded_directories,0),(SELECT count(*) FROM scan_errors e WHERE e.root_id=r.id),coalesce(c.paused,0),(SELECT count(*) FROM document_file_skips skipped WHERE skipped.root_id=r.id AND skipped.observed_at>=s.started_at)
+	rows, err := service.Database.StatusReader.QueryContext(ctx, `SELECT s.id,s.root_id,r.canonical_path,s.status,s.started_at,coalesce(p.updated_at,s.started_at),coalesce(s.completed_at,''),coalesce(p.current_path,''),s.directories_seen,json_array_length(s.checkpoint_json),s.files_seen,coalesce(p.unchanged_files,0),coalesce(p.hashed_files,0),coalesce(p.excluded_directories,0),(SELECT count(*) FROM scan_errors e WHERE e.root_id=r.id),coalesce(c.paused,0),(SELECT count(*) FROM document_file_skips skipped WHERE skipped.root_id=r.id AND skipped.observed_at>=s.started_at)
  FROM storage_roots r JOIN root_scans s ON s.id=(SELECT id FROM root_scans WHERE root_id=r.id ORDER BY started_at DESC,id DESC LIMIT 1) LEFT JOIN scan_progress p ON p.scan_id=s.id LEFT JOIN root_scan_controls c ON c.root_id=r.id WHERE r.library_id=? AND r.status<>'superseded' ORDER BY r.created_at`, libraryID)
 	if err != nil {
 		return report, err
@@ -100,28 +111,32 @@ func (service *Service) Processing(ctx context.Context, principal domain.Princip
 	if err != nil {
 		return report, err
 	}
-	rows, err = service.Database.Reader.QueryContext(ctx, `SELECT j.id FROM jobs j WHERE j.library_id=? AND j.status='running' AND (j.physical_file_id IS NULL OR EXISTS(SELECT 1 FROM documents d JOIN physical_files f ON f.id=d.physical_file_id WHERE f.id=j.physical_file_id AND `+visibleDocumentSQL+`)) ORDER BY j.created_at LIMIT 32`, libraryID, principal.User.ID, principal.User.ID)
+	canReadDocuments := service.require(ctx, service.Database.StatusReader, principal, libraryID, "documents.read") == nil
+	rows, err = service.Database.StatusReader.QueryContext(ctx, `SELECT j.id,j.library_id,coalesce(j.physical_file_id,''),j.job_type,j.status,j.attempt_count,coalesce(j.last_error_code,''),j.created_at FROM jobs j WHERE j.library_id=? AND j.status='running' AND (j.physical_file_id IS NULL OR (? AND EXISTS(SELECT 1 FROM documents d JOIN physical_files f ON f.id=d.physical_file_id WHERE f.id=j.physical_file_id AND d.deleted_at IS NULL AND `+visibleDocumentSQL+`))) ORDER BY j.created_at LIMIT 32`, libraryID, canReadDocuments, principal.User.ID, principal.User.ID)
 	if err != nil {
 		return report, err
 	}
-	ids := []string{}
+	active := []Job{}
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var job Job
+		if err = rows.Scan(&job.ID, &job.LibraryID, &job.FileID, &job.Kind, &job.Status, &job.Attempts, &job.Error, &job.Created); err != nil {
 			rows.Close()
 			return report, err
 		}
-		ids = append(ids, id)
+		active = append(active, job)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return report, err
 	}
-	for _, id := range ids {
-		job, err := service.Job(ctx, principal, id)
-		if err != nil {
+	canViewPaths := service.require(ctx, service.Database.StatusReader, principal, libraryID, "storage.view_paths") == nil
+	for _, job := range active {
+		if err := service.enrichJob(ctx, &job); err != nil {
 			return report, err
+		}
+		if !canViewPaths {
+			job.RootPath = ""
 		}
 		report.Active = append(report.Active, job)
 	}
@@ -148,15 +163,31 @@ func (service *Service) Processing(ctx context.Context, principal domain.Princip
 			report.Performance.NativeActive++
 		}
 	}
-	if err = service.Database.Reader.QueryRowContext(ctx, `SELECT count(*) FROM jobs j JOIN documents d ON d.physical_file_id=j.physical_file_id JOIN physical_files f ON f.id=j.physical_file_id WHERE j.library_id=? AND j.job_type='extract' AND j.status IN ('queued','retry_wait') AND `+visibleDocumentSQL, libraryID, principal.User.ID, principal.User.ID).Scan(&report.Performance.Queued); err != nil {
+	metricCtx, cancelMetric := context.WithTimeout(ctx, 350*time.Millisecond)
+	err = service.Database.Reader.QueryRowContext(metricCtx, `SELECT count(*) FROM jobs j JOIN documents d ON d.physical_file_id=j.physical_file_id JOIN physical_files f ON f.id=j.physical_file_id WHERE j.library_id=? AND j.job_type='extract' AND j.status IN ('queued','retry_wait') AND `+visibleDocumentSQL, libraryID, principal.User.ID, principal.User.ID).Scan(&report.Performance.Queued)
+	metricTimedOut := metricCtx.Err() == context.DeadlineExceeded
+	cancelMetric()
+	if metricTimedOut && ctx.Err() == nil {
+		report.PerformanceAvailable = false
+		err = nil
+	}
+	if err != nil {
 		return report, err
 	}
 	report.Performance.WindowMinutes = 5
-	if err = service.Database.Reader.QueryRowContext(ctx, `SELECT count(*)/5.0,coalesce(avg(max(0,(julianday(a.finished_at)-julianday(a.started_at))*86400)),0) FROM job_attempts a JOIN jobs j ON j.id=a.job_id AND j.fencing_token=a.fencing_token JOIN documents d ON d.physical_file_id=j.physical_file_id JOIN physical_files f ON f.id=j.physical_file_id WHERE a.finished_at>=? AND coalesce(a.error_code,'')='' AND j.status='succeeded' AND j.job_type='extract' AND j.library_id=? AND `+visibleDocumentSQL, domain.Timestamp(time.Now().Add(-5*time.Minute)), libraryID, principal.User.ID, principal.User.ID).Scan(&report.Performance.DocumentsPerMinute, &report.Performance.AverageSeconds); err != nil {
+	metricCtx, cancelMetric = context.WithTimeout(ctx, 350*time.Millisecond)
+	err = service.Database.Reader.QueryRowContext(metricCtx, `SELECT count(*)/5.0,coalesce(avg(max(0,(julianday(a.finished_at)-julianday(a.started_at))*86400)),0) FROM job_attempts a JOIN jobs j ON j.id=a.job_id AND j.fencing_token=a.fencing_token JOIN documents d ON d.physical_file_id=j.physical_file_id JOIN physical_files f ON f.id=j.physical_file_id WHERE a.finished_at>=? AND coalesce(a.error_code,'')='' AND j.status='succeeded' AND j.job_type='extract' AND j.library_id=? AND `+visibleDocumentSQL, domain.Timestamp(time.Now().Add(-5*time.Minute)), libraryID, principal.User.ID, principal.User.ID).Scan(&report.Performance.DocumentsPerMinute, &report.Performance.AverageSeconds)
+	metricTimedOut = metricCtx.Err() == context.DeadlineExceeded
+	cancelMetric()
+	if metricTimedOut && ctx.Err() == nil {
+		report.PerformanceAvailable = false
+		err = nil
+	}
+	if err != nil {
 		return report, err
 	}
 
-	rows, err = service.Database.Reader.QueryContext(ctx, `SELECT e.root_id,e.relative_path,e.error_code,e.occurred_at FROM scan_errors e JOIN storage_roots r ON r.id=e.root_id WHERE r.library_id=? ORDER BY e.occurred_at DESC LIMIT 100`, libraryID)
+	rows, err = service.Database.StatusReader.QueryContext(ctx, `SELECT e.root_id,e.relative_path,e.error_code,e.occurred_at FROM scan_errors e JOIN storage_roots r ON r.id=e.root_id WHERE r.library_id=? ORDER BY e.occurred_at DESC LIMIT 100`, libraryID)
 	if err != nil {
 		return report, err
 	}
@@ -173,7 +204,7 @@ func (service *Service) Processing(ctx context.Context, principal domain.Princip
 	if err != nil {
 		return report, err
 	}
-	rows, err = service.Database.Reader.QueryContext(ctx, `SELECT e.root_id,e.relative_path,e.error_code,e.observed_at FROM document_file_skips e JOIN storage_roots r ON r.id=e.root_id WHERE r.library_id=? AND r.status<>'superseded' ORDER BY e.observed_at DESC LIMIT 100`, libraryID)
+	rows, err = service.Database.StatusReader.QueryContext(ctx, `SELECT e.root_id,e.relative_path,e.error_code,e.observed_at FROM document_file_skips e JOIN storage_roots r ON r.id=e.root_id WHERE r.library_id=? AND r.status<>'superseded' ORDER BY e.observed_at DESC LIMIT 100`, libraryID)
 	if err != nil {
 		return report, err
 	}
@@ -190,7 +221,7 @@ func (service *Service) Processing(ctx context.Context, principal domain.Princip
 func (service *Service) enrichJob(ctx context.Context, job *Job) error {
 	var result string
 	var paused bool
-	err := service.Database.Reader.QueryRowContext(ctx, `SELECT b.name,coalesce(d.original_filename,''),coalesce(p.relative_path,l.relative_path,''),coalesce(r.canonical_path,''),coalesce(r.id,''),coalesce(p.operation,j.job_type),coalesce(p.completed_units,0),p.total_units,coalesce(p.updated_at,''),coalesce((SELECT started_at FROM job_attempts WHERE job_id=j.id ORDER BY attempt_number DESC LIMIT 1),''),coalesce((SELECT finished_at FROM job_attempts WHERE job_id=j.id ORDER BY attempt_number DESC LIMIT 1),''),coalesce(c.cancel_requested,0),j.max_attempts,j.retry_delay_seconds,j.timeout_seconds,j.available_at,coalesce((SELECT result_code FROM extraction_runs e WHERE e.physical_file_id=j.physical_file_id AND e.content_version_id=j.target_version ORDER BY rowid DESC LIMIT 1),''),((SELECT paused FROM processing_policy WHERE singleton=1) OR NOT coalesce((1=1 `+advancedJobEligibility+`),1))
+	err := service.Database.StatusReader.QueryRowContext(ctx, `SELECT b.name,coalesce(d.original_filename,''),coalesce(p.relative_path,l.relative_path,''),coalesce(r.canonical_path,''),coalesce(r.id,''),coalesce(p.operation,j.job_type),coalesce(p.completed_units,0),p.total_units,coalesce(p.updated_at,''),coalesce((SELECT started_at FROM job_attempts WHERE job_id=j.id ORDER BY attempt_number DESC LIMIT 1),''),coalesce((SELECT finished_at FROM job_attempts WHERE job_id=j.id ORDER BY attempt_number DESC LIMIT 1),''),coalesce(c.cancel_requested,0),j.max_attempts,j.retry_delay_seconds,j.timeout_seconds,j.available_at,coalesce((SELECT result_code FROM extraction_runs e WHERE e.physical_file_id=j.physical_file_id AND e.content_version_id=j.target_version ORDER BY rowid DESC LIMIT 1),''),((SELECT paused FROM processing_policy WHERE singleton=1) OR NOT coalesce((1=1 `+advancedJobEligibility+`),1))
  FROM jobs j JOIN libraries b ON b.id=j.library_id LEFT JOIN documents d ON d.physical_file_id=j.physical_file_id LEFT JOIN physical_files f ON f.id=j.physical_file_id LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id LEFT JOIN storage_roots r ON r.id=CASE WHEN j.job_type IN ('scan','verify_managed') THEN j.target_version ELSE l.root_id END LEFT JOIN job_progress p ON p.job_id=j.id LEFT JOIN job_controls c ON c.job_id=j.id WHERE j.id=?`, job.ID).Scan(&job.LibraryName, &job.Filename, &job.Relative, &job.RootPath, &job.RootID, &job.Operation, &job.CompletedUnits, &job.TotalUnits, &job.Updated, &job.Started, &job.Finished, &job.Cancelling, &job.MaximumAttempts, &job.RetryDelaySeconds, &job.TimeoutSeconds, &job.AvailableAt, &result, &paused)
 	job.ErrorClass = processingErrorClass(job.Error)
 	job.ProcessingState = jobProcessingState(*job, result, paused)

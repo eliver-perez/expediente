@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,7 @@ type Runtime struct {
 // Folder enumeration mostly waits on filesystem/network IO. Bound it separately
 // from extraction: each claimed job still holds the database's per-root lock.
 const reconciliationWorkers = 4
+const maxWindowsWatchDirectories = 1024
 
 func (service *Service) Start(ctx context.Context) (*Runtime, error) {
 	// The state lock excludes a surviving process. Only disposable private
@@ -195,6 +197,10 @@ func (runtime *Runtime) register(rootID, path string) error {
 	defer runtime.mutex.Unlock()
 	if runtime.directories[path] == rootID {
 		return nil
+	}
+	if runtime.degraded[rootID] == "WATCH_LIMIT" || (goruntime.GOOS == "windows" && len(runtime.directories) >= maxWindowsWatchDirectories) {
+		runtime.degraded[rootID] = "WATCH_LIMIT"
+		return errors.New("native watcher directory limit reached")
 	}
 	if err := runtime.watcher.Add(path); err != nil {
 		runtime.degraded[rootID] = "WATCH_LIMIT"
@@ -503,6 +509,9 @@ func (runtime *Runtime) worker(ctx context.Context, lane string, index int) {
 			watchFailed := false
 			err = isolatedOperation(func() error {
 				return runtime.Service.Scan(operationContext, job.Version, 0, func(path string) error {
+					if watchFailed {
+						return nil
+					}
 					rules, e := runtime.Service.advancedConfiguration(operationContext, runtime.Service.Database.Reader, job.LibraryID)
 					if e != nil {
 						return e

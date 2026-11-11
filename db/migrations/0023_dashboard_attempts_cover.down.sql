@@ -1,0 +1,1 @@
+DROP INDEX job_attempts_dashboard_cover;

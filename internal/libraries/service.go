@@ -19,15 +19,27 @@ import (
 )
 
 type Service struct {
-	Identity             *identity.Service
-	Database             *storage.Database
-	uploadSlots          chan struct{}
-	materializationFault func(string) error
-	processingMutex      sync.Mutex
-	processingCached     ProcessingConfiguration
-	processingCachedAt   time.Time
-	resources            extraction.Resources
-	previewConvert       func(context.Context, string, string, string, string) error
+	Identity                     *identity.Service
+	Database                     *storage.Database
+	uploadSlots                  chan struct{}
+	materializationFault         func(string) error
+	processingMutex              sync.Mutex
+	processingCached             ProcessingConfiguration
+	processingCachedAt           time.Time
+	dashboardMutex               sync.Mutex
+	dashboardCached              Dashboard
+	dashboardCachedAt            time.Time
+	dashboardRefreshAt           time.Time
+	dashboardValid               bool
+	dashboardRefreshing          bool
+	dashboardLibrariesMutex      sync.Mutex
+	dashboardLibrariesCached     Page[DashboardLibrary]
+	dashboardLibrariesCachedAt   time.Time
+	dashboardLibrariesRefreshAt  time.Time
+	dashboardLibrariesValid      bool
+	dashboardLibrariesRefreshing bool
+	resources                    extraction.Resources
+	previewConvert               func(context.Context, string, string, string, string) error
 }
 
 func New(identityService *identity.Service) *Service {
@@ -48,14 +60,14 @@ func (service *Service) require(ctx context.Context, query storage.Querier, prin
 	return nil
 }
 func (service *Service) Read(ctx context.Context, principal domain.Principal, libraryID, permission string) error {
-	current, err := service.Identity.LoadPrincipal(ctx, service.Database.Reader, principal.TokenDigest)
+	current, err := service.Identity.LoadPrincipal(ctx, service.Database.ControlReader, principal.TokenDigest)
 	if err != nil {
 		return err
 	}
 	if err = service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
 		return err
 	}
-	return service.require(ctx, service.Database.Reader, current, libraryID, permission)
+	return service.require(ctx, service.Database.ControlReader, current, libraryID, permission)
 }
 func (service *Service) write(ctx context.Context, principal domain.Principal, libraryID, permission string, operation func(*sql.Tx, domain.Principal) error) error {
 	return service.Identity.AuthorizedWrite(ctx, principal, "", func(transaction *sql.Tx, current domain.Principal) error {

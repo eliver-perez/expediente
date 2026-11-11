@@ -3,6 +3,8 @@ package libraries
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"sort"
 	"strings"
 
 	"gestor-documental/internal/domain"
@@ -114,8 +116,10 @@ func (s *Service) CaseStatistics(ctx context.Context, p domain.Principal, librar
 	}
 	defer tx.Rollback()
 	query := `WITH ` + caseStatsValidDocs + `, requirements AS (
- SELECT r.case_id,sum(r.required_count) expected,sum(min(r.required_count,coalesce(v.valid_count,0))) fulfilled
- FROM case_requirements r LEFT JOIN valid_docs v ON v.case_id=r.case_id AND v.document_type_id=r.document_type_id
+ SELECT r.case_id,sum(r.required_count) expected,sum(min(r.required_count,coalesce(v.valid_count,0))) fulfilled,
+ json_group_array(json_object('type',r.document_type_id,'name',t.name,'missing',max(r.required_count-coalesce(v.valid_count,0),0))) missing_json
+ FROM case_requirements r JOIN document_types t ON t.id=r.document_type_id
+ LEFT JOIN valid_docs v ON v.case_id=r.case_id AND v.document_type_id=r.document_type_id
  WHERE r.library_id=? AND r.mandatory=1 GROUP BY r.case_id
 ), doc_counts AS (
  SELECT d.case_id,count(*) AS total,sum(CASE WHEN f.availability<>'available' OR coalesce(sr.status,'')='inaccessible' THEN 1 ELSE 0 END) unavailable
@@ -126,7 +130,7 @@ func (s *Service) CaseStatistics(ctx context.Context, p domain.Principal, librar
  GROUP BY d.case_id
 )
  SELECT coalesce(c.exercise,''),coalesce(t.id,''),coalesce(t.name,'Sin plantilla'),
- coalesce(r.expected,0),coalesce(r.fulfilled,0),coalesce(dc.total,0),coalesce(dc.unavailable,0)
+ coalesce(r.expected,0),coalesce(r.fulfilled,0),coalesce(dc.total,0),coalesce(dc.unavailable,0),coalesce(r.missing_json,'[]')
  FROM cases c LEFT JOIN requirements r ON r.case_id=c.id LEFT JOIN doc_counts dc ON dc.case_id=c.id
  LEFT JOIN template_versions tv ON tv.id=c.template_version_id LEFT JOIN templates t ON t.id=tv.template_id
  WHERE c.library_id=? AND c.deleted_at IS NULL AND (?='' OR c.exercise=?)`
@@ -135,12 +139,35 @@ func (s *Service) CaseStatistics(ctx context.Context, p domain.Principal, librar
 		return result, err
 	}
 	byExercise, byTemplate := map[string]*CaseStatisticsGroup{}, map[string]*CaseStatisticsGroup{}
+	missingByType := map[string]*MissingRequirement{}
 	for rows.Next() {
 		var year, templateID, templateName string
+		var missingJSON string
 		var expected, fulfilled, documents, unavailable int
-		if err = rows.Scan(&year, &templateID, &templateName, &expected, &fulfilled, &documents, &unavailable); err != nil {
+		if err = rows.Scan(&year, &templateID, &templateName, &expected, &fulfilled, &documents, &unavailable, &missingJSON); err != nil {
 			rows.Close()
 			return result, err
+		}
+		var requirements []struct {
+			Type    string `json:"type"`
+			Name    string `json:"name"`
+			Missing int    `json:"missing"`
+		}
+		if err = json.Unmarshal([]byte(missingJSON), &requirements); err != nil {
+			rows.Close()
+			return result, err
+		}
+		for _, requirement := range requirements {
+			if requirement.Missing == 0 {
+				continue
+			}
+			item := missingByType[requirement.Type]
+			if item == nil {
+				item = &MissingRequirement{Name: requirement.Name}
+				missingByType[requirement.Type] = item
+			}
+			item.Cases++
+			item.MissingUnits += requirement.Missing
 		}
 		caseStatsAdd(&result.Totals, expected, fulfilled, documents, unavailable)
 		if _, ok := byExercise[year]; !ok {
@@ -170,29 +197,18 @@ func (s *Service) CaseStatistics(ctx context.Context, p domain.Principal, librar
 		result.ByTemplate = append(result.ByTemplate, *g)
 	}
 	caseStatsPercent(&result.Totals)
-	// A requirement is counted once per incomplete case, independent of how
-	// many files happen to be attached to that case.
-	missingQuery := `WITH ` + caseStatsValidDocs + ` SELECT t.name,count(*),sum(max(r.required_count-coalesce(v.valid_count,0),0))
- FROM case_requirements r JOIN cases c ON c.id=r.case_id JOIN document_types t ON t.id=r.document_type_id
- LEFT JOIN valid_docs v ON v.case_id=r.case_id AND v.document_type_id=r.document_type_id
- WHERE r.library_id=? AND r.mandatory=1 AND c.deleted_at IS NULL AND (?='' OR c.exercise=?)
- AND coalesce(v.valid_count,0)<r.required_count GROUP BY r.document_type_id,t.name ORDER BY count(*) DESC,t.name LIMIT 10`
-	rows, err = tx.QueryContext(ctx, missingQuery, library, library, exercise, exercise)
-	if err != nil {
-		return result, err
+	// Each mandatory requirement contributes once per incomplete case.
+	for _, item := range missingByType {
+		result.Missing = append(result.Missing, *item)
 	}
-	for rows.Next() {
-		var item MissingRequirement
-		if err = rows.Scan(&item.Name, &item.Cases, &item.MissingUnits); err != nil {
-			rows.Close()
-			return result, err
+	sort.Slice(result.Missing, func(i, j int) bool {
+		if result.Missing[i].Cases != result.Missing[j].Cases {
+			return result.Missing[i].Cases > result.Missing[j].Cases
 		}
-		result.Missing = append(result.Missing, item)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return result, err
+		return result.Missing[i].Name < result.Missing[j].Name
+	})
+	if len(result.Missing) > 10 {
+		result.Missing = result.Missing[:10]
 	}
 	return result, tx.Commit()
 }

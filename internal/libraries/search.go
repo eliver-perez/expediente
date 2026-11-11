@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -35,6 +37,7 @@ type Filters struct {
 }
 type SearchInput struct {
 	SummaryOnly bool     `json:"summary_only,omitempty"`
+	SkipCount   bool     `json:"-"`
 	Query       string   `json:"query"`
 	Type        string   `json:"search_type"`
 	Libraries   []string `json:"library_ids"`
@@ -119,6 +122,26 @@ const classificationStateSQL = "CASE WHEN EXISTS(SELECT 1 FROM document_replacem
 const documentColumns = classificationStateSQL + ",d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,coalesce(l.root_id,''),coalesce(l.relative_path,''),coalesce(l.canonical_path,''),f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0),f.storage_source,coalesce(d.case_id,''),coalesce(c.identifier,''),coalesce(d.category_id,''),coalesce(d.document_type_id,''),coalesce(d.created_by,''),d.metadata_json,coalesce(cat.name,''),coalesce(dt.name,''),f.integrity_status,v.size_bytes,d.created_at,coalesce(v.os_modified_at,''),coalesce(v.document_format,'pdf'),coalesce(v.detected_mime,'application/pdf'),coalesce(v.original_extension,'.pdf'),coalesce(v.extension_mismatch,0),coalesce(v.index_block_reason,''),coalesce(nullif(e.unit_count,0),e.page_count,0)"
 const documentJoins = " FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id LEFT JOIN storage_roots r ON r.id=l.root_id LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id LEFT JOIN cases c ON c.id=d.case_id LEFT JOIN categories cat ON cat.id=d.category_id LEFT JOIN document_types dt ON dt.id=d.document_type_id "
 
+var explorerRootPlanLogged atomic.Bool
+var explorerNestedPlanLogged atomic.Bool
+
+func logExplorerPlan(ctx context.Context, tx *sql.Tx, kind, query string, args ...any) {
+	rows, err := tx.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		slog.Warn("explorer query plan unavailable", "kind", kind, "error_type", "sql")
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			return
+		}
+		slog.Info("explorer query plan", "kind", kind, "detail", detail)
+	}
+}
+
 type rowScanner interface{ Scan(...any) error }
 
 func scanDocument(row rowScanner) (Document, error) {
@@ -192,6 +215,14 @@ func compileQuery(query string) (string, []string, error) {
 }
 func (service *Service) Search(ctx context.Context, principal domain.Principal, input SearchInput, metadata domain.RequestMetadata, auditSearch bool) (SearchResult, error) {
 	result := SearchResult{Items: []Document{}, Libraries: []string{}, Groups: []SearchGroup{}}
+	started := time.Now()
+	var countMS, pageMS int64
+	defer func() {
+		if input.Query == "" && time.Since(started) >= time.Second {
+			slog.Warn("explorer timing", "total_ms", time.Since(started).Milliseconds(), "count_ms", countMS, "page_ms", pageMS,
+				"root_filter", input.Filters.RootID != "", "prefix_filter", input.Filters.Prefix != "")
+		}
+	}()
 	switch input.Filters.Format {
 	case "", "pdf", "docx", "xlsx", "txt", "csv":
 	default:
@@ -384,30 +415,81 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			}
 			after = cursor.After
 		}
-		where := " WHERE " + strings.Join(conditions, " AND ")
-		groups, err := transaction.QueryContext(ctx, "SELECT d.library_id,(SELECT name FROM libraries WHERE id=d.library_id),count(*)"+documentJoins+where+" GROUP BY d.library_id ORDER BY 2,d.library_id", arguments...)
-		if err != nil {
-			return err
+		// The count for a folder used to join every document to its content,
+		// extraction, case, category and type before counting. Add only tables
+		// referenced by the active filters; the page query below still fetches
+		// full details for its at most 50 documents.
+		countJoins := " FROM documents d JOIN physical_files f ON f.id=d.physical_file_id"
+		nestedRange := input.Query == "" && input.Filters.RootID != "" && input.Filters.Prefix != ""
+		if nestedRange {
+			// Start with the selected path range, then visit only its primary
+			// files and documents. CROSS JOIN preserves the selective loop order.
+			countJoins = " FROM physical_file_locations l INDEXED BY physical_locations_explorer CROSS JOIN physical_files f CROSS JOIN documents d"
+			conditions = append(conditions, "f.primary_location_id=l.id", "d.physical_file_id=f.id", "l.relative_path>=?", "l.relative_path<?")
+			arguments = append(arguments, input.Filters.Prefix, input.Filters.Prefix+"0")
 		}
-		for groups.Next() {
-			var group SearchGroup
-			if err = groups.Scan(&group.LibraryID, &group.Name, &group.Count); err != nil {
-				groups.Close()
+		needLocation := input.Filters.RootID != "" || input.Filters.Prefix != "" || input.Filters.DirectChildren || input.Filters.Availability != ""
+		if needLocation && !nestedRange {
+			countJoins += " LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id"
+		}
+		if input.Filters.Availability != "" {
+			countJoins += " LEFT JOIN storage_roots r ON r.id=l.root_id"
+		}
+		if input.Filters.Format != "" {
+			countJoins += " LEFT JOIN content_versions v ON v.id=f.current_content_version_id"
+		}
+		if input.Filters.Exercise != "" || (expression != "" && (input.Type == "identifier" || input.Type == "general")) {
+			countJoins += " LEFT JOIN cases c ON c.id=d.case_id"
+		}
+		where := " WHERE " + strings.Join(conditions, " AND ")
+		countStarted := time.Now()
+		countQuery := "SELECT d.library_id,(SELECT name FROM libraries WHERE id=d.library_id),count(*)" + countJoins + where + " GROUP BY d.library_id ORDER BY 2,d.library_id"
+		pageJoins := documentJoins
+		if input.Query == "" && input.Filters.RootID != "" {
+			pageJoins = strings.Replace(pageJoins, "documents d JOIN", "documents d INDEXED BY documents_explorer_page JOIN", 1)
+		}
+		pageQuery := "SELECT " + documentColumns + pageJoins + where + " AND d.id>? ORDER BY d.id LIMIT ?"
+		if input.Query == "" && input.Filters.RootID != "" {
+			logged := &explorerRootPlanLogged
+			kind := "root"
+			if input.Filters.Prefix != "" {
+				logged, kind = &explorerNestedPlanLogged, "nested"
+			}
+			if logged.CompareAndSwap(false, true) {
+				logExplorerPlan(ctx, transaction, kind+"-count", countQuery, arguments...)
+				pageArgs := append(append([]any{}, arguments...), after, input.Limit+1)
+				logExplorerPlan(ctx, transaction, kind+"-page", pageQuery, pageArgs...)
+			}
+		}
+		if input.SkipCount && !input.SummaryOnly {
+			result.Count = -1 // Exact total was intentionally omitted for page navigation.
+		} else {
+			groups, err := transaction.QueryContext(ctx, countQuery, arguments...)
+			if err != nil {
 				return err
 			}
-			result.Groups = append(result.Groups, group)
-			result.Count += group.Count
-		}
-		err = groups.Err()
-		groups.Close()
-		if err != nil {
-			return err
+			for groups.Next() {
+				var group SearchGroup
+				if err = groups.Scan(&group.LibraryID, &group.Name, &group.Count); err != nil {
+					groups.Close()
+					return err
+				}
+				result.Groups = append(result.Groups, group)
+				result.Count += group.Count
+			}
+			err = groups.Err()
+			groups.Close()
+			if err != nil {
+				return err
+			}
+			countMS = time.Since(countStarted).Milliseconds()
 		}
 		if input.SummaryOnly {
 			return nil
 		}
 		pageArgs := append(append([]any{}, arguments...), after, input.Limit+1)
-		rows, err = transaction.QueryContext(ctx, "SELECT "+documentColumns+documentJoins+where+" AND d.id>? ORDER BY d.id LIMIT ?", pageArgs...)
+		pageStarted := time.Now()
+		rows, err = transaction.QueryContext(ctx, pageQuery, pageArgs...)
 		if err != nil {
 			return err
 		}
@@ -421,6 +503,7 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 		}
 		err = rows.Err()
 		rows.Close()
+		pageMS = time.Since(pageStarted).Milliseconds()
 		if err != nil {
 			return err
 		}

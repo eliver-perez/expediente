@@ -18,7 +18,7 @@ type ProcessingPolicy struct {
 
 func (service *Service) ProcessingPolicy(ctx context.Context) (ProcessingPolicy, error) {
 	var policy ProcessingPolicy
-	err := service.Database.Reader.QueryRowContext(ctx, `SELECT paused,maximum_attempts,retry_delay_seconds,timeout_seconds,revision FROM processing_policy WHERE singleton=1`).Scan(&policy.Paused, &policy.MaximumAttempts, &policy.RetryDelaySeconds, &policy.TimeoutSeconds, &policy.Revision)
+	err := service.Database.StatusReader.QueryRowContext(ctx, `SELECT paused,maximum_attempts,retry_delay_seconds,timeout_seconds,revision FROM processing_policy WHERE singleton=1`).Scan(&policy.Paused, &policy.MaximumAttempts, &policy.RetryDelaySeconds, &policy.TimeoutSeconds, &policy.Revision)
 	return policy, err
 }
 

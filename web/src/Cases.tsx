@@ -29,8 +29,8 @@ export function Cases({ library, initialFilter = { exercise: '', status: '' } }:
 function CaseDetail({ library, initial, back, templates }: { library: Library; initial: CaseRecord; back: () => void; templates: Template[] }) {
   const [record, setRecord] = useState(initial); const [requirements, setRequirements] = useState<Requirements | null>(null); const [error, setError] = useState(''); const [success, setSuccess] = useToastState(); const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0); const [selected, setSelected] = useState<Document | null>(null); const [associating, setAssociating] = useState(false);
-  const documents = usePage<Document>(`/libraries/${library.id}/explorer?case_id=${record.id}`);
-  const available = usePage<Document>(`/libraries/${library.id}/explorer?unassigned=true&storage_source=linked`);
+  const documents = usePage<Document>(`/libraries/${library.id}/explorer?case_id=${record.id}&include_total=false`);
+  const available = usePage<Document>(`/libraries/${library.id}/explorer?unassigned=true&storage_source=linked&include_total=false`);
   useEffect(() => { const controller = new AbortController(); void Promise.all([api<CaseRecord>(`/cases/${record.id}`, { signal: controller.signal }), api<Requirements>(`/cases/${record.id}/requirements`, { signal: controller.signal })]).then(([item, result]) => { setRecord(item); setRequirements(result); }).catch(error => { if (!controller.signal.aborted) setError(message(error)); }); return () => controller.abort(); }, [record.id, revision]);
   function reload() { setRevision(value => value + 1); documents.reload(); available.reload(); }
   return <><button className="text-button" onClick={back}>← Expedientes</button><section className="card"><div className="section-heading"><div><p className="eyebrow">{library.settings.identifier_label}</p><h2>{record.identifier}</h2>{record.exercise && <p>Ejercicio {record.exercise}</p>}</div><button className="secondary" onClick={reload}>Actualizar expediente</button></div><Notice text={error} /><Notice text={success} kind="success" />

@@ -149,7 +149,7 @@ type Status struct {
 
 func (client *Client) Status(ctx context.Context) (Status, error) {
 	result := Status{State: "unactivated", Binding: client.binding, Features: map[string]bool{}, OnlineConfigured: client.Options.ServerURL != "", Development: client.Options.DevelopmentBypass && developmentEnabled}
-	snapshot, err := client.Database.Reader.BeginTx(ctx, nil)
+	snapshot, err := client.Database.ControlReader.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}

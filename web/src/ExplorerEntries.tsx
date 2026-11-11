@@ -14,7 +14,7 @@ export function FolderIcon() {
 }
 export function ExplorerEntries({ libraryID, parameters, mode, navigate, open }: { libraryID: string; parameters: string; mode: string; navigate: (prefix: string) => void; open: (document: Document) => void }) {
   const folders = useCursorPage<{ name: string; relative_prefix: string }>(`/libraries/${libraryID}/folders?${parameters}`);
-  const documents = useCursorPage<Document>(`/libraries/${libraryID}/explorer?${parameters}`);
+  const documents = useCursorPage<Document>(`/libraries/${libraryID}/explorer?${parameters}&include_total=false`);
   const visibleFolders=new URLSearchParams(parameters).get('classification_status')?[]:folders.items;
   return <><Notice text={folders.error || documents.error} />
     {mode === 'files' ? <div className="file-explorer-grid">

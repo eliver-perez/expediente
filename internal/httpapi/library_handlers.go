@@ -234,7 +234,7 @@ func (server *Server) explorer(writer http.ResponseWriter, request *http.Request
 		}
 		limit = parsed
 	}
-	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), Filters: libraries.Filters{Classification: query.Get("classification_status"), Format: query.Get("format"), DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
+	input := libraries.SearchInput{Query: query.Get("q"), Type: query.Get("search_type"), Libraries: []string{request.PathValue("library")}, Limit: limit, Cursor: query.Get("cursor"), SkipCount: query.Get("include_total") == "false", Filters: libraries.Filters{Classification: query.Get("classification_status"), Format: query.Get("format"), DirectChildren: query.Get("direct_children") == "true", RootID: query.Get("root_id"), ViewID: query.Get("view_id"), Prefix: query.Get("prefix"), Availability: query.Get("availability"), CaseID: query.Get("case_id"), CategoryID: query.Get("category_id"), TypeID: query.Get("document_type_id"), Exercise: query.Get("exercise"), Source: query.Get("storage_source"), Unassigned: query.Get("unassigned") == "true"}}
 	result, err := server.libraries.Search(request.Context(), principal, input, metadata(request), input.Query != "")
 	server.libraryResult(writer, request, 200, result, err)
 }

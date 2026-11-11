@@ -196,7 +196,7 @@ func (service *Service) Authenticate(ctx context.Context, token string, touch bo
 	if len(token) != 43 {
 		return domain.Principal{}, domain.Failure("SESSION_REQUIRED", "Inicia sesión para continuar.", 401)
 	}
-	principal, err := service.LoadPrincipal(ctx, service.Database.Reader, domain.Digest(token))
+	principal, err := service.LoadPrincipal(ctx, service.Database.ControlReader, domain.Digest(token))
 	if failure, ok := err.(*domain.Error); ok && failure.Code == "SESSION_EXPIRED" {
 		closeError := service.Database.Write(ctx, func(transaction *sql.Tx) error {
 			return service.closeSession(ctx, transaction, principal.SessionID, "expired", metadata, domain.Principal{})
