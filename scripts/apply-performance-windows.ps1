@@ -32,7 +32,7 @@ $oldProcess = (Get-CimInstance Win32_Service -Filter "Name='AIDEX'").ProcessId
 try {
     if ($service.Status -ne 'Stopped') {
         Stop-Service -Name AIDEX
-        $service.WaitForStatus('Stopped', [TimeSpan]::FromMinutes(2))
+        $service.WaitForStatus('Stopped', [TimeSpan]::FromMinutes(5))
     }
     if ($oldProcess -gt 0) {
         $running = Get-Process -Id $oldProcess -ErrorAction SilentlyContinue
@@ -46,7 +46,7 @@ try {
     }
     if ((Get-Service -Name AIDEX).Status -ne 'Running') {
         Start-Service -Name AIDEX
-        (Get-Service -Name AIDEX).WaitForStatus('Running', [TimeSpan]::FromMinutes(1))
+        (Get-Service -Name AIDEX).WaitForStatus('Running', [TimeSpan]::FromMinutes(5))
     }
 }
 if ((Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash) {

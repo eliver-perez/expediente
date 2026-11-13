@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"gestor-documental/internal/domain"
 )
@@ -32,6 +33,7 @@ func (s *Server) resumeRoot(w http.ResponseWriter, r *http.Request, p domain.Pri
 	s.libraryResult(w, r, 202, map[string]string{"status": "queued"}, err)
 }
 func (s *Server) planEntityDeletion(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(3 * time.Minute))
 	kind, id := "library", r.PathValue("library")
 	if id == "" {
 		kind, id = "root", r.PathValue("root")
@@ -54,6 +56,7 @@ func (s *Server) entityDeletion(w http.ResponseWriter, r *http.Request, p domain
 	var input struct {
 		Name string `json:"confirmation_name"`
 	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(3 * time.Minute))
 	if err := decodeJSON(w, r, &input); err != nil {
 		s.fail(w, r, err)
 		return

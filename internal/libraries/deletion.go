@@ -16,18 +16,19 @@ import (
 )
 
 type DeletionPlan struct {
-	ID          string         `json:"id"`
-	Kind        string         `json:"kind"`
-	EntityID    string         `json:"entity_id"`
-	LibraryID   string         `json:"library_id"`
-	Name        string         `json:"name"`
-	LibraryName string         `json:"library_name"`
-	State       string         `json:"state"`
-	Counts      map[string]int `json:"counts"`
-	Locations   []string       `json:"locations"`
-	Pending     int            `json:"pending_cleanup"`
-	Diagnostics []string       `json:"cleanup_diagnostics"`
-	Issues      int            `json:"cleanup_issues"`
+	ID          string            `json:"id"`
+	Kind        string            `json:"kind"`
+	EntityID    string            `json:"entity_id"`
+	LibraryID   string            `json:"library_id"`
+	Name        string            `json:"name"`
+	LibraryName string            `json:"library_name"`
+	State       string            `json:"state"`
+	Counts      map[string]int    `json:"counts"`
+	Locations   []string          `json:"locations"`
+	Pending     int               `json:"pending_cleanup"`
+	Diagnostics []string          `json:"cleanup_diagnostics"`
+	Issues      int               `json:"cleanup_issues"`
+	Progress    *DeletionProgress `json:"progress,omitempty"`
 }
 
 func (s *Service) Deletions(ctx context.Context, p domain.Principal, cursor string) (Page[DeletionPlan], error) {
@@ -208,9 +209,13 @@ func (s *Service) deletionSnapshot(ctx context.Context, q storage.Querier, plan 
 		}{"active_scans", "SELECT count(*) FROM root_scans WHERE root_id IN(SELECT id FROM storage_roots WHERE library_id=?) AND status IN ('running','paused')", []any{id}})
 	}
 	for _, spec := range specs {
+		started := time.Now()
 		var count int
 		if err := q.QueryRowContext(ctx, spec.query, spec.args...).Scan(&count); err != nil {
 			return "", err
+		}
+		if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+			slog.Warn("slow deletion snapshot count", "kind", plan.Kind, "field", spec.name, "duration_ms", elapsed.Milliseconds())
 		}
 		plan.Counts[spec.name] = count
 	}
@@ -286,7 +291,8 @@ func (s *Service) deletionSnapshot(ctx context.Context, q storage.Querier, plan 
 			}{"SELECT json_array(id,revision) FROM " + table + " WHERE library_id=? ORDER BY id", []any{id}})
 		}
 	}
-	for _, query := range queries {
+	for index, query := range queries {
+		started := time.Now()
 		rows, err := q.QueryContext(ctx, query.sql, query.args...)
 		if err != nil {
 			return "", err
@@ -303,6 +309,9 @@ func (s *Service) deletionSnapshot(ctx context.Context, q storage.Querier, plan 
 		rows.Close()
 		if err != nil {
 			return "", err
+		}
+		if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+			slog.Warn("slow deletion snapshot fingerprint", "kind", plan.Kind, "query", index, "duration_ms", elapsed.Milliseconds())
 		}
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
@@ -323,17 +332,24 @@ func (s *Service) PlanDeletion(ctx context.Context, p domain.Principal, kind, id
 		if err != sql.ErrNoRows {
 			return err
 		}
+		started := time.Now()
 		digest, err := s.deletionSnapshot(ctx, tx, &plan)
 		if err != nil {
 			return err
 		}
+		slog.Info("deletion plan snapshot complete", "kind", kind, "duration_ms", time.Since(started).Milliseconds(), "documents", plan.Counts["documents"])
 		plan.ID = domain.NewID()
 		plan.State = "planned"
 		_, err = tx.ExecContext(ctx, "INSERT INTO entity_deletions(id,kind,entity_id,library_id,actor_user_id,name,library_name,fingerprint,summary_json,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,'planned',?)", plan.ID, kind, id, plan.LibraryID, current.User.ID, plan.Name, plan.LibraryName, digest, encode(plan), now())
 		if err != nil {
 			return err
 		}
-		return s.journalDeletionFiles(ctx, tx, plan, false)
+		started = time.Now()
+		err = s.journalDeletionFiles(ctx, tx, plan, false)
+		if err == nil {
+			slog.Info("deletion plan manifest complete", "kind", kind, "duration_ms", time.Since(started).Milliseconds(), "documents", plan.Counts["documents"])
+		}
+		return err
 	})
 	return plan, err
 }
@@ -426,6 +442,7 @@ func (s *Service) processPendingDeletion(ctx context.Context) error {
 	} else if err != nil {
 		return err
 	}
+	s.setDeletionProgress(id, DeletionProgress{Phase: "validating"})
 	err = s.Database.Write(ctx, func(tx *sql.Tx) error {
 		var raw, digest, actor string
 		if e := tx.QueryRowContext(ctx, "SELECT summary_json,fingerprint,actor_user_id FROM entity_deletions WHERE id=? AND execution_status='running' AND state='planned'", id).Scan(&raw, &digest, &actor); e != nil {
@@ -444,6 +461,7 @@ func (s *Service) processPendingDeletion(ctx context.Context) error {
 		if _, e := tx.ExecContext(ctx, "DELETE FROM deletion_documents WHERE operation_id=?", id); e != nil {
 			return e
 		}
+		s.setDeletionProgress(id, DeletionProgress{Phase: "preparing_manifest"})
 		if e := s.journalDeletionFiles(ctx, tx, plan, true); e != nil {
 			return e
 		}
@@ -455,24 +473,33 @@ func (s *Service) processPendingDeletion(ctx context.Context) error {
 				return e
 			}
 		}
-		if _, e := tx.ExecContext(ctx, "UPDATE entity_deletions SET state='cleanup_pending',execution_status='completed' WHERE id=?", id); e != nil {
+		if _, e := tx.ExecContext(ctx, "UPDATE entity_deletions SET state='cleanup_pending',execution_status='completed',execution_error='' WHERE id=?", id); e != nil {
 			return e
 		}
 		return audit.Append(ctx, tx, time.Now(), audit.Event{Type: plan.Kind + ".deleted", LibraryID: plan.LibraryID, ActorUserID: actor, Details: map[string]any{"operation_id": id, "documents_preserved": true, "cleanup": "pending"}})
 	})
 	if err != nil {
+		s.clearDeletionProgress(id)
 		code := failureCode(err)
 		slog.Error("deletion execution failed", "operation_id", id, "code", code)
 		failureCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()
+		if ctx.Err() != nil {
+			code = "INTERRUPTED"
+		}
 		if persistErr := s.Database.Write(failureCtx, func(tx *sql.Tx) error {
-			_, e := tx.ExecContext(failureCtx, "UPDATE entity_deletions SET execution_status='failed',execution_error=? WHERE id=? AND execution_status='running'", code, id)
+			next := "failed"
+			if code == "INTERRUPTED" {
+				next = "pending"
+			}
+			_, e := tx.ExecContext(failureCtx, "UPDATE entity_deletions SET execution_status=?,execution_error=? WHERE id=? AND execution_status='running'", next, code, id)
 			return e
 		}); persistErr != nil {
 			slog.Error("deletion failure state could not be persisted", "operation_id", id, "code", failureCode(persistErr))
 		}
 		return err
 	}
+	s.clearDeletionProgress(id)
 	cleanup, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_ = s.cleanDeletionFiles(cleanup, id, 25)
@@ -501,8 +528,26 @@ func (s *Service) DeletionStatus(ctx context.Context, p domain.Principal, id str
 	if execution != "unconfirmed" && execution != "completed" {
 		result.State = execution
 	}
-	if executionError != "" {
+	if executionError != "" && execution != "completed" {
 		result.Diagnostics = []string{executionError}
+	}
+	switch execution {
+	case "running":
+		progress, ok := s.getDeletionProgress(id)
+		if !ok {
+			progress = DeletionProgress{Phase: "validating"}
+		}
+		result.Progress = &progress
+	case "pending":
+		result.Progress = &DeletionProgress{Phase: "queued"}
+	case "failed":
+		result.Progress = &DeletionProgress{Phase: "failed"}
+	case "completed":
+		if result.State == "cleanup_pending" {
+			result.Progress = &DeletionProgress{Phase: "cleanup"}
+		} else if result.State == "complete" {
+			result.Progress = &DeletionProgress{Phase: "complete"}
+		}
 	}
 	if result.Kind == "library" {
 		if !current.Can("libraries.delete") {
@@ -561,7 +606,7 @@ func (s *Service) removeEntityRecords(ctx context.Context, tx *sql.Tx, p Deletio
 	docs := deletionDocs(root)
 	args := scopeArgs(root, id)
 	// Freeze IDs in transaction-local tables before removing their source relations.
-	for _, table := range []string{"delete_files", "delete_documents", "delete_jobs", "delete_roots"} {
+	for _, table := range []string{"delete_files", "delete_documents", "delete_jobs", "delete_roots", "delete_extractions", "delete_extraction_batch"} {
 		if _, err := tx.ExecContext(ctx, "CREATE TEMP TABLE IF NOT EXISTS "+table+"(id TEXT PRIMARY KEY)"); err != nil {
 			return err
 		}
@@ -576,6 +621,9 @@ func (s *Service) removeEntityRecords(ctx context.Context, tx *sql.Tx, p Deletio
 		if _, err := tx.ExecContext(ctx, entry.sql, entry.args...); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO delete_extractions SELECT id FROM extraction_runs WHERE physical_file_id IN (SELECT id FROM delete_files)"); err != nil {
+		return err
 	}
 	scope := "library_id=?"
 	if root {
@@ -617,10 +665,173 @@ func (s *Service) removeEntityRecords(ctx context.Context, tx *sql.Tx, p Deletio
 		statements = append(statements, "DELETE FROM "+table+" WHERE root_id IN (SELECT id FROM delete_roots)")
 	}
 	statements = append(statements, "DELETE FROM storage_roots WHERE id IN (SELECT id FROM delete_roots)")
+	var jobTotal, documentTotal, pageTotal, pageDone int64
+	var rebuildFTS bool
+	var deleteTriggerSQL string
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM delete_jobs").Scan(&jobTotal); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM delete_documents").Scan(&documentTotal); err != nil {
+		return err
+	}
+	s.setDeletionProgress(p.ID, DeletionProgress{Phase: "stopping_jobs", Total: jobTotal, Unit: "jobs"})
 	for step, statement := range statements {
+		if step == 13 {
+			s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_documents", Total: documentTotal, Unit: "documents"})
+		}
+		if step == 15 {
+			var indexed, extracted, globalIndexed int64
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM indexed_pages WHERE physical_file_id IN (SELECT id FROM delete_files)").Scan(&indexed); err != nil {
+				return err
+			}
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM extraction_pages WHERE extraction_id IN (SELECT id FROM delete_extractions)").Scan(&extracted); err != nil {
+				return err
+			}
+			pageTotal = indexed + extracted
+			s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_index", Total: pageTotal, Unit: "pages"})
+			if indexed >= 100000 {
+				if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM indexed_pages").Scan(&globalIndexed); err != nil {
+					return err
+				}
+				rebuildFTS = indexed*2 >= globalIndexed
+			}
+			if rebuildFTS {
+				if err := tx.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='indexed_pages_delete'").Scan(&deleteTriggerSQL); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, "DROP TRIGGER indexed_pages_delete"); err != nil {
+					return err
+				}
+			}
+		}
+		if step == 15 || step == 16 {
+			if rebuildFTS {
+				if step == 16 {
+					for {
+						if _, err := tx.ExecContext(ctx, "DELETE FROM delete_extraction_batch"); err != nil {
+							return err
+						}
+						selected, err := tx.ExecContext(ctx, "INSERT INTO delete_extraction_batch SELECT id FROM delete_extractions ORDER BY id LIMIT 512")
+						if err != nil {
+							return err
+						}
+						count, err := selected.RowsAffected()
+						if err != nil {
+							return err
+						}
+						if count == 0 {
+							break
+						}
+						started := time.Now()
+						result, err := tx.ExecContext(ctx, "DELETE FROM extraction_pages WHERE extraction_id IN (SELECT id FROM delete_extraction_batch)")
+						if err != nil {
+							return err
+						}
+						removed, err := result.RowsAffected()
+						if err != nil {
+							return err
+						}
+						if _, err := tx.ExecContext(ctx, "DELETE FROM delete_extractions WHERE id IN (SELECT id FROM delete_extraction_batch)"); err != nil {
+							return err
+						}
+						pageDone += removed
+						s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_extraction", Done: pageDone, Total: pageTotal, Unit: "pages"})
+						if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+							slog.Info("deletion extraction page batch", "runs", count, "rows", removed, "duration_ms", elapsed.Milliseconds())
+						}
+					}
+					s.setDeletionProgress(p.ID, DeletionProgress{Phase: "rebuilding_search"})
+					started := time.Now()
+					if _, err := tx.ExecContext(ctx, "INSERT INTO pages_fts(pages_fts) VALUES('rebuild')"); err != nil {
+						return err
+					}
+					if _, err := tx.ExecContext(ctx, deleteTriggerSQL); err != nil {
+						return err
+					}
+					slog.Info("deletion search index rebuilt", "duration_ms", time.Since(started).Milliseconds())
+					continue
+				}
+				started := time.Now()
+				result, err := tx.ExecContext(ctx, "DELETE FROM indexed_pages WHERE physical_file_id IN (SELECT id FROM delete_files)")
+				if err != nil {
+					return err
+				}
+				removed, err := result.RowsAffected()
+				if err != nil {
+					return err
+				}
+				pageDone += removed
+				s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_index", Done: pageDone, Total: pageTotal, Unit: "pages"})
+				slog.Info("deletion bulk page removal", "step", step, "rows", removed, "duration_ms", time.Since(started).Milliseconds())
+				continue
+			}
+			selectBatch := "SELECT id FROM indexed_pages NOT INDEXED WHERE id>? AND physical_file_id IN (SELECT id FROM delete_files) ORDER BY id LIMIT 1000"
+			deleteBatch := "DELETE FROM indexed_pages WHERE id>? AND id<=? AND physical_file_id IN (SELECT id FROM delete_files)"
+			if step == 16 {
+				selectBatch = "SELECT id FROM extraction_pages NOT INDEXED WHERE id>? AND extraction_id IN (SELECT id FROM delete_extractions) ORDER BY id LIMIT 1000"
+				deleteBatch = "DELETE FROM extraction_pages WHERE id>? AND id<=? AND extraction_id IN (SELECT id FROM delete_extractions)"
+			}
+			lastID := int64(0)
+			for {
+				started := time.Now()
+				rows, err := tx.QueryContext(ctx, selectBatch, lastID)
+				if err != nil {
+					return err
+				}
+				endID, selected := lastID, int64(0)
+				for rows.Next() {
+					if err = rows.Scan(&endID); err != nil {
+						rows.Close()
+						return err
+					}
+					selected++
+				}
+				err = rows.Err()
+				rows.Close()
+				if err != nil {
+					return err
+				}
+				if selected == 0 {
+					break
+				}
+				result, err := tx.ExecContext(ctx, deleteBatch, lastID, endID)
+				if err != nil {
+					return err
+				}
+				removed, err := result.RowsAffected()
+				if err != nil {
+					return err
+				}
+				if removed != selected {
+					return fmt.Errorf("deletion page batch changed during execution: selected=%d removed=%d", selected, removed)
+				}
+				lastID = endID
+				pageDone += removed
+				s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_index", Done: pageDone, Total: pageTotal, Unit: "pages"})
+				if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+					slog.Warn("slow deletion page batch", "step", step, "rows", removed, "duration_ms", elapsed.Milliseconds())
+				}
+			}
+			continue
+		}
 		started := time.Now()
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
+		result, err := tx.ExecContext(ctx, statement)
+		if err != nil {
 			return err
+		}
+		if step == 4 || step == 13 {
+			removed, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			phase, total, unit := "stopping_jobs", jobTotal, "jobs"
+			if step == 13 {
+				phase, total, unit = "removing_documents", documentTotal, "documents"
+			}
+			s.setDeletionProgress(p.ID, DeletionProgress{Phase: phase, Done: removed, Total: total, Unit: unit})
+		}
+		if step == 17 {
+			s.setDeletionProgress(p.ID, DeletionProgress{Phase: "finalizing"})
 		}
 		if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 			slog.Warn("slow deletion SQL step", "step", step, "duration_ms", elapsed.Milliseconds())

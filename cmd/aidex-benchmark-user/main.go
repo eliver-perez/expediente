@@ -19,10 +19,14 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 4 || (os.Args[1] != "create" && os.Args[1] != "disable" && os.Args[1] != "target" && os.Args[1] != "migrations" && os.Args[1] != "stats" && os.Args[1] != "eula" && os.Args[1] != "ocrcheck" && os.Args[1] != "jobbench" && os.Args[1] != "folderbench") {
-		panic("usage: aidex-benchmark-user create|disable|target|migrations|stats|eula|ocrcheck|jobbench|folderbench DB_PATH ARG")
+	if len(os.Args) != 4 || (os.Args[1] != "create" && os.Args[1] != "disable" && os.Args[1] != "target" && os.Args[1] != "migrations" && os.Args[1] != "stats" && os.Args[1] != "eula" && os.Args[1] != "ocrcheck" && os.Args[1] != "jobbench" && os.Args[1] != "folderbench" && os.Args[1] != "deletiondiag" && os.Args[1] != "deletionstate" && os.Args[1] != "deletionsample" && os.Args[1] != "deletionplanquery" && os.Args[1] != "deletionverify") {
+		panic("usage: aidex-benchmark-user create|disable|target|migrations|stats|eula|ocrcheck|jobbench|folderbench|deletiondiag DB_PATH ARG")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	timeout := 45 * time.Second
+	if os.Args[1] == "deletionverify" {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	path, err := filepath.Abs(os.Args[2])
 	if err != nil {
@@ -41,6 +45,175 @@ func main() {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	username := strings.ToLower(strings.TrimSpace(os.Args[3]))
+	if os.Args[1] == "deletionverify" {
+		var library, state, execution, executionError string
+		if err := db.QueryRowContext(ctx, "SELECT library_id,state,execution_status,execution_error FROM entity_deletions WHERE id=?", os.Args[3]).Scan(&library, &state, &execution, &executionError); err != nil {
+			panic(err)
+		}
+		counts := map[string]int{}
+		for key, query := range map[string]string{
+			"library":          "SELECT count(*) FROM libraries WHERE id=?",
+			"documents":        "SELECT count(*) FROM documents WHERE library_id=?",
+			"physical_files":   "SELECT count(*) FROM physical_files WHERE library_id=?",
+			"roots":            "SELECT count(*) FROM storage_roots WHERE library_id=?",
+			"jobs":             "SELECT count(*) FROM jobs WHERE library_id=?",
+			"cases":            "SELECT count(*) FROM cases WHERE library_id=?",
+			"versions":         "SELECT count(*) FROM content_versions WHERE physical_file_id IN (SELECT id FROM physical_files WHERE library_id=?)",
+			"extractions":      "SELECT count(*) FROM extraction_runs WHERE physical_file_id IN (SELECT id FROM physical_files WHERE library_id=?)",
+			"indexed_pages":    "SELECT count(*) FROM indexed_pages WHERE physical_file_id IN (SELECT id FROM physical_files WHERE library_id=?)",
+			"extraction_pages": "SELECT count(*) FROM extraction_pages WHERE extraction_id IN (SELECT id FROM extraction_runs WHERE physical_file_id IN (SELECT id FROM physical_files WHERE library_id=?))",
+			"manifest":         "SELECT count(*) FROM deletion_documents WHERE operation_id=?",
+			"cleanup_pending":  "SELECT count(*) FROM deletion_cleanup WHERE operation_id=? AND status<>'complete'",
+		} {
+			arg := library
+			if key == "manifest" || key == "cleanup_pending" {
+				arg = os.Args[3]
+			}
+			var n int
+			if err := db.QueryRowContext(ctx, query, arg).Scan(&n); err != nil {
+				panic(err)
+			}
+			counts[key] = n
+		}
+		var ftsCount, indexedCount int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM pages_fts").Scan(&ftsCount); err != nil {
+			panic(err)
+		}
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM indexed_pages").Scan(&indexedCount); err != nil {
+			panic(err)
+		}
+		if _, err := db.ExecContext(ctx, "INSERT INTO pages_fts(pages_fts,rank) VALUES('integrity-check',1)"); err != nil {
+			panic(err)
+		}
+		var fkIssues int
+		rows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
+		if err != nil {
+			panic(err)
+		}
+		for rows.Next() {
+			var table, parent string
+			var rowID, foreignKeyID int64
+			if err := rows.Scan(&table, &rowID, &parent, &foreignKeyID); err != nil {
+				panic(err)
+			}
+			fkIssues++
+		}
+		if err := rows.Err(); err != nil {
+			panic(err)
+		}
+		rows.Close()
+		result := map[string]any{"state": state, "execution": execution, "execution_error": executionError, "counts": counts, "fts_rows": ftsCount, "indexed_rows": indexedCount, "fts_integrity": "ok", "foreign_key_issues": fkIssues}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			panic(err)
+		}
+		return
+	}
+	if os.Args[1] == "deletionplanquery" {
+		if _, err := db.ExecContext(ctx, "CREATE TEMP TABLE delete_extractions(id TEXT PRIMARY KEY)"); err != nil {
+			panic(err)
+		}
+		if _, err := db.ExecContext(ctx, "INSERT INTO delete_extractions SELECT id FROM extraction_runs WHERE physical_file_id IN (SELECT id FROM physical_files WHERE library_id=?)", os.Args[3]); err != nil {
+			panic(err)
+		}
+		rows, err := db.QueryContext(ctx, "EXPLAIN QUERY PLAN DELETE FROM extraction_pages WHERE extraction_id IN (SELECT id FROM delete_extractions)")
+		if err != nil {
+			panic(err)
+		}
+		defer rows.Close()
+		plan := []string{}
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				panic(err)
+			}
+			plan = append(plan, detail)
+		}
+		if err := rows.Err(); err != nil {
+			panic(err)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(plan); err != nil {
+			panic(err)
+		}
+		return
+	}
+	if os.Args[1] == "deletionstate" {
+		library := os.Args[3]
+		result := map[string]int{}
+		for key, query := range map[string]string{
+			"documents":       "SELECT count(*) FROM documents WHERE library_id=?",
+			"jobs_active":     "SELECT count(*) FROM jobs WHERE library_id=? AND status IN ('queued','running','retry_wait','paused')",
+			"scans_active":    "SELECT count(*) FROM root_scans WHERE root_id IN (SELECT id FROM storage_roots WHERE library_id=?) AND status IN ('running','paused')",
+			"previews_active": "SELECT count(*) FROM preview_cache WHERE document_id IN (SELECT id FROM documents WHERE library_id=?) AND status='generating'",
+		} {
+			var n int
+			if err := db.QueryRowContext(ctx, query, library).Scan(&n); err != nil {
+				panic(err)
+			}
+			result[key] = n
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			panic(err)
+		}
+		return
+	}
+	if os.Args[1] == "deletionsample" {
+		rows, err := db.QueryContext(ctx, `SELECT filename,sha256,locations_json FROM deletion_documents WHERE operation_id=? AND length(sha256)=64 ORDER BY document_id LIMIT 20`, os.Args[3])
+		if err != nil {
+			panic(err)
+		}
+		defer rows.Close()
+		result := []map[string]string{}
+		for rows.Next() {
+			var filename, hash, locations string
+			if err := rows.Scan(&filename, &hash, &locations); err != nil {
+				panic(err)
+			}
+			result = append(result, map[string]string{"filename": filename, "sha256": hash, "locations_json": locations})
+		}
+		if err := rows.Err(); err != nil {
+			panic(err)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			panic(err)
+		}
+		return
+	}
+	if os.Args[1] == "deletiondiag" {
+		rows, err := db.QueryContext(ctx, `SELECT e.id,e.kind,e.entity_id,e.library_id,e.name,e.state,e.execution_status,e.execution_error,e.created_at,coalesce(json_extract(e.summary_json,'$.counts.documents'),0),coalesce((SELECT count(*) FROM deletion_documents dd WHERE dd.operation_id=e.id),0) FROM entity_deletions e ORDER BY e.created_at DESC LIMIT 12`)
+		if err != nil {
+			panic(err)
+		}
+		type deletion struct {
+			ID                string `json:"id"`
+			Kind              string `json:"kind"`
+			EntityID          string `json:"entity_id"`
+			LibraryID         string `json:"library_id"`
+			Name              string `json:"name"`
+			State             string `json:"state"`
+			Execution         string `json:"execution"`
+			Error             string `json:"error"`
+			Created           string `json:"created"`
+			PlannedDocuments  int    `json:"planned_documents"`
+			ManifestDocuments int    `json:"manifest_documents"`
+		}
+		items := []deletion{}
+		for rows.Next() {
+			var v deletion
+			if err := rows.Scan(&v.ID, &v.Kind, &v.EntityID, &v.LibraryID, &v.Name, &v.State, &v.Execution, &v.Error, &v.Created, &v.PlannedDocuments, &v.ManifestDocuments); err != nil {
+				panic(err)
+			}
+			items = append(items, v)
+		}
+		if err := rows.Err(); err != nil {
+			panic(err)
+		}
+		rows.Close()
+		if err := json.NewEncoder(os.Stdout).Encode(items); err != nil {
+			panic(err)
+		}
+		return
+	}
 	if os.Args[1] == "folderbench" {
 		rootID := os.Args[3]
 		var libraryID string
