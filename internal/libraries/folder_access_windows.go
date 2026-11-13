@@ -102,8 +102,17 @@ func windowsAccessFailure(identity windowsAccessIdentity, source, kind, operatio
 func finalWindowsDirectoryPath(handle windows.Handle) (string, error) {
 	buffer := make([]uint16, 512)
 	for {
-		n, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0) // normalized DOS path, local NTFS: no parent searches
+		n, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
 		if err != nil {
+			if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+				// Some Windows versions query ancestor metadata for the DOS form.
+				// The NT form stays available from the opened destination handle.
+				ntPath, ntErr := normalizedNTPath(handle)
+				if ntErr != nil {
+					return "", ntErr
+				}
+				return localDOSPathFromNT(ntPath)
+			}
 			return "", err
 		}
 		if n >= uint32(len(buffer)) {
@@ -122,6 +131,65 @@ func finalWindowsDirectoryPath(handle windows.Handle) (string, error) {
 		}
 		return "", fmt.Errorf("el sistema no devolvió una ruta DOS o UNC canónica")
 	}
+}
+
+func normalizedNTPath(handle windows.Handle) (string, error) {
+	buffer := make([]uint16, 512)
+	for {
+		n, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 2) // VOLUME_NAME_NT
+		if err != nil {
+			return "", err
+		}
+		if n >= uint32(len(buffer)) {
+			if n > 32768 {
+				return "", windows.ERROR_FILENAME_EXCED_RANGE
+			}
+			buffer = make([]uint16, n+1)
+			continue
+		}
+		return windows.UTF16ToString(buffer[:n]), nil
+	}
+}
+
+// Capture drive mappings before a caller can impersonate a restricted token.
+// QueryDosDevice itself can be denied to that token even when the opened
+// directory handle permits the normalized NT path query.
+var initialNTDriveMappings = queryNTDriveMappings()
+
+type ntDriveMapping struct{ letter, device string }
+
+func queryNTDriveMappings() []ntDriveMapping {
+	drives, err := windows.GetLogicalDrives()
+	if err != nil {
+		return nil
+	}
+	mappings := make([]ntDriveMapping, 0, 26)
+	for index := 0; index < 26; index++ {
+		if drives&(1<<index) == 0 {
+			continue
+		}
+		letter := string(rune('A'+index)) + ":"
+		name, _ := windows.UTF16PtrFromString(letter)
+		buffer := make([]uint16, 32768)
+		n, err := windows.QueryDosDevice(name, &buffer[0], uint32(len(buffer)))
+		if err != nil {
+			continue
+		}
+		device := windows.UTF16ToString(buffer[:n])
+		mappings = append(mappings, ntDriveMapping{letter: letter, device: device})
+	}
+	return mappings
+}
+
+func localDOSPathFromNT(path string) (string, error) {
+	for _, mappings := range [][]ntDriveMapping{queryNTDriveMappings(), initialNTDriveMappings} {
+		for _, mapping := range mappings {
+			if len(path) > len(mapping.device) && strings.EqualFold(path[:len(mapping.device)], mapping.device) && path[len(mapping.device)] == '\\' {
+				return mapping.letter + path[len(mapping.device):], nil
+			}
+		}
+	}
+	return "", fmt.Errorf("NT path does not map to a local drive")
 }
 
 func inspectWindowsDirectory(path string) (directoryInfo, error) {

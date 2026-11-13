@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/url"
@@ -240,9 +241,13 @@ func startPostgres(ctx context.Context, binary, data, logPath string) error {
 	runErr := command.Run()
 	closeErr := output.Close()
 	if runErr != nil {
-		contents, _ := os.ReadFile(logPath)
-		if len(contents) > 4096 {
-			contents = contents[len(contents)-4096:]
+		var contents []byte
+		if logFile, err := os.Open(logPath); err == nil {
+			if info, err := logFile.Stat(); err == nil && info.Size() > 4096 {
+				_, _ = logFile.Seek(-4096, io.SeekEnd)
+			}
+			contents, _ = io.ReadAll(io.LimitReader(logFile, 4096))
+			_ = logFile.Close()
 		}
 		return fmt.Errorf("start AIDEX PostgreSQL: %w: %s", runErr, contents)
 	}

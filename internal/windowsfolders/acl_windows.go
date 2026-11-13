@@ -11,6 +11,10 @@ import (
 )
 
 func openDirectory(path string, access uint32) (windows.Handle, error) {
+	// Metadata-only rights do not establish delete-sharing protection for
+	// directory handles on Windows. FILE_TRAVERSE does, and remains available
+	// on ancestors whose contents cannot be listed.
+	access |= windows.FILE_TRAVERSE
 	ptr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, operationError("UTF16PtrFromString", path, err)

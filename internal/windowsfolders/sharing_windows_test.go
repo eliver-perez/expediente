@@ -30,7 +30,7 @@ func TestNativeMaximumAllowedSharingRegression(t *testing.T) {
 		t.Fatalf("expected Win32 32, got %v", err)
 	}
 	var detail *OperationError
-	if !errors.As(err, &detail) || detail.Operation != "CreateFileW(directory)" || detail.Resource != path || detail.Access != windows.MAXIMUM_ALLOWED {
+	if !errors.As(err, &detail) || detail.Operation != "CreateFileW(directory)" || detail.Resource != path || detail.Access != windows.MAXIMUM_ALLOWED|windows.FILE_TRAVERSE {
 		t.Fatal("missing exact operation/resource/access", err)
 	}
 	for _, access := range []uint32{windows.READ_CONTROL, windows.READ_CONTROL | windows.WRITE_DAC} {
@@ -50,6 +50,13 @@ func TestNativePinsKeepDeleteSharingProtection(t *testing.T) {
 	}
 	ptr, _ := windows.UTF16PtrFromString(path)
 	deleting, err := windows.CreateFile(ptr, windows.DELETE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if renameErr := os.Rename(path, path+"-renamed"); renameErr == nil {
+		windows.CloseHandle(pin)
+		t.Fatal("pin allowed the directory to be renamed")
+	} else if !errors.Is(renameErr, windows.ERROR_SHARING_VIOLATION) {
+		windows.CloseHandle(pin)
+		t.Fatal(renameErr)
+	}
 	windows.CloseHandle(pin)
 	if err == nil {
 		windows.CloseHandle(deleting)

@@ -359,7 +359,9 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			conditions = append(conditions, "d.case_id IS NULL")
 		}
 		if expression != "" {
-			textCondition := "f.id IN (SELECT p.physical_file_id FROM indexed_pages p WHERE p.search_vector @@ aidex_search_query(ARRAY(SELECT json_array_elements_text(?::json))))"
+			// Keep the tsquery behind an uncorrelated scalar SELECT so PostgreSQL
+			// computes normalization once, including during broad GIN bitmap scans.
+			textCondition := "EXISTS (SELECT 1 FROM indexed_pages p WHERE p.physical_file_id=f.id AND p.search_vector @@ (SELECT aidex_search_query(ARRAY(SELECT json_array_elements_text(?::json)))))"
 			names := []string{}
 			nameArgs := []any{}
 			for _, token := range tokens {
