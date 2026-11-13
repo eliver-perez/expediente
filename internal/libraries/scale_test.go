@@ -15,7 +15,7 @@ import (
 	"gestor-documental/internal/domain"
 )
 
-// Explicitly opt in: this creates only temporary SQLite rows, never PDFs or
+// Explicitly opt in: this creates only temporary PostgreSQL rows, never PDFs or
 // scheduled production work. It is intentionally excluded from normal tests.
 func TestSyntheticScale(t *testing.T) {
 	if os.Getenv("AIDEX_PERF_SCALE") != "1" {
@@ -149,8 +149,11 @@ func TestSyntheticScale(t *testing.T) {
 		inserted = target
 		var memory runtime.MemStats
 		runtime.ReadMemStats(&memory)
-		info, _ := os.Stat(filepath.Join(s.Identity.Config.StateDirectory, "documental.db"))
-		t.Logf("scale=%d insert=%s heap_mb=%.1f db_mb=%.1f", target, time.Since(started), float64(memory.HeapAlloc)/(1<<20), float64(info.Size())/(1<<20))
+		var databaseBytes int64
+		if err := s.Database.Reader.QueryRow("SELECT pg_database_size(current_database())").Scan(&databaseBytes); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("scale=%d insert=%s heap_mb=%.1f db_mb=%.1f", target, time.Since(started), float64(memory.HeapAlloc)/(1<<20), float64(databaseBytes)/(1<<20))
 		measure := func(label string, fn func() error) {
 			begin := time.Now()
 			if err := fn(); err != nil {

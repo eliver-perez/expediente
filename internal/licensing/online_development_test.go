@@ -108,7 +108,7 @@ func TestOnlineIdempotentRestartRevocationAndConfirmedDeactivation(t *testing.T)
 		t.Fatal("different key reused request")
 	}
 	var leaks int
-	err = client.Database.Reader.QueryRow("SELECT count(*) FROM license_operations WHERE instr(request_json,'DEMO-')>0 OR instr(request_digest,'DEMO-')>0").Scan(&leaks)
+	err = client.Database.Reader.QueryRow("SELECT count(*) FROM license_operations WHERE strpos(request_json,'DEMO-')>0 OR strpos(request_digest,'DEMO-')>0").Scan(&leaks)
 	if err != nil || leaks != 0 {
 		t.Fatal("commercial key persisted", err)
 	}

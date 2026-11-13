@@ -40,7 +40,11 @@ func readMaps(rows *sql.Rows) ([]map[string]any, error) {
 		}
 		item := map[string]any{}
 		for index, column := range columns {
-			item[column] = values[index]
+			if value, ok := values[index].([]byte); ok {
+				item[column] = string(value)
+			} else {
+				item[column] = values[index]
+			}
 		}
 		items = append(items, item)
 	}

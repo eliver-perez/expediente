@@ -85,14 +85,14 @@ func PruneTx(ctx context.Context, tx *sql.Tx, instant time.Time) error {
 	if _, err = tx.ExecContext(ctx, "DELETE FROM diagnostic_events WHERE last_occurred_at<?", domain.Timestamp(instant.Add(-time.Duration(p.Days)*24*time.Hour))); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM diagnostic_events WHERE id IN (SELECT id FROM diagnostic_events ORDER BY last_occurred_at DESC,id DESC LIMIT -1 OFFSET ?)`, p.Maximum)
+	_, err = tx.ExecContext(ctx, `DELETE FROM diagnostic_events WHERE id IN (SELECT id FROM diagnostic_events ORDER BY last_occurred_at DESC,id DESC OFFSET ?)`, p.Maximum)
 	return err
 }
 func Prune(ctx context.Context, db *storage.Database) error {
-	return db.Write(ctx, func(tx *sql.Tx) error { return PruneTx(ctx, tx, time.Now()) })
+	return db.WriteOnce(ctx, func(tx *sql.Tx) error { return PruneTx(ctx, tx, time.Now()) })
 }
 func Record(ctx context.Context, db *storage.Database, module, code string, details Context) error {
-	return db.Write(ctx, func(tx *sql.Tx) error { return RecordTx(ctx, tx, module, code, details) })
+	return db.WriteOnce(ctx, func(tx *sql.Tx) error { return RecordTx(ctx, tx, module, code, details) })
 }
 func RecordTx(ctx context.Context, tx *sql.Tx, module, code string, details Context) error {
 	module = Module(module)

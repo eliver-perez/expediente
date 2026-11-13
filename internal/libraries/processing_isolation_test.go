@@ -11,8 +11,8 @@ import (
 func TestProgressAndDashboardWithGeneralReadersExhausted(t *testing.T) {
 	service, principal, _ := fixture(t)
 	library := addLibrary(t, service, principal, "Concurrent reads")
-	connections := make([]interface{ Close() error }, 0, 4)
-	for i := 0; i < 4; i++ {
+	connections := make([]interface{ Close() error }, 0, service.Database.Reader.Stats().MaxOpenConnections)
+	for i := 0; i < service.Database.Reader.Stats().MaxOpenConnections; i++ {
 		connection, err := service.Database.Reader.Conn(context.Background())
 		if err != nil {
 			t.Fatal(err)

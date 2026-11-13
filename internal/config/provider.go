@@ -12,7 +12,7 @@ import (
 )
 
 // PrepareProvider validates a proposed local provisioning change without touching
-// SQLite or the file. Only maintenance commands may use this path; serve uses Load.
+// PostgreSQL or the file. Only maintenance commands may use this path; serve uses Load.
 func PrepareProvider(path string) (Config, []byte, error) {
 	var configuration Config
 	info, err := os.Lstat(path)

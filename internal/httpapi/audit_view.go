@@ -8,16 +8,7 @@ import (
 )
 
 const auditTable = `(SELECT a.*,coalesce(u.display_name,CASE a.actor_kind WHEN 'system' THEN 'Sistema' WHEN 'anonymous' THEN 'Sin sesión' ELSE 'Usuario retirado' END) AS actor_name,coalesce(b.name,'') AS library_name,coalesce(nullif(d.title,''),d.original_filename,'') AS document_name,
-CASE WHEN s.event_id IS NOT NULL THEN json_object(
- 'query',s.exact_query_text,'type',s.search_type,
- 'libraries',json((SELECT json_group_array(coalesce(lb.name,'Biblioteca no disponible')) FROM json_each(s.consulted_library_ids_json) scope LEFT JOIN libraries lb ON lb.id=scope.value)),
- 'filters',json(s.applied_filters_json),
- 'category', (SELECT name FROM categories WHERE id=json_extract(s.applied_filters_json,'$.category_id')),
- 'document_type', (SELECT name FROM document_types WHERE id=json_extract(s.applied_filters_json,'$.document_type_id')),
- 'case_name', (SELECT identifier FROM cases WHERE id=json_extract(s.applied_filters_json,'$.case_id')),
- 'root', (SELECT canonical_path FROM storage_roots WHERE id=json_extract(s.applied_filters_json,'$.root_id')),
- 'view', (SELECT name FROM logical_folder_views WHERE id=json_extract(s.applied_filters_json,'$.view_id'))
-) END AS search_details_json
+CASE WHEN s.event_id IS NOT NULL THEN json_build_object('query',s.exact_query_text,'type',s.search_type,'libraries',((SELECT json_agg(coalesce(lb.name,'Biblioteca no disponible')) FROM json_array_elements_text(s.consulted_library_ids_json::json) AS scope(value) LEFT JOIN libraries lb ON lb.id=scope.value))::json,'filters',(s.applied_filters_json)::json,'category',(SELECT name FROM categories WHERE id=((s.applied_filters_json)::jsonb #>> '{category_id}')),'document_type',(SELECT name FROM document_types WHERE id=((s.applied_filters_json)::jsonb #>> '{document_type_id}')),'case_name',(SELECT identifier FROM cases WHERE id=((s.applied_filters_json)::jsonb #>> '{case_id}')),'root',(SELECT canonical_path FROM storage_roots WHERE id=((s.applied_filters_json)::jsonb #>> '{root_id}')),'view',(SELECT name FROM logical_folder_views WHERE id=((s.applied_filters_json)::jsonb #>> '{view_id}'))) END AS search_details_json
 FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id LEFT JOIN libraries b ON b.id=a.library_id LEFT JOIN documents d ON d.id=a.document_id LEFT JOIN search_audit_details s ON s.event_id=a.id)`
 
 func (server *Server) auditScope(r *http.Request, p domain.Principal) (string, []any, error) {
@@ -48,7 +39,7 @@ func (server *Server) auditList(w http.ResponseWriter, r *http.Request, p domain
 		return
 	}
 	if query != "" {
-		where += " AND (instr(lower(event_type),lower(?))>0 OR instr(lower(actor_name),lower(?))>0 OR instr(lower(details_json),lower(?))>0 OR instr(lower(coalesce(document_id,'')),lower(?))>0)"
+		where += " AND (strpos(lower(event_type),lower(?))>0 OR strpos(lower(actor_name),lower(?))>0 OR strpos(lower(details_json),lower(?))>0 OR strpos(lower(coalesce(document_id,'')),lower(?))>0)"
 		args = append(args, query, query, query, query)
 	}
 	dates, values, err := dateFilters(r, "occurred_at")

@@ -126,7 +126,7 @@ func TestBulkRootDeletionKeepsOriginals(t *testing.T) {
 	if result.State != "complete" {
 		t.Fatalf("root deletion did not complete: %+v", result)
 	}
-	for _, query := range []string{"SELECT count(*) FROM documents WHERE library_id=?", "SELECT count(*) FROM physical_files WHERE library_id=?", "SELECT count(*) FROM storage_roots WHERE library_id=?", "SELECT count(*) FROM indexed_pages", "SELECT count(*) FROM extraction_pages", "SELECT count(*) FROM pages_fts"} {
+	for _, query := range []string{"SELECT count(*) FROM documents WHERE library_id=?", "SELECT count(*) FROM physical_files WHERE library_id=?", "SELECT count(*) FROM storage_roots WHERE library_id=?", "SELECT count(*) FROM indexed_pages", "SELECT count(*) FROM extraction_pages", "SELECT count(*) FROM indexed_pages WHERE search_vector IS NOT NULL"} {
 		var n int
 		args := []any{}
 		if strings.Contains(query, "library_id=?") {

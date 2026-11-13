@@ -4,11 +4,10 @@ package libraries
 
 import (
 	"context"
-	"database/sql"
+	"path/filepath"
 	"testing"
 
 	"gestor-documental/internal/storage"
-	_ "modernc.org/sqlite"
 )
 
 func TestDeletionProgressSharedBetweenRuntimeAndHTTPServices(t *testing.T) {
@@ -23,60 +22,32 @@ func TestDeletionProgressSharedBetweenRuntimeAndHTTPServices(t *testing.T) {
 	}
 }
 
-func TestDeletionFTSRebuildPreservesOtherDocumentsAndTriggers(t *testing.T) {
+func TestDeletionGINPreservesOtherDocuments(t *testing.T) {
 	ctx := context.Background()
-	database, err := sql.Open("sqlite", ":memory:")
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := storage.Open(ctx, directory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	database.SetMaxOpenConns(1)
 	for _, statement := range []string{
-		"CREATE TABLE indexed_pages(id INTEGER PRIMARY KEY, page_text TEXT NOT NULL)",
-		"CREATE VIRTUAL TABLE pages_fts USING fts5(page_text,content='indexed_pages',content_rowid='id')",
-		"CREATE TRIGGER indexed_pages_insert AFTER INSERT ON indexed_pages BEGIN INSERT INTO pages_fts(rowid,page_text) VALUES(new.id,new.page_text); END",
-		"CREATE TRIGGER indexed_pages_delete AFTER DELETE ON indexed_pages BEGIN INSERT INTO pages_fts(pages_fts,rowid,page_text) VALUES('delete',old.id,old.page_text); END",
-		"INSERT INTO indexed_pages VALUES(1,'eliminar')",
-		"INSERT INTO indexed_pages VALUES(2,'conservar')",
-		"INSERT INTO indexed_pages VALUES(3,'eliminar')",
+		"CREATE TABLE search_projection_fixture(id bigint PRIMARY KEY,page_text text NOT NULL,search_vector tsvector GENERATED ALWAYS AS (aidex_search_vector(page_text)) STORED)",
+		"CREATE INDEX search_projection_gin ON search_projection_fixture USING gin(search_vector)",
+		"INSERT INTO search_projection_fixture(id,page_text) VALUES(1,'eliminar'),(2,'conservar'),(3,'eliminar')",
+		"DELETE FROM search_projection_fixture WHERE id IN (1,3)",
+		"INSERT INTO search_projection_fixture(id,page_text) VALUES(4,'nuevo')",
 	} {
-		if _, err := database.ExecContext(ctx, statement); err != nil {
+		if _, err = database.Writer.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
 		}
-	}
-	tx, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	var triggerSQL string
-	if err := tx.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='indexed_pages_delete'").Scan(&triggerSQL); err != nil {
-		t.Fatal(err)
-	}
-	for _, statement := range []string{
-		"DROP TRIGGER indexed_pages_delete",
-		"DELETE FROM indexed_pages WHERE id IN (1,3)",
-		"INSERT INTO pages_fts(pages_fts) VALUES('rebuild')",
-		triggerSQL,
-		"INSERT INTO indexed_pages VALUES(4,'nuevo')",
-	} {
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
 	}
 	for term, want := range map[string]int{"eliminar": 0, "conservar": 1, "nuevo": 1} {
 		var got int
-		if err := database.QueryRowContext(ctx, "SELECT count(*) FROM pages_fts WHERE pages_fts MATCH ?", term).Scan(&got); err != nil {
-			t.Fatal(err)
+		if err = database.Reader.QueryRowContext(ctx, "SELECT count(*) FROM search_projection_fixture WHERE search_vector @@ aidex_search_query(ARRAY[?]::text[])", term).Scan(&got); err != nil || got != want {
+			t.Fatal(term, got, want, err)
 		}
-		if got != want {
-			t.Fatalf("%s: got %d, want %d", term, got, want)
-		}
-	}
-	if _, err := database.ExecContext(ctx, "INSERT INTO pages_fts(pages_fts,rank) VALUES('integrity-check',1)"); err != nil {
-		t.Fatal(err)
 	}
 }

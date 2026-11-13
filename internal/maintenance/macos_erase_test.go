@@ -162,7 +162,7 @@ func TestMacOSEraseRefusesLinkedState(t *testing.T) {
 	if _, err := EraseMacOSInstallation(path); err == nil {
 		t.Fatal("aceptó estado enlazado")
 	}
-	if _, err := os.Stat(filepath.Join(outside, "documental.db")); err != nil {
+	if _, err := os.Stat(outside); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -189,13 +189,14 @@ func TestMacOSEraseRecoversPreviousPartialEraseWithoutReinitializing(t *testing.
 
 func TestMacOSEraseWithoutConfigPreservesRecoverableDatabase(t *testing.T) {
 	path, cfg := macOSFixture(t)
+	writeFixture(t, filepath.Join(cfg.StateDirectory, "postgresql", "data", "PG_VERSION"))
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := EraseMacOSInstallation(path); err == nil {
 		t.Fatal("aceptó una base recuperable sin configuración")
 	}
-	if _, err := os.Stat(filepath.Join(cfg.StateDirectory, "documental.db")); err != nil {
+	if _, err := os.Stat(filepath.Join(cfg.StateDirectory, "postgresql", "data", "PG_VERSION")); err != nil {
 		t.Fatal(err)
 	}
 }

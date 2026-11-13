@@ -368,7 +368,7 @@ func (client *Client) Run(ctx context.Context) {
 				if last.IsZero() || client.Now().Sub(last) >= time.Duration(client.Options.RefreshHours)*time.Hour {
 					var requestID string
 					claims, _ := client.priorClaims(state.JWS)
-					_ = client.Database.Reader.QueryRowContext(ctx, "SELECT request_id FROM license_operations WHERE action='refresh' AND status='prepared' AND json_extract(request_json,'$.activation_id')=? AND json_extract(request_json,'$.installation_id')=? ORDER BY created_at LIMIT 1", claims.ActivationID, client.binding.InstallationID).Scan(&requestID)
+					_ = client.Database.Reader.QueryRowContext(ctx, "SELECT request_id FROM license_operations WHERE action='refresh' AND status='prepared' AND ((request_json)::jsonb #>> '{activation_id}')=? AND ((request_json)::jsonb #>> '{installation_id}')=? ORDER BY created_at LIMIT 1", claims.ActivationID, client.binding.InstallationID).Scan(&requestID)
 					if requestID == "" {
 						requestID = domain.NewID()
 					}
@@ -413,7 +413,7 @@ type PendingOperation struct {
 
 func (client *Client) PendingOperations(ctx context.Context) ([]PendingOperation, error) {
 	result := []PendingOperation{}
-	rows, err := client.Database.Reader.QueryContext(ctx, "SELECT request_id,action,created_at FROM license_operations WHERE status='prepared' AND json_extract(request_json,'$.installation_id')=? ORDER BY created_at DESC,request_id LIMIT 100", client.binding.InstallationID)
+	rows, err := client.Database.Reader.QueryContext(ctx, "SELECT request_id,action,created_at FROM license_operations WHERE status='prepared' AND ((request_json)::jsonb #>> '{installation_id}')=? ORDER BY created_at DESC,request_id LIMIT 100", client.binding.InstallationID)
 	if err != nil {
 		return result, err
 	}

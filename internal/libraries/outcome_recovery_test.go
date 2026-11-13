@@ -57,7 +57,7 @@ func TestWorkerRecoversFailedOutcomeWriteWithoutRepeatingExtraction(t *testing.T
 	library := managedLibrary(t, s, admin, "managed")
 	allowContentFormats(t, s, admin)
 	item := uploadFormat(t, s, admin, library, "Informe ñ #100%.txt", []byte("Contenido para comprobar recuperación"))
-	_, err := s.Database.Writer.Exec(`CREATE TRIGGER qa_deny_finish BEFORE UPDATE OF status ON jobs WHEN OLD.status='running' AND NEW.status='succeeded' BEGIN SELECT RAISE(ABORT,'SECRET-QA-SQL-PATH'); END`)
+	_, err := s.Database.Writer.Exec(`CREATE FUNCTION qa_deny_finish_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.status='running' AND NEW.status='succeeded' THEN RAISE EXCEPTION 'SECRET-QA-SQL-PATH'; END IF; RETURN NEW; END $$; CREATE TRIGGER qa_deny_finish BEFORE UPDATE OF status ON jobs FOR EACH ROW EXECUTE FUNCTION qa_deny_finish_fn();`)
 	requireNoError(t, err)
 	var logs bytes.Buffer
 	previous := slog.Default()
@@ -73,7 +73,7 @@ func TestWorkerRecoversFailedOutcomeWriteWithoutRepeatingExtraction(t *testing.T
 	})
 	// The extraction has published, but its terminal-state transaction is denied.
 	time.Sleep(300 * time.Millisecond)
-	_, err = s.Database.Writer.Exec("DROP TRIGGER qa_deny_finish")
+	_, err = s.Database.Writer.Exec("DROP TRIGGER qa_deny_finish ON jobs")
 	requireNoError(t, err)
 	awaitOutcome(t, func() bool {
 		var count int
@@ -100,7 +100,7 @@ func TestPreviewRecoversFailedErrorWriteWithoutRepeatingConversion(t *testing.T)
 		conversions.Add(1)
 		return previews.Failure("PREVIEW_CONVERSION_FAILED")
 	}
-	_, err := s.Database.Writer.Exec(`CREATE TRIGGER qa_deny_preview_finish BEFORE UPDATE OF status ON preview_cache WHEN OLD.status='generating' AND NEW.status='error' BEGIN SELECT RAISE(ABORT,'SECRET-QA-PREVIEW'); END`)
+	_, err := s.Database.Writer.Exec(`CREATE FUNCTION qa_deny_preview_finish_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.status='generating' AND NEW.status='error' THEN RAISE EXCEPTION 'SECRET-QA-PREVIEW'; END IF; RETURN NEW; END $$; CREATE TRIGGER qa_deny_preview_finish BEFORE UPDATE OF status ON preview_cache FOR EACH ROW EXECUTE FUNCTION qa_deny_preview_finish_fn();`)
 	requireNoError(t, err)
 	runtime, err := s.Start(ctx)
 	requireNoError(t, err)
@@ -109,7 +109,7 @@ func TestPreviewRecoversFailedErrorWriteWithoutRepeatingConversion(t *testing.T)
 	requireNoError(t, err)
 	awaitOutcome(t, func() bool { return conversions.Load() == 1 })
 	time.Sleep(300 * time.Millisecond)
-	_, err = s.Database.Writer.Exec("DROP TRIGGER qa_deny_preview_finish")
+	_, err = s.Database.Writer.Exec("DROP TRIGGER qa_deny_preview_finish ON preview_cache")
 	requireNoError(t, err)
 	awaitOutcome(t, func() bool {
 		preview, err := s.Preview(ctx, admin, documentID)

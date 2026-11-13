@@ -7,7 +7,7 @@ import (
 )
 
 // DeletionProgress reports rows removed by the running transaction. If the
-// process stops, SQLite rolls that transaction back and the recovered operation
+// process stops, PostgreSQL rolls that transaction back and the recovered operation
 // starts again from pending.
 type DeletionProgress struct {
 	Phase string `json:"phase"`

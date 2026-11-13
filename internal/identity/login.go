@@ -179,7 +179,7 @@ func (service *Service) penalizeLogin(ctx context.Context, transaction *sql.Tx, 
 
 func (service *Service) releaseSuccessfulAttempt(ctx context.Context, transaction *sql.Tx, identifier string, metadata domain.RequestMetadata) error {
 	for scope, key := range map[string]string{"identifier": identifier, "ip": metadata.ObservedIP} {
-		if _, err := transaction.ExecContext(ctx, "UPDATE authentication_throttles SET attempt_count=max(0,attempt_count-1) WHERE scope=? AND key_digest=?", scope, domain.Digest(key)); err != nil {
+		if _, err := transaction.ExecContext(ctx, "UPDATE authentication_throttles SET attempt_count=greatest(0,attempt_count-1) WHERE scope=? AND key_digest=?", scope, domain.Digest(key)); err != nil {
 			return err
 		}
 	}

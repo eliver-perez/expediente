@@ -311,7 +311,7 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 		// every tick. The enqueue time is durable across process restarts; manual
 		// and watcher-triggered traversals do not advance this clock.
 		var lastPeriodic string
-		if err := runtime.Service.Database.Reader.QueryRowContext(ctx, `SELECT coalesce((SELECT created_at FROM jobs WHERE target_version=? AND job_type=? AND json_extract(payload_json,'$.periodic')=1 ORDER BY created_at DESC,id DESC LIMIT 1),'')`, root.ID, rootJobKind(root)).Scan(&lastPeriodic); err != nil {
+		if err := runtime.Service.Database.Reader.QueryRowContext(ctx, `SELECT coalesce((SELECT created_at FROM jobs WHERE target_version=? AND job_type=? AND (((payload_json)::jsonb #>> '{periodic}')::boolean::int)=1 ORDER BY created_at DESC,id DESC LIMIT 1),'')`, root.ID, rootJobKind(root)).Scan(&lastPeriodic); err != nil {
 			continue
 		}
 		scanned, _ := time.Parse(domain.TimeLayout, root.LastScan)
@@ -352,7 +352,7 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 			// after the read above. Recheck the persisted enqueue timestamp here.
 			if due {
 				var last string
-				if err := transaction.QueryRowContext(ctx, `SELECT coalesce((SELECT created_at FROM jobs WHERE target_version=? AND job_type=? AND json_extract(payload_json,'$.periodic')=1 ORDER BY created_at DESC,id DESC LIMIT 1),'')`, root.ID, rootJobKind(root)).Scan(&last); err != nil {
+				if err := transaction.QueryRowContext(ctx, `SELECT coalesce((SELECT created_at FROM jobs WHERE target_version=? AND job_type=? AND (((payload_json)::jsonb #>> '{periodic}')::boolean::int)=1 ORDER BY created_at DESC,id DESC LIMIT 1),'')`, root.ID, rootJobKind(root)).Scan(&last); err != nil {
 					return err
 				}
 				lastAt, _ := time.Parse(domain.TimeLayout, last)
@@ -397,7 +397,7 @@ func (runtime *Runtime) scheduleOnce(ctx context.Context) {
 func (service *Service) claim(ctx context.Context) (Job, error) { return service.claimLane(ctx, "all") }
 func (service *Service) claimLane(ctx context.Context, lane string) (Job, error) {
 	var job Job
-	err := service.Database.Write(ctx, func(transaction *sql.Tx) error {
+	err := service.Database.WriteOnce(ctx, func(transaction *sql.Tx) error {
 		var policy ProcessingPolicy
 		if err := transaction.QueryRowContext(ctx, "SELECT paused,maximum_attempts,retry_delay_seconds,timeout_seconds FROM processing_policy WHERE singleton=1").Scan(&policy.Paused, &policy.MaximumAttempts, &policy.RetryDelaySeconds, &policy.TimeoutSeconds); err != nil {
 			return err
@@ -405,7 +405,7 @@ func (service *Service) claimLane(ctx context.Context, lane string) (Job, error)
 		if policy.Paused {
 			return nil
 		}
-		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token,max_attempts,retry_delay_seconds,timeout_seconds,coalesce(json_extract(payload_json,'$.manual'),json_extract(payload_json,'$.manual_reindex'),0) FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) AND NOT EXISTS(SELECT 1 FROM entity_deletions e WHERE e.execution_status IN ('pending','running') AND e.library_id=j.library_id AND (e.kind='library' OR (e.kind='root' AND (e.entity_id=j.target_version OR EXISTS(SELECT 1 FROM physical_file_locations l WHERE l.physical_file_id=j.physical_file_id AND l.root_id=e.entity_id) OR EXISTS(SELECT 1 FROM materializations m WHERE m.id=j.target_version AND m.target_root_id=e.entity_id))))) "+` AND EXISTS(SELECT 1 FROM libraries WHERE id=j.library_id AND disabled_at IS NULL) `+advancedJobEligibility+" ORDER BY "+advancedJobPriority+",created_at,id LIMIT 64", lane, lane, lane, now())
+		rows, err := transaction.QueryContext(ctx, "SELECT id,coalesce(library_id,''),coalesce(physical_file_id,''),job_type,target_version,attempt_count,fencing_token,max_attempts,retry_delay_seconds,timeout_seconds,coalesce((((payload_json)::jsonb #>> '{manual}')::boolean::int),(((payload_json)::jsonb #>> '{manual_reindex}')::boolean::int),0) FROM jobs j WHERE (?='all' OR (?='scan' AND job_type IN ('scan','verify_managed')) OR (?='content' AND job_type NOT IN ('scan','verify_managed'))) AND status IN ('queued','retry_wait','paused') AND available_at<=? AND attempt_count<max_attempts AND NOT EXISTS(SELECT 1 FROM jobs busy WHERE busy.status='running' AND j.physical_file_id IS NOT NULL AND busy.physical_file_id=j.physical_file_id) AND NOT EXISTS(SELECT 1 FROM jobs scanning WHERE scanning.status='running' AND scanning.job_type IN ('scan','verify_managed') AND j.job_type=scanning.job_type AND scanning.target_version=j.target_version) AND NOT EXISTS(SELECT 1 FROM entity_deletions e WHERE e.execution_status IN ('pending','running') AND e.library_id=j.library_id AND (e.kind='library' OR (e.kind='root' AND (e.entity_id=j.target_version OR EXISTS(SELECT 1 FROM physical_file_locations l WHERE l.physical_file_id=j.physical_file_id AND l.root_id=e.entity_id) OR EXISTS(SELECT 1 FROM materializations m WHERE m.id=j.target_version AND m.target_root_id=e.entity_id))))) "+` AND EXISTS(SELECT 1 FROM libraries WHERE id=j.library_id AND disabled_at IS NULL) `+advancedJobEligibility+" ORDER BY "+advancedJobPriority+",created_at,id LIMIT 1 FOR UPDATE OF j SKIP LOCKED", lane, lane, lane, now())
 		if err != nil {
 			return err
 		}
@@ -424,6 +424,24 @@ func (service *Service) claimLane(ctx context.Context, lane string) (Job, error)
 		}
 		rows.Close()
 		for _, candidate := range candidates {
+			// Different queued jobs for the same file/root must share one claim lane.
+			key := candidate.FileID
+			if key == "" {
+				key = candidate.Kind + ":" + candidate.Version
+			}
+			var acquired, busy bool
+			if err = transaction.QueryRowContext(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended(?,1))", key).Scan(&acquired); err != nil {
+				return err
+			}
+			if !acquired {
+				continue
+			}
+			if err = transaction.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM jobs WHERE status='running' AND ((?<>'' AND physical_file_id=?) OR (physical_file_id IS NULL AND job_type=? AND target_version=?)))", candidate.FileID, candidate.FileID, candidate.Kind, candidate.Version).Scan(&busy); err != nil {
+				return err
+			}
+			if busy {
+				continue
+			}
 			if cause := service.jobLicense(ctx, transaction, candidate); cause != nil {
 				if !licenseBlocked(cause) {
 					job = candidate

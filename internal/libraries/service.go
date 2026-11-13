@@ -302,7 +302,7 @@ func (service *Service) UpdateConfigurationWithDescription(ctx context.Context, 
 			return domain.Failure("VERSION_CONFLICT", "La biblioteca cambió. Recarga la página.", 412)
 		}
 		if previousLanguages != languages {
-			if _, err = transaction.ExecContext(ctx, `INSERT INTO advanced_settings VALUES(?,json_object('ocr_languages',?),1,?) ON CONFLICT(scope) DO UPDATE SET configuration_json=json_set(configuration_json,'$.ocr_languages',?),revision=revision+1,updated_at=excluded.updated_at`, "library:"+libraryID, languages, now(), languages); err != nil {
+			if _, err = transaction.ExecContext(ctx, `INSERT INTO advanced_settings VALUES(?,json_build_object('ocr_languages',(?)::text),1,?) ON CONFLICT(scope) DO UPDATE SET configuration_json=jsonb_set((configuration_json)::jsonb,'{ocr_languages}',to_jsonb(?::text))::text,revision=advanced_settings.revision+1,updated_at=excluded.updated_at`, "library:"+libraryID, languages, now(), languages); err != nil {
 				return err
 			}
 

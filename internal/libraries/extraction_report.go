@@ -27,7 +27,7 @@ type ProcessingRun struct {
 func (service *Service) latestProcessing(ctx context.Context, fileID string) (*ProcessingRun, error) {
 	var result ProcessingRun
 	var summary, warnings string
-	err := service.Database.Reader.QueryRowContext(ctx, `SELECT id,content_version_id,extractor_id,extractor_version,document_format,extractor_revision,coalesce(started_at,''),coalesce(completed_at,''),result_code,coalesce(error_code,''),unit_count,summary_json,warnings_json FROM extraction_runs WHERE physical_file_id=? ORDER BY rowid DESC LIMIT 1`, fileID).Scan(&result.ID, &result.VersionID, &result.Extractor.ID, &result.Extractor.Version, &result.Extractor.Format, &result.LegacyRevision, &result.Started, &result.Completed, &result.Status, &result.Error, &result.Units, &summary, &warnings)
+	err := service.Database.Reader.QueryRowContext(ctx, `SELECT id,content_version_id,extractor_id,extractor_version,document_format,extractor_revision,coalesce(started_at,''),coalesce(completed_at,''),result_code,coalesce(error_code,''),unit_count,summary_json,warnings_json FROM extraction_runs WHERE physical_file_id=? ORDER BY started_at DESC,id DESC LIMIT 1`, fileID).Scan(&result.ID, &result.VersionID, &result.Extractor.ID, &result.Extractor.Version, &result.Extractor.Format, &result.LegacyRevision, &result.Started, &result.Completed, &result.Status, &result.Error, &result.Units, &summary, &warnings)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

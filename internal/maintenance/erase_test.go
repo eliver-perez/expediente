@@ -44,13 +44,8 @@ func TestErasePreservesPhysicalDocumentsAndAllowsFreshInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	databaseBytes, err := os.ReadFile(filepath.Join(c.StateDirectory, "documental.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	metadata := map[string][]byte{
 		path + ".before-license-20260927T170000.000000000":                                                            configBytes,
-		filepath.Join(c.StateDirectory, "upgrade-backups", "before-processing-20260927T170000.000000000.db"):          databaseBytes,
 		filepath.Join(c.StateDirectory, "license", "installation.previous-11111111-1111-4111-8111-111111111111.json"): []byte(`{"installation_id":"11111111-1111-4111-8111-111111111111"}`),
 		filepath.Join(c.StateDirectory, "license", "installation.json"):                                               []byte(`{"installation_id":"current"}`),
 	}
@@ -113,7 +108,7 @@ func TestEraseRefusesLinksBeforeDeletingAnything(t *testing.T) {
 	if err = EraseInternal(path); err == nil {
 		t.Fatal("accepted linked metadata directory")
 	}
-	for _, file := range []string{path, filepath.Join(c.StateDirectory, "documental.db")} {
+	for _, file := range []string{path} {
 		if _, err = os.Stat(file); err != nil {
 			t.Fatal("deleted before validation", err)
 		}

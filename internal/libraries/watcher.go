@@ -90,7 +90,7 @@ func (runtime *Runtime) eventsLost(ctx context.Context) {
 	_ = runtime.Service.Database.Write(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO root_watch_recovery(root_id,loss_generation)
    SELECT id,1 FROM storage_roots WHERE storage_source='linked' AND status IN ('active','inaccessible')
-   ON CONFLICT(root_id) DO UPDATE SET loss_generation=loss_generation+1`); err != nil {
+   ON CONFLICT(root_id) DO UPDATE SET loss_generation=root_watch_recovery.loss_generation+1`); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, "UPDATE storage_roots SET watch_mode='polling',last_error_code='WATCH_EVENTS_LOST' WHERE storage_source='linked' AND status IN ('active','inaccessible')")

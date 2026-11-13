@@ -11,7 +11,7 @@ func requireLocalFilesystem(directory string) error {
 		return err
 	}
 	if filesystem.Flags&unix.MNT_LOCAL == 0 {
-		return fmt.Errorf("SQLite state must be on a local filesystem")
+		return fmt.Errorf("PostgreSQL state must be on a local filesystem")
 	}
 	return nil
 }

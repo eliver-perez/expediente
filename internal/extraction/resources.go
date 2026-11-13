@@ -48,7 +48,7 @@ func Recommend(r Resources) Concurrency {
 	} else {
 		cores = max(1, cores/2)
 	}
-	// Reserve CPU and RAM for the desktop, scanner, SQLite and other applications.
+	// Reserve CPU and RAM for the desktop, scanner, PostgreSQL and other applications.
 	total := max(1, min(6, (cores*2)/3))
 	if r.AvailableMemoryBytes == 0 {
 		total = 1

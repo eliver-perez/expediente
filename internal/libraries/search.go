@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -117,30 +116,10 @@ type SearchResult struct {
 	Libraries []string      `json:"consulted_library_ids"`
 }
 
-const incompleteClassificationSQL = "(d.category_id IS NULL OR d.document_type_id IS NULL OR (coalesce(json_extract((SELECT settings_json FROM libraries WHERE id=d.library_id),'$.cases_enabled'),0)=1 AND d.case_id IS NULL))"
+const incompleteClassificationSQL = "(d.category_id IS NULL OR d.document_type_id IS NULL OR (coalesce(((((SELECT settings_json FROM libraries WHERE id=d.library_id))::jsonb #>> '{cases_enabled}')::boolean::int),0)=1 AND d.case_id IS NULL))"
 const classificationStateSQL = "CASE WHEN EXISTS(SELECT 1 FROM document_replacements historical WHERE historical.previous_document_id=d.id AND historical.status='completed') THEN 'historical' WHEN f.availability='staged' THEN 'temporary' WHEN " + incompleteClassificationSQL + " THEN 'unclassified' ELSE 'classified' END"
 const documentColumns = classificationStateSQL + ",d.id,d.library_id,d.title,d.original_filename,CASE WHEN r.status='inaccessible' THEN 'unknown' ELSE f.availability END,d.approval_status,f.extraction_freshness,d.revision,coalesce(l.root_id,''),coalesce(l.relative_path,''),coalesce(l.canonical_path,''),f.id,coalesce(f.os_identity_key,''),coalesce(v.sha256,''),coalesce(e.page_count,0),f.storage_source,coalesce(d.case_id,''),coalesce(c.identifier,''),coalesce(d.category_id,''),coalesce(d.document_type_id,''),coalesce(d.created_by,''),d.metadata_json,coalesce(cat.name,''),coalesce(dt.name,''),f.integrity_status,v.size_bytes,d.created_at,coalesce(v.os_modified_at,''),coalesce(v.document_format,'pdf'),coalesce(v.detected_mime,'application/pdf'),coalesce(v.original_extension,'.pdf'),coalesce(v.extension_mismatch,0),coalesce(v.index_block_reason,''),coalesce(nullif(e.unit_count,0),e.page_count,0)"
 const documentJoins = " FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN physical_file_locations l ON l.id=f.primary_location_id LEFT JOIN storage_roots r ON r.id=l.root_id LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id LEFT JOIN cases c ON c.id=d.case_id LEFT JOIN categories cat ON cat.id=d.category_id LEFT JOIN document_types dt ON dt.id=d.document_type_id "
-
-var explorerRootPlanLogged atomic.Bool
-var explorerNestedPlanLogged atomic.Bool
-
-func logExplorerPlan(ctx context.Context, tx *sql.Tx, kind, query string, args ...any) {
-	rows, err := tx.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, args...)
-	if err != nil {
-		slog.Warn("explorer query plan unavailable", "kind", kind, "error_type", "sql")
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, parent, notUsed int
-		var detail string
-		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
-			return
-		}
-		slog.Info("explorer query plan", "kind", kind, "detail", detail)
-	}
-}
 
 type rowScanner interface{ Scan(...any) error }
 
@@ -207,11 +186,12 @@ func compileQuery(query string) (string, []string, error) {
 	if len(tokens) > 32 {
 		return "", nil, invalid("La consulta admite hasta 32 términos o frases.")
 	}
-	expressions := []string{}
-	for _, token := range tokens {
-		expressions = append(expressions, "\""+strings.ReplaceAll(token, "\"", "\"\"")+"\"")
+	// JSON carries literal phrases; the database uses phraseto_tsquery for each
+	// phrase and AND between them. Query punctuation never becomes SQL syntax.
+	if len(tokens) == 0 {
+		return "", tokens, nil
 	}
-	return strings.Join(expressions, " AND "), tokens, nil
+	return encode(tokens), tokens, nil
 }
 func (service *Service) Search(ctx context.Context, principal domain.Principal, input SearchInput, metadata domain.RequestMetadata, auditSearch bool) (SearchResult, error) {
 	result := SearchResult{Items: []Document{}, Libraries: []string{}, Groups: []SearchGroup{}}
@@ -257,7 +237,7 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 	if err := service.Identity.License.Check(ctx, licensing.ReadDocuments); err != nil {
 		return result, err
 	}
-	transaction, err := service.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	transaction, err := service.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return result, err
 	}
@@ -346,7 +326,7 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			if input.Filters.Prefix != "" {
 				start = len([]rune(input.Filters.Prefix)) + 2
 			}
-			conditions = append(conditions, "instr(substr(coalesce(l.relative_path,d.original_filename),?),'/')=0")
+			conditions = append(conditions, "strpos(substr(coalesce(l.relative_path,d.original_filename),?),'/')=0")
 			arguments = append(arguments, start)
 		}
 		if input.Filters.Availability != "" {
@@ -379,15 +359,15 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 			conditions = append(conditions, "d.case_id IS NULL")
 		}
 		if expression != "" {
-			textCondition := "f.id IN (SELECT p.physical_file_id FROM indexed_pages p JOIN pages_fts ON pages_fts.rowid=p.id WHERE pages_fts MATCH ?)"
+			textCondition := "f.id IN (SELECT p.physical_file_id FROM indexed_pages p WHERE p.search_vector @@ aidex_search_query(ARRAY(SELECT json_array_elements_text(?::json))))"
 			names := []string{}
 			nameArgs := []any{}
 			for _, token := range tokens {
-				names = append(names, "instr(d.filename_search_key,?)>0")
+				names = append(names, "strpos(d.filename_search_key,?)>0")
 				nameArgs = append(nameArgs, searchKey(token))
 			}
 			nameCondition := "(" + strings.Join(names, " AND ") + ")"
-			identifierCondition := "instr(coalesce(c.identifier_key,''),?)>0"
+			identifierCondition := "strpos(coalesce(c.identifier_key,''),?)>0"
 			switch input.Type {
 			case "identifier":
 				conditions = append(conditions, identifierCondition)
@@ -422,9 +402,9 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 		countJoins := " FROM documents d JOIN physical_files f ON f.id=d.physical_file_id"
 		nestedRange := input.Query == "" && input.Filters.RootID != "" && input.Filters.Prefix != ""
 		if nestedRange {
-			// Start with the selected path range, then visit only its primary
-			// files and documents. CROSS JOIN preserves the selective loop order.
-			countJoins = " FROM physical_file_locations l INDEXED BY physical_locations_explorer CROSS JOIN physical_files f CROSS JOIN documents d"
+			// Restrict the selected path range before visiting files and documents.
+			// PostgreSQL chooses join order from its statistics and available indexes.
+			countJoins = " FROM physical_file_locations l CROSS JOIN physical_files f CROSS JOIN documents d"
 			conditions = append(conditions, "f.primary_location_id=l.id", "d.physical_file_id=f.id", "l.relative_path>=?", "l.relative_path<?")
 			arguments = append(arguments, input.Filters.Prefix, input.Filters.Prefix+"0")
 		}
@@ -446,21 +426,9 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 		countQuery := "SELECT d.library_id,(SELECT name FROM libraries WHERE id=d.library_id),count(*)" + countJoins + where + " GROUP BY d.library_id ORDER BY 2,d.library_id"
 		pageJoins := documentJoins
 		if input.Query == "" && input.Filters.RootID != "" {
-			pageJoins = strings.Replace(pageJoins, "documents d JOIN", "documents d INDEXED BY documents_explorer_page JOIN", 1)
+			pageJoins = strings.Replace(pageJoins, "documents d JOIN", "documents d JOIN", 1)
 		}
 		pageQuery := "SELECT " + documentColumns + pageJoins + where + " AND d.id>? ORDER BY d.id LIMIT ?"
-		if input.Query == "" && input.Filters.RootID != "" {
-			logged := &explorerRootPlanLogged
-			kind := "root"
-			if input.Filters.Prefix != "" {
-				logged, kind = &explorerNestedPlanLogged, "nested"
-			}
-			if logged.CompareAndSwap(false, true) {
-				logExplorerPlan(ctx, transaction, kind+"-count", countQuery, arguments...)
-				pageArgs := append(append([]any{}, arguments...), after, input.Limit+1)
-				logExplorerPlan(ctx, transaction, kind+"-page", pageQuery, pageArgs...)
-			}
-		}
 		if input.SkipCount && !input.SummaryOnly {
 			result.Count = -1 // Exact total was intentionally omitted for page navigation.
 		} else {
@@ -537,7 +505,7 @@ func (service *Service) Search(ctx context.Context, principal domain.Principal, 
 				document.OriginalPath = ""
 			}
 			if expression != "" && input.Type != "name" && input.Type != "identifier" {
-				matches, err := transaction.QueryContext(ctx, "SELECT p.page_number,snippet(pages_fts,0,char(1),char(2),' … ',24),u.unit_kind,u.context_label FROM pages_fts JOIN indexed_pages p ON p.id=pages_fts.rowid JOIN extraction_pages u ON u.extraction_id=p.extraction_id AND u.page_number=p.page_number WHERE pages_fts MATCH ? AND p.physical_file_id=? ORDER BY p.page_number LIMIT 5", expression, document.FileID)
+				matches, err := transaction.QueryContext(ctx, "SELECT p.page_number,ts_headline('aidex_search',p.page_text,aidex_search_query(ARRAY(SELECT json_array_elements_text(?::json))),'StartSel=, StopSel=, MaxWords=24, MinWords=12, MaxFragments=1'),u.unit_kind,u.context_label FROM indexed_pages p JOIN extraction_pages u ON u.extraction_id=p.extraction_id AND u.page_number=p.page_number WHERE p.search_vector @@ aidex_search_query(ARRAY(SELECT json_array_elements_text(?::json))) AND p.physical_file_id=? ORDER BY p.page_number LIMIT 5", expression, expression, document.FileID)
 				if err != nil {
 					return err
 				}

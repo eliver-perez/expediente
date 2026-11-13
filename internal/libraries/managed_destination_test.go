@@ -71,14 +71,14 @@ func TestManagedDestinationAssignmentValidationAndAudit(t *testing.T) {
 		t.Fatal("lector cambió destino")
 	}
 	// No elegir arbitrariamente en una biblioteca anterior con varios destinos.
-	_, err := s.Database.Writer.Exec("UPDATE libraries SET settings_json=json_set(settings_json,'$.default_managed_root_id','') WHERE id=?", lib)
+	_, err := s.Database.Writer.Exec("UPDATE libraries SET settings_json=jsonb_set((settings_json)::jsonb,'{default_managed_root_id}',to_jsonb(''::text))::text WHERE id=?", lib)
 	requireNoError(t, err)
 	registerManagedDestination(t, s, p, lib, filepath.Join(dir, "tercera"))
 	if destinationValue(t, s, lib) != "" {
 		t.Fatal("selección arbitraria de destinos existentes")
 	}
 	var actor, details string
-	requireNoError(t, s.Database.Reader.QueryRow("SELECT actor_user_id,details_json FROM audit_events WHERE library_id=? AND event_type='storage.destination_changed' AND json_extract(details_json,'$.new_root_id')=?", lib, second).Scan(&actor, &details))
+	requireNoError(t, s.Database.Reader.QueryRow("SELECT actor_user_id,details_json FROM audit_events WHERE library_id=? AND event_type='storage.destination_changed' AND ((details_json)::jsonb #>> '{new_root_id}')=?", lib, second).Scan(&actor, &details))
 	var data map[string]string
 	requireNoError(t, json.Unmarshal([]byte(details), &data))
 	if actor != p.User.ID || data["previous_root_id"] != first {

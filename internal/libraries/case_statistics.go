@@ -110,14 +110,14 @@ func (s *Service) CaseStatistics(ctx context.Context, p domain.Principal, librar
 	if exercise != "" && (len(exercise) != 4 || strings.IndexFunc(exercise, func(r rune) bool { return r < '0' || r > '9' }) != -1) {
 		return result, invalid("Ejercicio inválido.")
 	}
-	tx, err := s.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return result, err
 	}
 	defer tx.Rollback()
 	query := `WITH ` + caseStatsValidDocs + `, requirements AS (
- SELECT r.case_id,sum(r.required_count) expected,sum(min(r.required_count,coalesce(v.valid_count,0))) fulfilled,
- json_group_array(json_object('type',r.document_type_id,'name',t.name,'missing',max(r.required_count-coalesce(v.valid_count,0),0))) missing_json
+ SELECT r.case_id,sum(r.required_count) expected,sum(least(r.required_count,coalesce(v.valid_count,0))) fulfilled,
+ json_agg(json_build_object('type',r.document_type_id,'name',t.name,'missing',greatest(r.required_count-coalesce(v.valid_count,0),0))) missing_json
  FROM case_requirements r JOIN document_types t ON t.id=r.document_type_id
  LEFT JOIN valid_docs v ON v.case_id=r.case_id AND v.document_type_id=r.document_type_id
  WHERE r.library_id=? AND r.mandatory=1 GROUP BY r.case_id

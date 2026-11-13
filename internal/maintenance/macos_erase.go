@@ -2,10 +2,8 @@ package maintenance
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -38,13 +36,13 @@ func EraseMacOSInstallation(configPath string) (string, error) {
 	cfg, err := config.Load(configPath)
 	configExists := err == nil
 	if os.IsNotExist(err) {
-		// Recuperar un borrado antiguo que ya retiró config y SQLite, pero dejó
+		// Recuperar un borrado antiguo que ya retiró config y PostgreSQL, pero dejó
 		// logs y service.lock. Solo el desinstalador confirmado permite esto.
 		cfg = config.Defaults(filepath.Join(data, "state"))
 		if err = storage.PreparePrivateDirectory(cfg.StateDirectory); err != nil {
 			return "", err
 		}
-		for _, name := range []string{"documental.db", "documental.db-wal", "documental.db-shm"} {
+		for _, name := range []string{"postgresql"} {
 			if _, statErr := os.Lstat(filepath.Join(cfg.StateDirectory, name)); !os.IsNotExist(statErr) {
 				return "", fmt.Errorf("existe una base potencialmente recuperable sin configuración; se conservan los datos")
 			}
@@ -109,6 +107,11 @@ func EraseMacOSInstallation(configPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if storage.PostgresPresent(cfg.StateDirectory) {
+		if err = storage.ResetPostgres(context.Background(), cfg.StateDirectory); err != nil {
+			return "", err
+		}
+	}
 	archive := ""
 	if len(preserve) > 0 {
 		archive = filepath.Join("Documentos conservados", domain.NewID())
@@ -171,24 +174,17 @@ func containsPath(parent, child string) bool {
 
 func macOSDocumentRoots(cfg config.Config) ([]string, error) {
 	roots := []string{cfg.PrivateUploadDirectory()}
-	path := filepath.Join(cfg.StateDirectory, "documental.db")
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
+	if !storage.PostgresPresent(cfg.StateDirectory) {
 		return roots, nil
 	}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := regularWithoutLinks(path + suffix); err != nil {
-			return nil, err
-		}
-	}
-	address := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}
-	db, err := sql.Open("sqlite", address.String())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db, err := storage.Open(ctx, cfg.StateDirectory)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	rows, err := db.QueryContext(ctx, "SELECT canonical_path FROM storage_roots")
+	rows, err := db.Reader.QueryContext(ctx, "SELECT canonical_path FROM storage_roots")
 	if err != nil {
 		return nil, fmt.Errorf("no se pudieron verificar las rutas documentales; se conservan los datos: %w", err)
 	}
@@ -209,12 +205,15 @@ func macOSDocumentRoots(cfg config.Config) ([]string, error) {
 // Solo nombres reservados o formatos generados por AIDEX. Lo desconocido se
 // conserva como posible documento, aunque esté dentro de una carpeta interna.
 func macOSInternalFile(path, configPath string) bool {
+	if strings.HasPrefix(path, "state/postgresql/") {
+		return storage.IsPostgresMetadata(strings.TrimPrefix(path, "state/postgresql/"))
+	}
 	if rotatedServiceLog.MatchString(path) || temporaryConfig.MatchString(path) {
 		return true
 	}
 	switch path {
 	case "config.json", "package-version", "service-enabled", "logs/service.log",
-		"state/documental.db", "state/documental.db-wal", "state/documental.db-shm", "state/service.lock",
+		"state/service.lock",
 		"state/package-version", "state/service-enabled", "state/license/installation.json", "state/license/recovery.json":
 		return true
 	}

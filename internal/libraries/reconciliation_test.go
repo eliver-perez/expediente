@@ -87,10 +87,10 @@ func TestDailyPeriodicFailureDoesNotScheduleHundredsOfScans(t *testing.T) {
 	for i := 0; i < 120; i++ {
 		runtime.scheduleOnce(ctx)
 	}
-	// A fresh runtime represents a restart; the cadence is in SQLite, not RAM.
+	// A fresh runtime represents a restart; the cadence is in PostgreSQL, not RAM.
 	newRuntime().scheduleOnce(ctx)
 	var count int
-	requireNoError(t, service.Database.Reader.QueryRow("SELECT count(*) FROM jobs WHERE target_version=? AND job_type='scan' AND json_extract(payload_json,'$.periodic')=1", root).Scan(&count))
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT count(*) FROM jobs WHERE target_version=? AND job_type='scan' AND (((payload_json)::jsonb #>> '{periodic}')::boolean::int)=1", root).Scan(&count))
 	if count != 1 {
 		t.Fatalf("periodic scans after 121 ticks: %d", count)
 	}
@@ -215,7 +215,7 @@ func TestRetirementAndIndexRemovalPreserveOriginalAndHistory(t *testing.T) {
 	}
 }
 
-func TestUpgradeCoalescesLegacyRequestsAndPreservesConfiguredInterval(t *testing.T) {
+func TestRootRequestConstraintPreservesConfiguredInterval(t *testing.T) {
 	service, principal, directory := fixture(t)
 	ctx := context.Background()
 	library := addLibrary(t, service, principal, "Upgrade")
@@ -225,18 +225,12 @@ func TestUpgradeCoalescesLegacyRequestsAndPreservesConfiguredInterval(t *testing
 	configured, err := service.root(ctx, root)
 	requireNoError(t, err)
 	requireNoError(t, service.ConfigureRoot(ctx, principal, root, true, 900, configured.Revision, domain.RequestMetadata{}))
-	down, err := os.ReadFile("../../db/migrations/0008_reconciliation.down.sql")
-	requireNoError(t, err)
-	_, err = service.Database.Writer.Exec(string(down))
-	requireNoError(t, err)
 	job, err := service.claimLane(ctx, "scan")
 	requireNoError(t, err)
 	_, err = service.Database.Writer.Exec("INSERT INTO jobs(id,library_id,job_type,target_version,idempotency_key,payload_json,status,available_at,created_at) VALUES(?,?,'scan',?,?,'{}','queued',?,?)", domain.NewID(), library, root, domain.NewID(), now(), now())
-	requireNoError(t, err)
-	up, err := os.ReadFile("../../db/migrations/0008_reconciliation.up.sql")
-	requireNoError(t, err)
-	_, err = service.Database.Writer.Exec(string(up))
-	requireNoError(t, err)
+	if err == nil {
+		t.Fatal("duplicate active root request accepted")
+	}
 	var active string
 	requireNoError(t, service.Database.Reader.QueryRow("SELECT id FROM jobs WHERE job_type='scan' AND target_version=? AND status IN ('queued','running','retry_wait','paused')", root).Scan(&active))
 	if active != job.ID {

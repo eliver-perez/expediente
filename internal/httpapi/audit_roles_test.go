@@ -118,7 +118,7 @@ func TestExactSearchAuditExistingDetailsAndZeroMatches(t *testing.T) {
 		t.Fatal("zero search not audited", count, err)
 	}
 	var eventID string
-	if err := fixture.service.Database.Reader.QueryRow("SELECT s.event_id FROM search_audit_details s WHERE s.exact_query_text='' ORDER BY s.rowid DESC LIMIT 1").Scan(&eventID); err != nil {
+	if err := fixture.service.Database.Reader.QueryRow("SELECT s.event_id FROM search_audit_details s JOIN audit_events a ON a.id=s.event_id WHERE s.exact_query_text='' ORDER BY a.occurred_at DESC,a.id DESC LIMIT 1").Scan(&eventID); err != nil {
 		t.Fatal(err)
 	}
 	response = fixture.request("GET", "/audit-events/"+eventID, "", cookie, "")

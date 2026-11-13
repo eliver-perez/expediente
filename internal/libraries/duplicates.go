@@ -23,7 +23,7 @@ func (service *Service) DuplicateGroups(ctx context.Context, p domain.Principal,
 	if err != nil {
 		return result, err
 	}
-	selection := `SELECT v.sha256 AS hash,count(*) AS copies,min(v.size_bytes) AS size,count(DISTINCT f.library_id) AS libraries FROM physical_files f JOIN content_versions v ON v.id=f.current_content_version_id JOIN documents d ON d.physical_file_id=f.id WHERE EXISTS(SELECT 1 FROM library_role_assignments a JOIN role_permissions p USING(role_id) WHERE a.library_id=f.library_id AND a.user_id=? AND p.permission_key='documents.read') AND d.deleted_at IS NULL AND ` + visibleDocumentSQL + ` GROUP BY v.sha256 HAVING count(*)>1 AND sum(f.library_id=?)>0`
+	selection := `SELECT v.sha256 AS hash,count(*) AS copies,min(v.size_bytes) AS size,count(DISTINCT f.library_id) AS libraries FROM physical_files f JOIN content_versions v ON v.id=f.current_content_version_id JOIN documents d ON d.physical_file_id=f.id WHERE EXISTS(SELECT 1 FROM library_role_assignments a JOIN role_permissions p USING(role_id) WHERE a.library_id=f.library_id AND a.user_id=? AND p.permission_key='documents.read') AND d.deleted_at IS NULL AND ` + visibleDocumentSQL + ` GROUP BY v.sha256 HAVING count(*)>1 AND sum((f.library_id=?)::int)>0`
 	args := []any{p.User.ID, p.User.ID, p.User.ID, libraryID}
 	if err = service.Database.Reader.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(copies),0) FROM ("+selection+")", args...).Scan(&result.Groups, &result.Files); err != nil {
 		return result, err

@@ -1,2 +1,0 @@
-DROP INDEX documents_explorer_page;
-DROP INDEX document_replacements_completed;

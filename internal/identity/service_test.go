@@ -133,7 +133,7 @@ func TestReadAuthenticationContinuesWhileWriterIsBusy(t *testing.T) {
 func TestLoginRollbackPreservesPreviousSession(t *testing.T) {
 	service := fixtureService(t)
 	previous, _ := loginFixture(t, service)
-	_, err := service.Database.Writer.Exec(`CREATE TRIGGER simulate_audit_failure BEFORE INSERT ON audit_events WHEN NEW.event_type='session.started' BEGIN SELECT RAISE(ABORT,'test failure'); END;`)
+	_, err := service.Database.Writer.Exec(`CREATE FUNCTION simulate_audit_failure_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type='session.started' THEN RAISE EXCEPTION 'test failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER simulate_audit_failure BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION simulate_audit_failure_fn();`)
 	if err != nil {
 		t.Fatal(err)
 	}

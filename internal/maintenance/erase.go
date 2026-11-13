@@ -3,7 +3,7 @@
 package maintenance
 
 import (
-	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,8 +42,8 @@ func EraseInternal(configPath string) error {
 	}
 	defer unlock()
 	state := configuration.StateDirectory
-	paths := []string{filepath.Join(state, "documental.db-wal"), filepath.Join(state, "documental.db-shm"), filepath.Join(state, "documental.db"), filepath.Join(state, "license", "installation.json"), filepath.Join(state, "license", "recovery.json")}
-	for _, pattern := range []string{filepath.Join(state, "upgrade-backups", "before-processing-*.db"), filepath.Join(state, "license", "installation.previous-*.json"), configPath + ".before-license-*"} {
+	paths := []string{filepath.Join(state, "license", "installation.json"), filepath.Join(state, "license", "recovery.json")}
+	for _, pattern := range []string{filepath.Join(state, "license", "installation.previous-*.json"), configPath + ".before-license-*"} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			return err
@@ -71,20 +71,11 @@ func EraseInternal(configPath string) error {
 		if err := regularWithoutLinks(path); err != nil {
 			return err
 		}
-		if strings.HasSuffix(path, ".db") {
-			file, err := os.Open(path)
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			header := make([]byte, 16)
-			n, readErr := file.Read(header)
-			file.Close()
-			if readErr != nil || n != 16 || !bytes.Equal(header, []byte("SQLite format 3\x00")) {
-				return fmt.Errorf("refusing to remove an unrecognized database: %s", path)
-			}
+
+	}
+	if storage.PostgresPresent(state) {
+		if err := storage.ResetPostgres(context.Background(), state); err != nil {
+			return err
 		}
 	}
 	for path := range unique {

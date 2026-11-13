@@ -198,7 +198,7 @@ func TestLiveProvider(t *testing.T) {
 		t.Fatal("refreshed artifact/state mismatch")
 	}
 	t.Log("PASS online refresh, updated signed artifact, contact and idempotent replay; revision:", state.Revision)
-	// Close both SQLite pools and reload identity + license. Unreachable HTTPS URL
+	// Close both PostgreSQL pools and reload identity + license. Unreachable HTTPS URL
 	// proves local validation/import do not require a provider connection.
 	reopen := func(options Options) {
 		t.Helper()
@@ -342,7 +342,7 @@ func TestLiveProvider(t *testing.T) {
 	}
 	// Journal/artifacts must not retain the commercial credential.
 	var leaked int
-	if err := database.Reader.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM license_operations WHERE instr(request_json,?)>0) + (SELECT count(*) FROM license_artifacts WHERE instr(contents,?)>0)", productKey, productKey).Scan(&leaked); err != nil || leaked != 0 {
+	if err := database.Reader.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM license_operations WHERE strpos(request_json,?)>0) + (SELECT count(*) FROM license_artifacts WHERE strpos(contents,?)>0)", productKey, productKey).Scan(&leaked); err != nil || leaked != 0 {
 		t.Fatal("credential persistence check failed")
 	}
 	t.Log("PASS final release confirmed and persisted; product key absent from journal/artifacts; temporary installation left deactivated")

@@ -133,7 +133,7 @@ func TestAdvancedWatcherIgnoresWithoutMarkingDocumentsMissing(t *testing.T) {
 	requireNoError(t, s.ConfigureAdvanced(ctx, p, lib, config, domain.RequestMetadata{}))
 	scan(t, s, root)
 	var files, missing, skips, failures int
-	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*),sum(availability='missing') FROM physical_files WHERE library_id=?", lib).Scan(&files, &missing))
+	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*),sum((availability='missing')::int) FROM physical_files WHERE library_id=?", lib).Scan(&files, &missing))
 	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*) FROM document_file_skips WHERE root_id=?", root).Scan(&skips))
 	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*) FROM scan_errors WHERE root_id=?", root).Scan(&failures))
 	if files != 1 || missing != 0 || skips != 3 || failures != 0 {

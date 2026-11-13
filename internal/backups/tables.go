@@ -2,12 +2,12 @@ package backups
 
 // This is deliberately a closed list. Adding a database table never silently
 // makes its contents portable; in particular license and session state cannot
-// enter an archive through sqlite_master discovery.
+// enter an archive through catalog discovery.
 var tables = []string{
 	"roles", "role_permissions", "users", "global_role_assignments", "bootstrap_state",
 	"libraries", "library_role_assignments", "storage_roots", "storage_root_configuration_versions", "root_operations", "logical_folder_views",
 	"categories", "document_types", "templates", "template_versions", "template_requirements", "cases", "case_requirements", "library_configuration_versions",
-	"physical_files", "physical_file_locations", "content_versions", "extraction_runs", "extraction_pages", "documents", "indexed_pages",
+	"physical_files", "physical_file_locations", "content_versions", "extraction_runs", "extraction_pages", "documents", "indexed_pages", "document_corrections", "document_replacements",
 	"jobs", "job_attempts", "root_scans", "scan_file_observations", "search_audit_details", "document_notifications", "notification_receipts", "document_history", "root_plans",
 	"review_requests", "materializations", "library_document_sequences", "upload_batches", "upload_items",
 	"processing_settings", "scan_progress", "scan_errors", "job_progress", "job_controls", "root_scan_controls",

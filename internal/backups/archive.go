@@ -366,7 +366,7 @@ func inspectZip(pathname string) (*Package, error) {
 	if err = json.Unmarshal(data, &manifest); err != nil {
 		return nil, err
 	}
-	if manifest.Product != "AIDEX" || manifest.Format != 1 || manifest.Schema != 15 || (manifest.Kind != "basic" && manifest.Kind != "full") {
+	if manifest.Product != "AIDEX" || manifest.Format != 1 || manifest.Schema != 1 || (manifest.Kind != "basic" && manifest.Kind != "full") {
 		return nil, fmt.Errorf("incompatible backup version")
 	}
 	if len(manifest.Entries) != len(files)-1 {

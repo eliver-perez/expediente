@@ -143,7 +143,7 @@ func (s *Service) deletionSnapshot(ctx context.Context, q storage.Querier, plan 
 	jobs := deletionJobs(root)
 	if root {
 		var blocked int
-		err := q.QueryRowContext(ctx, `SELECT count(*) FROM storage_roots r JOIN libraries b ON b.id=r.library_id WHERE r.id=? AND r.storage_source='managed' AND (r.status<>'retired' OR json_extract(b.settings_json,'$.default_managed_root_id')=r.id)`, id).Scan(&blocked)
+		err := q.QueryRowContext(ctx, `SELECT count(*) FROM storage_roots r JOIN libraries b ON b.id=r.library_id WHERE r.id=? AND r.storage_source='managed' AND (r.status<>'retired' OR ((b.settings_json)::jsonb #>> '{default_managed_root_id}')=r.id)`, id).Scan(&blocked)
 		if err != nil {
 			return "", err
 		}
@@ -275,20 +275,20 @@ func (s *Service) deletionSnapshot(ctx context.Context, q storage.Querier, plan 
 		sql  string
 		args []any
 	}{
-		{"SELECT json_array(id,revision,mode,disabled_at,settings_json,current_configuration_revision) FROM libraries WHERE id=?", []any{plan.LibraryID}},
-		{"SELECT json_array(d.id,d.revision,d.deleted_at,f.current_content_version_id,f.primary_location_id) FROM documents d JOIN physical_files f ON f.id=d.physical_file_id WHERE f.id IN (" + files + ") ORDER BY d.id", args},
-		{"SELECT json_array(id,status,attempt_count,fencing_token) FROM jobs WHERE id IN (" + jobs + ") ORDER BY id", jobScopeArgs(root, id)},
-		{"SELECT json_array(id,configuration_revision,status) FROM storage_roots WHERE library_id=? ORDER BY id", []any{plan.LibraryID}},
-		{"SELECT json_array(id,status,private_temporary_locator,sha256) FROM upload_items WHERE library_id=? ORDER BY id", []any{plan.LibraryID}},
-		{"SELECT json_array(id,root_id,relative_prefix) FROM logical_folder_views WHERE library_id=? ORDER BY id", []any{plan.LibraryID}},
-		{"SELECT json_array(id,status,source_hash,generator_version) FROM preview_cache WHERE document_id IN (" + docs + ") ORDER BY id", args},
+		{"SELECT json_build_array(id,revision,mode,disabled_at,settings_json,current_configuration_revision) FROM libraries WHERE id=?", []any{plan.LibraryID}},
+		{"SELECT json_build_array(d.id,d.revision,d.deleted_at,f.current_content_version_id,f.primary_location_id) FROM documents d JOIN physical_files f ON f.id=d.physical_file_id WHERE f.id IN (" + files + ") ORDER BY d.id", args},
+		{"SELECT json_build_array(id,status,attempt_count,fencing_token) FROM jobs WHERE id IN (" + jobs + ") ORDER BY id", jobScopeArgs(root, id)},
+		{"SELECT json_build_array(id,configuration_revision,status) FROM storage_roots WHERE library_id=? ORDER BY id", []any{plan.LibraryID}},
+		{"SELECT json_build_array(id,status,private_temporary_locator,sha256) FROM upload_items WHERE library_id=? ORDER BY id", []any{plan.LibraryID}},
+		{"SELECT json_build_array(id,root_id,relative_prefix) FROM logical_folder_views WHERE library_id=? ORDER BY id", []any{plan.LibraryID}},
+		{"SELECT json_build_array(id,status,source_hash,generator_version) FROM preview_cache WHERE document_id IN (" + docs + ") ORDER BY id", args},
 	}
 	if !root {
 		for _, table := range []string{"cases", "categories", "document_types"} {
 			queries = append(queries, struct {
 				sql  string
 				args []any
-			}{"SELECT json_array(id,revision) FROM " + table + " WHERE library_id=? ORDER BY id", []any{id}})
+			}{"SELECT json_build_array(id,revision) FROM " + table + " WHERE library_id=? ORDER BY id", []any{id}})
 		}
 	}
 	for index, query := range queries {
@@ -561,7 +561,7 @@ func (s *Service) DeletionStatus(ctx context.Context, p domain.Principal, id str
 			return DeletionPlan{}, err
 		}
 	}
-	err = s.Database.Reader.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(status='attention'),0) FROM deletion_cleanup WHERE operation_id=? AND status<>'complete'", id).Scan(&result.Pending, &result.Issues)
+	err = s.Database.Reader.QueryRowContext(ctx, "SELECT count(*),coalesce(sum((status='attention')::int),0) FROM deletion_cleanup WHERE operation_id=? AND status<>'complete'", id).Scan(&result.Pending, &result.Issues)
 	if err != nil {
 		return result, err
 	}
@@ -607,7 +607,7 @@ func (s *Service) removeEntityRecords(ctx context.Context, tx *sql.Tx, p Deletio
 	args := scopeArgs(root, id)
 	// Freeze IDs in transaction-local tables before removing their source relations.
 	for _, table := range []string{"delete_files", "delete_documents", "delete_jobs", "delete_roots", "delete_extractions", "delete_extraction_batch"} {
-		if _, err := tx.ExecContext(ctx, "CREATE TEMP TABLE IF NOT EXISTS "+table+"(id TEXT PRIMARY KEY)"); err != nil {
+		if _, err := tx.ExecContext(ctx, "CREATE TEMP TABLE IF NOT EXISTS "+table+"(id TEXT PRIMARY KEY) ON COMMIT DROP"); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
@@ -666,8 +666,6 @@ func (s *Service) removeEntityRecords(ctx context.Context, tx *sql.Tx, p Deletio
 	}
 	statements = append(statements, "DELETE FROM storage_roots WHERE id IN (SELECT id FROM delete_roots)")
 	var jobTotal, documentTotal, pageTotal, pageDone int64
-	var rebuildFTS bool
-	var deleteTriggerSQL string
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM delete_jobs").Scan(&jobTotal); err != nil {
 		return err
 	}
@@ -680,7 +678,7 @@ func (s *Service) removeEntityRecords(ctx context.Context, tx *sql.Tx, p Deletio
 			s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_documents", Total: documentTotal, Unit: "documents"})
 		}
 		if step == 15 {
-			var indexed, extracted, globalIndexed int64
+			var indexed, extracted int64
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM indexed_pages WHERE physical_file_id IN (SELECT id FROM delete_files)").Scan(&indexed); err != nil {
 				return err
 			}
@@ -689,86 +687,12 @@ func (s *Service) removeEntityRecords(ctx context.Context, tx *sql.Tx, p Deletio
 			}
 			pageTotal = indexed + extracted
 			s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_index", Total: pageTotal, Unit: "pages"})
-			if indexed >= 100000 {
-				if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM indexed_pages").Scan(&globalIndexed); err != nil {
-					return err
-				}
-				rebuildFTS = indexed*2 >= globalIndexed
-			}
-			if rebuildFTS {
-				if err := tx.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='indexed_pages_delete'").Scan(&deleteTriggerSQL); err != nil {
-					return err
-				}
-				if _, err := tx.ExecContext(ctx, "DROP TRIGGER indexed_pages_delete"); err != nil {
-					return err
-				}
-			}
 		}
 		if step == 15 || step == 16 {
-			if rebuildFTS {
-				if step == 16 {
-					for {
-						if _, err := tx.ExecContext(ctx, "DELETE FROM delete_extraction_batch"); err != nil {
-							return err
-						}
-						selected, err := tx.ExecContext(ctx, "INSERT INTO delete_extraction_batch SELECT id FROM delete_extractions ORDER BY id LIMIT 512")
-						if err != nil {
-							return err
-						}
-						count, err := selected.RowsAffected()
-						if err != nil {
-							return err
-						}
-						if count == 0 {
-							break
-						}
-						started := time.Now()
-						result, err := tx.ExecContext(ctx, "DELETE FROM extraction_pages WHERE extraction_id IN (SELECT id FROM delete_extraction_batch)")
-						if err != nil {
-							return err
-						}
-						removed, err := result.RowsAffected()
-						if err != nil {
-							return err
-						}
-						if _, err := tx.ExecContext(ctx, "DELETE FROM delete_extractions WHERE id IN (SELECT id FROM delete_extraction_batch)"); err != nil {
-							return err
-						}
-						pageDone += removed
-						s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_extraction", Done: pageDone, Total: pageTotal, Unit: "pages"})
-						if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-							slog.Info("deletion extraction page batch", "runs", count, "rows", removed, "duration_ms", elapsed.Milliseconds())
-						}
-					}
-					s.setDeletionProgress(p.ID, DeletionProgress{Phase: "rebuilding_search"})
-					started := time.Now()
-					if _, err := tx.ExecContext(ctx, "INSERT INTO pages_fts(pages_fts) VALUES('rebuild')"); err != nil {
-						return err
-					}
-					if _, err := tx.ExecContext(ctx, deleteTriggerSQL); err != nil {
-						return err
-					}
-					slog.Info("deletion search index rebuilt", "duration_ms", time.Since(started).Milliseconds())
-					continue
-				}
-				started := time.Now()
-				result, err := tx.ExecContext(ctx, "DELETE FROM indexed_pages WHERE physical_file_id IN (SELECT id FROM delete_files)")
-				if err != nil {
-					return err
-				}
-				removed, err := result.RowsAffected()
-				if err != nil {
-					return err
-				}
-				pageDone += removed
-				s.setDeletionProgress(p.ID, DeletionProgress{Phase: "removing_index", Done: pageDone, Total: pageTotal, Unit: "pages"})
-				slog.Info("deletion bulk page removal", "step", step, "rows", removed, "duration_ms", time.Since(started).Milliseconds())
-				continue
-			}
-			selectBatch := "SELECT id FROM indexed_pages NOT INDEXED WHERE id>? AND physical_file_id IN (SELECT id FROM delete_files) ORDER BY id LIMIT 1000"
+			selectBatch := "SELECT id FROM indexed_pages WHERE id>? AND physical_file_id IN (SELECT id FROM delete_files) ORDER BY id LIMIT 1000"
 			deleteBatch := "DELETE FROM indexed_pages WHERE id>? AND id<=? AND physical_file_id IN (SELECT id FROM delete_files)"
 			if step == 16 {
-				selectBatch = "SELECT id FROM extraction_pages NOT INDEXED WHERE id>? AND extraction_id IN (SELECT id FROM delete_extractions) ORDER BY id LIMIT 1000"
+				selectBatch = "SELECT id FROM extraction_pages WHERE id>? AND extraction_id IN (SELECT id FROM delete_extractions) ORDER BY id LIMIT 1000"
 				deleteBatch = "DELETE FROM extraction_pages WHERE id>? AND id<=? AND extraction_id IN (SELECT id FROM delete_extractions)"
 			}
 			lastID := int64(0)

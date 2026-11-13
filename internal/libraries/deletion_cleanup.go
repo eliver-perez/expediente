@@ -51,9 +51,9 @@ func (s *Service) journalDeletionFiles(ctx context.Context, tx *sql.Tx, p Deleti
 		manifestDocs = "SELECT id FROM documents WHERE physical_file_id IN (SELECT physical_file_id FROM physical_file_locations WHERE root_id=?)"
 		manifestArgs = []any{p.EntityID}
 	}
-	// SQLite streams the manifest directly; even large libraries do not require
+	// PostgreSQL streams the manifest directly; even large libraries do not require
 	// a second in-memory copy of all document paths.
-	_, err := tx.ExecContext(ctx, `INSERT INTO deletion_documents(operation_id,document_id,filename,sha256,locations_json) SELECT ?,d.id,d.original_filename,coalesce(v.sha256,''),coalesce((SELECT json_group_array(canonical_path) FROM physical_file_locations WHERE physical_file_id=f.id),'[]') FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN content_versions v ON v.id=f.current_content_version_id WHERE d.id IN (`+manifestDocs+`)`, append([]any{p.ID}, manifestArgs...)...)
+	_, err := tx.ExecContext(ctx, `INSERT INTO deletion_documents(operation_id,document_id,filename,sha256,locations_json) SELECT ?,d.id,d.original_filename,coalesce(v.sha256,''),coalesce((SELECT json_agg(canonical_path) FROM physical_file_locations WHERE physical_file_id=f.id),'[]') FROM documents d JOIN physical_files f ON f.id=d.physical_file_id LEFT JOIN content_versions v ON v.id=f.current_content_version_id WHERE d.id IN (`+manifestDocs+`)`, append([]any{p.ID}, manifestArgs...)...)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func (s *Service) journalDeletionFiles(ctx context.Context, tx *sql.Tx, p Deleti
 		}
 	}
 	for doc, path := range privatePaths {
-		if _, err = tx.ExecContext(ctx, "UPDATE deletion_documents SET locations_json=json_insert(locations_json,'$[#]',?) WHERE operation_id=? AND document_id=?", path, p.ID, doc); err != nil {
+		if _, err = tx.ExecContext(ctx, "UPDATE deletion_documents SET locations_json=(locations_json::jsonb || jsonb_build_array(?::text))::text WHERE operation_id=? AND document_id=?", path, p.ID, doc); err != nil {
 			return err
 		}
 	}
@@ -275,12 +275,12 @@ func (s *Service) cleanDeletionFiles(ctx context.Context, operation string, limi
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		err = s.Database.Write(ctx, func(tx *sql.Tx) error {
+		err = s.Database.WriteOnce(ctx, func(tx *sql.Tx) error {
 			var item struct {
 				op, kind, locator, path, dirID, fileID, hash, quarantine, status string
 				size                                                             int64
 			}
-			if err := tx.QueryRowContext(ctx, "SELECT operation_id,kind,locator,container_path,container_identity,file_identity,sha256,size_bytes,quarantine,status FROM deletion_cleanup WHERE id=?", id).Scan(&item.op, &item.kind, &item.locator, &item.path, &item.dirID, &item.fileID, &item.hash, &item.size, &item.quarantine, &item.status); err != nil {
+			if err := tx.QueryRowContext(ctx, "SELECT operation_id,kind,locator,container_path,container_identity,file_identity,sha256,size_bytes,quarantine,status FROM deletion_cleanup WHERE id=? FOR UPDATE", id).Scan(&item.op, &item.kind, &item.locator, &item.path, &item.dirID, &item.fileID, &item.hash, &item.size, &item.quarantine, &item.status); err != nil {
 				return err
 			}
 			if item.status == "complete" {
@@ -297,7 +297,7 @@ func (s *Service) cleanDeletionFiles(ctx context.Context, operation string, limi
 				}
 				if code == "" {
 					var referenced int
-					if err := tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM physical_files WHERE os_identity_key=?)+(SELECT count(*) FROM upload_items WHERE private_temporary_locator=? OR private_temporary_locator||'.part'=?)+(SELECT count(*) FROM preview_cache WHERE id=?)+(SELECT count(*) FROM deletion_documents d JOIN entity_deletions op ON op.id=d.operation_id,json_each(d.locations_json) p WHERE op.state<>'planned' AND p.value=?)`, item.fileID, item.locator, item.locator, strings.TrimSuffix(item.locator, ".preview"), filepath.Join(item.path, item.locator)).Scan(&referenced); err != nil {
+					if err := tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM physical_files WHERE os_identity_key=?)+(SELECT count(*) FROM upload_items WHERE private_temporary_locator=? OR private_temporary_locator||'.part'=?)+(SELECT count(*) FROM preview_cache WHERE id=?)+(SELECT count(*) FROM deletion_documents d JOIN entity_deletions op ON op.id=d.operation_id,json_array_elements_text(d.locations_json::json) AS p(value) WHERE op.state<>'planned' AND p.value=?)`, item.fileID, item.locator, item.locator, strings.TrimSuffix(item.locator, ".preview"), filepath.Join(item.path, item.locator)).Scan(&referenced); err != nil {
 						return err
 					}
 					if referenced > 0 {

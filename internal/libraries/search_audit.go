@@ -27,14 +27,14 @@ func (service *Service) SearchEvents(ctx context.Context, principal domain.Princ
 	result := []SearchEvent{}
 	next := ""
 	// Permission checks are part of SQL before pagination: every consulted library must be authorized.
-	rows, err := service.Database.Reader.QueryContext(ctx, `SELECT s.event_id,a.occurred_at,s.exact_query_text,s.search_type,s.consulted_library_ids_json,s.applied_filters_json,s.result_count,json_extract(a.details_json,'$.returned_count'),
-        (SELECT json_group_array(coalesce(l.name,'Biblioteca no disponible')) FROM json_each(s.consulted_library_ids_json) scope LEFT JOIN libraries l ON l.id=scope.value),
-        coalesce((SELECT name FROM categories WHERE id=json_extract(s.applied_filters_json,'$.category_id')),''),
-        coalesce((SELECT name FROM document_types WHERE id=json_extract(s.applied_filters_json,'$.document_type_id')),''),
-        coalesce((SELECT identifier FROM cases WHERE id=json_extract(s.applied_filters_json,'$.case_id')),''),
-        coalesce((SELECT canonical_path FROM storage_roots WHERE id=json_extract(s.applied_filters_json,'$.root_id')),''),
-        coalesce((SELECT name FROM logical_folder_views WHERE id=json_extract(s.applied_filters_json,'$.view_id')),'')
-        FROM search_audit_details s JOIN audit_events a ON a.id=s.event_id WHERE s.event_id>? AND json_array_length(s.consulted_library_ids_json)>0 AND NOT EXISTS(SELECT 1 FROM json_each(s.consulted_library_ids_json) scope WHERE NOT EXISTS(SELECT 1 FROM library_role_assignments r JOIN role_permissions p USING(role_id) WHERE r.user_id=? AND r.library_id=scope.value AND p.permission_key='audit.search_details') OR NOT EXISTS(SELECT 1 FROM library_role_assignments r JOIN role_permissions p USING(role_id) WHERE r.user_id=? AND r.library_id=scope.value AND p.permission_key='audit.read_library')) ORDER BY s.event_id LIMIT 51`, after, principal.User.ID, principal.User.ID)
+	rows, err := service.Database.Reader.QueryContext(ctx, `SELECT s.event_id,a.occurred_at,s.exact_query_text,s.search_type,s.consulted_library_ids_json,s.applied_filters_json,s.result_count,(((a.details_json)::jsonb #>> '{returned_count}')::bigint),
+        (SELECT json_agg(coalesce(l.name,'Biblioteca no disponible')) FROM json_array_elements_text(s.consulted_library_ids_json::json) AS scope(value) LEFT JOIN libraries l ON l.id=scope.value),
+        coalesce((SELECT name FROM categories WHERE id=((s.applied_filters_json)::jsonb #>> '{category_id}')),''),
+        coalesce((SELECT name FROM document_types WHERE id=((s.applied_filters_json)::jsonb #>> '{document_type_id}')),''),
+        coalesce((SELECT identifier FROM cases WHERE id=((s.applied_filters_json)::jsonb #>> '{case_id}')),''),
+        coalesce((SELECT canonical_path FROM storage_roots WHERE id=((s.applied_filters_json)::jsonb #>> '{root_id}')),''),
+        coalesce((SELECT name FROM logical_folder_views WHERE id=((s.applied_filters_json)::jsonb #>> '{view_id}')),'')
+        FROM search_audit_details s JOIN audit_events a ON a.id=s.event_id WHERE s.event_id>? AND jsonb_array_length((s.consulted_library_ids_json)::jsonb)>0 AND NOT EXISTS(SELECT 1 FROM json_array_elements_text(s.consulted_library_ids_json::json) AS scope(value) WHERE NOT EXISTS(SELECT 1 FROM library_role_assignments r JOIN role_permissions p USING(role_id) WHERE r.user_id=? AND r.library_id=scope.value AND p.permission_key='audit.search_details') OR NOT EXISTS(SELECT 1 FROM library_role_assignments r JOIN role_permissions p USING(role_id) WHERE r.user_id=? AND r.library_id=scope.value AND p.permission_key='audit.read_library')) ORDER BY s.event_id LIMIT 51`, after, principal.User.ID, principal.User.ID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -86,7 +86,7 @@ func (service *Service) Candidates(ctx context.Context, principal domain.Princip
 		return nil, notFound()
 	}
 	result := []Candidate{}
-	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,display_name,username FROM users WHERE disabled_at IS NULL AND (?='' OR instr(username_key,lower(?))>0 OR instr(lower(display_name),lower(?))>0) ORDER BY username_key LIMIT 50", query, query, query)
+	rows, err := service.Database.Reader.QueryContext(ctx, "SELECT id,display_name,username FROM users WHERE disabled_at IS NULL AND (?='' OR strpos(username_key,lower(?))>0 OR strpos(lower(display_name),lower(?))>0) ORDER BY username_key LIMIT 50", query, query, query)
 	if err != nil {
 		return nil, err
 	}

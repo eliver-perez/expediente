@@ -106,6 +106,20 @@ func syntheticDocument(t *testing.T, inst *testInstallation) (string, string) {
 				return err
 			}
 		}
+		extractionID := domain.NewID()
+		for _, statement := range []struct {
+			query string
+			args  []any
+		}{
+			{"INSERT INTO extraction_runs(id,physical_file_id,content_version_id,extractor_revision,language_codes,status,page_count) VALUES(?,?,?,'fixture','spa','complete',1)", []any{extractionID, fileID, versionID}},
+			{"INSERT INTO extraction_pages(id,extraction_id,page_number,extraction_method,page_text) VALUES(100,?,1,'native','Evidencia metálica respaldada')", []any{extractionID}},
+			{"INSERT INTO indexed_pages(id,physical_file_id,extraction_id,page_number,page_text) VALUES(100,?,?,1,'Evidencia metálica respaldada')", []any{fileID, extractionID}},
+			{"UPDATE physical_files SET indexed_extraction_id=?,extraction_freshness='current' WHERE id=?", []any{extractionID, fileID}},
+		} {
+			if _, err := tx.Exec(statement.query, statement.args...); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -257,6 +271,9 @@ func TestBasicAndFullTransferNeverMoveLicenseOrOriginals(t *testing.T) {
 	}
 	dest := installation(t, "target")
 	targetJWS := offlinePerpetual(t, dest)
+	if _, err = dest.db.Writer.Exec("INSERT INTO eula_acceptances(id,installation_id,user_id,version,text_sha256,accepted_at) VALUES('local-acceptance','local-installation',?,'1.0.0','local-hash',?)", dest.admin, domain.Timestamp(time.Now())); err != nil {
+		t.Fatal(err)
+	}
 	var sourceLicense, targetLicense string
 	if err := source.db.Reader.QueryRow("SELECT installation_id FROM license_installation").Scan(&sourceLicense); err != nil {
 		t.Fatal(err)
@@ -416,6 +433,23 @@ func TestBasicAndFullTransferNeverMoveLicenseOrOriginals(t *testing.T) {
 				payload, readErr := os.ReadFile(filepath.Join(dest.cfg.PrivateUploadDirectory(), locator))
 				if readErr != nil || string(payload) != "classified private original" {
 					t.Fatal("private classified file was not restored", readErr)
+				}
+			}
+			var matches, acceptances int
+			if err = dest.db.Reader.QueryRow("SELECT count(*) FROM indexed_pages WHERE search_vector @@ aidex_search_query(ARRAY['metalica']::text[])").Scan(&matches); err != nil || matches != 1 {
+				t.Fatal("restored search projection changed", matches, err)
+			}
+			if err = dest.db.Reader.QueryRow("SELECT count(*) FROM eula_acceptances WHERE id='local-acceptance'").Scan(&acceptances); err != nil || acceptances != 1 {
+				t.Fatal("local acceptance lost", acceptances, err)
+			}
+			for _, table := range []string{"extraction_pages", "indexed_pages"} {
+				var nextID int64
+				query := "INSERT INTO extraction_pages(extraction_id,page_number,extraction_method,page_text) SELECT extraction_id,2,'native','Nueva página' FROM indexed_pages WHERE id=100 RETURNING id"
+				if table == "indexed_pages" {
+					query = "INSERT INTO indexed_pages(physical_file_id,extraction_id,page_number,page_text) SELECT physical_file_id,extraction_id,2,'Nueva página' FROM indexed_pages WHERE id=100 RETURNING id"
+				}
+				if err = dest.db.Writer.QueryRow(query).Scan(&nextID); err != nil || nextID <= 100 {
+					t.Fatal("restored identity sequence not advanced", table, nextID, err)
 				}
 			}
 			var sessions int

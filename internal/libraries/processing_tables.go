@@ -59,7 +59,7 @@ func (s *Service) FileSkips(ctx context.Context, p domain.Principal, library str
 	}
 	base := ` FROM document_file_skips e JOIN storage_roots r ON r.id=e.root_id WHERE r.library_id=? AND r.status<>'superseded' AND e.relative_path LIKE ? ESCAPE '\' AND (?='' OR e.error_code=?)`
 	args := []any{library, likeLiteral(f.Query), f.State, f.State}
-	tx, err := s.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return result, err
 	}
@@ -117,7 +117,7 @@ func (s *Service) JobHistory(ctx context.Context, p domain.Principal, library st
 		args = append(args, likeLiteral(f.Query), likeLiteral(f.Query))
 	}
 	base += ")"
-	tx, err := s.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.Database.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return result, err
 	}

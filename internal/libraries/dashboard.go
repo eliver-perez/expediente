@@ -16,10 +16,10 @@ const dashboardFiles = `WITH base AS (
  SELECT d.id,d.created_at,d.approval_status,f.library_id,f.storage_source,f.extraction_freshness,
  coalesce(v.document_format,'unknown') AS format,coalesce(v.sha256,'') AS hash,coalesce(v.index_block_reason,'') AS reason,
  coalesce(j.status,'') AS job_status,coalesce(e.result_code,'') AS result,
- CASE WHEN json_type(e.summary_json,'$.ocr_pages') IS NOT NULL
- THEN json_extract(e.summary_json,'$.ocr_pages')>0
+ CASE WHEN jsonb_typeof((e.summary_json)::jsonb #> '{ocr_pages}') IS NOT NULL
+ THEN (((e.summary_json)::jsonb #>> '{ocr_pages}')::bigint)>0
  ELSE EXISTS(SELECT 1 FROM extraction_pages ep WHERE ep.extraction_id=f.indexed_extraction_id AND ep.extraction_method IN ('ocr','empty')) END AS ocr,
- ((SELECT paused FROM processing_policy WHERE singleton=1) OR NOT coalesce((1=1 ` + advancedJobEligibility + `),1)) AS paused
+ ((SELECT paused<>0 FROM processing_policy WHERE singleton=1) OR NOT coalesce((1=1 ` + advancedJobEligibility + `),true)) AS paused
  FROM documents d JOIN physical_files f ON f.id=d.physical_file_id JOIN libraries b ON b.id=d.library_id
  LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id
  LEFT JOIN jobs j ON j.id=(SELECT id FROM jobs WHERE physical_file_id=f.id AND target_version=f.current_content_version_id AND job_type='extract' ORDER BY created_at DESC,id DESC LIMIT 1)
@@ -37,17 +37,17 @@ const dashboardFiles = `WITH base AS (
 // Reuse one materialized document view for totals and groups. Separate statements
 // used to repeat the per-file job and OCR lookups for each chart on every request.
 const dashboardSummary = dashboardFiles + `SELECT count(*),
- coalesce(sum(created_at>=? AND created_at<=?),0),coalesce(sum(created_at>=? AND created_at<=?),0),
- coalesce(sum(created_at>=? AND created_at<=?),0),coalesce(sum(storage_source='linked'),0),
- coalesce(sum(storage_source='managed'),0),coalesce(sum(extraction_freshness='current'),0),
- coalesce(sum(extraction_freshness='current' AND ocr),0),
- (SELECT coalesce(json_group_array(json_object('key',format,'count',n)),'[]') FROM
+ coalesce(sum((created_at>=? AND created_at<=?)::int),0),coalesce(sum((created_at>=? AND created_at<=?)::int),0),
+ coalesce(sum((created_at>=? AND created_at<=?)::int),0),coalesce(sum((storage_source='linked')::int),0),
+ coalesce(sum((storage_source='managed')::int),0),coalesce(sum((extraction_freshness='current')::int),0),
+ coalesce(sum((extraction_freshness='current' AND ocr)::int),0),
+ (SELECT coalesce(json_agg(json_build_object('key',format,'count',n)),'[]') FROM
   (SELECT format,count(*) n FROM files GROUP BY format ORDER BY n DESC,format)),
- (SELECT coalesce(json_group_array(json_object('key',state,'count',n)),'[]') FROM
+ (SELECT coalesce(json_agg(json_build_object('key',state,'count',n)),'[]') FROM
   (SELECT state,count(*) n FROM files GROUP BY state ORDER BY n DESC,state)),
- (SELECT coalesce(json_group_array(json_object('key',approval_status,'count',n)),'[]') FROM
+ (SELECT coalesce(json_agg(json_build_object('key',approval_status,'count',n)),'[]') FROM
   (SELECT approval_status,count(*) n FROM files GROUP BY approval_status ORDER BY n DESC,approval_status)),
- (SELECT json_array(count(*),coalesce(sum(copies),0),coalesce(sum(copies-1),0)) FROM
+ (SELECT json_build_array(count(*),coalesce(sum(copies),0),coalesce(sum(copies-1),0)) FROM
   (SELECT count(*) copies FROM files WHERE hash<>'' GROUP BY hash HAVING count(*)>1))
  FROM files`
 
@@ -204,7 +204,7 @@ func (s *Service) computeDashboard(ctx context.Context, p domain.Principal) (Das
 	month := time.Date(instant.Year(), instant.Month(), 1, 0, 0, 0, 0, instant.Location())
 	result.Generated = domain.Timestamp(instant)
 	result.Timezone, _ = instant.Zone()
-	tx, err := s.Database.AnalyticsReader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.Database.AnalyticsReader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return result, err
 	}
@@ -244,7 +244,7 @@ func (s *Service) computeDashboard(ctx context.Context, p domain.Principal) (Das
 	mark(&policyMS)
 	// Final successful attempts only, with valid recorded times. Excludes interrupted
 	// or failed attempts and time spent waiting in the queue before acquisition.
-	if err = tx.QueryRowContext(ctx, `SELECT count(*),avg((julianday(a.finished_at)-julianday(a.started_at))*86400) FROM job_attempts a INDEXED BY job_attempts_dashboard_cover JOIN jobs j ON j.id=a.job_id AND j.fencing_token=a.fencing_token JOIN libraries b ON b.id=j.library_id WHERE b.disabled_at IS NULL AND j.job_type='extract' AND j.status='succeeded' AND coalesce(a.error_code,'')='' AND a.finished_at IS NOT NULL AND a.finished_at>=? AND a.finished_at<=? AND julianday(a.finished_at)>=julianday(a.started_at)`, domain.Timestamp(instant.Add(-24*time.Hour)), result.Generated).Scan(&result.TimingSamples, &result.AverageSeconds); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*),avg((extract(epoch from (a.finished_at)::timestamptz)/86400.0-extract(epoch from (a.started_at)::timestamptz)/86400.0)*86400) FROM job_attempts a JOIN jobs j ON j.id=a.job_id AND j.fencing_token=a.fencing_token JOIN libraries b ON b.id=j.library_id WHERE b.disabled_at IS NULL AND j.job_type='extract' AND j.status='succeeded' AND coalesce(a.error_code,'')='' AND a.finished_at IS NOT NULL AND a.finished_at>=? AND a.finished_at<=? AND extract(epoch from (a.finished_at)::timestamptz)/86400.0>=extract(epoch from (a.started_at)::timestamptz)/86400.0`, domain.Timestamp(instant.Add(-24*time.Hour)), result.Generated).Scan(&result.TimingSamples, &result.AverageSeconds); err != nil {
 		return result, err
 	}
 	mark(&attemptsMS)
@@ -334,13 +334,13 @@ func (s *Service) computeDashboardLibraries(ctx context.Context, p domain.Princi
  WHERE b.disabled_at IS NULL AND (?='' OR b.created_at<? OR (b.created_at=? AND b.id<?))
  ORDER BY b.created_at DESC,b.id DESC LIMIT 26
 ) SELECT b.id,b.name,b.mode,count(d.id),
- coalesce(sum(f.extraction_freshness='current'),0),
+ coalesce(sum((f.extraction_freshness='current')::int),0),
  coalesce(sum(CASE WHEN j.status='failed' AND NOT (coalesce(v.index_block_reason,'')<>'' AND f.extraction_freshness<>'current') THEN 1 ELSE 0 END),0)
  FROM page b LEFT JOIN documents d ON d.library_id=b.id AND d.deleted_at IS NULL
  LEFT JOIN physical_files f ON f.id=d.physical_file_id
  LEFT JOIN content_versions v ON v.id=f.current_content_version_id
  LEFT JOIN jobs j ON j.id=(SELECT id FROM jobs WHERE physical_file_id=f.id AND target_version=f.current_content_version_id AND job_type='extract' ORDER BY created_at DESC,id DESC LIMIT 1)
- GROUP BY b.id ORDER BY b.created_at DESC,b.id DESC`, after.Time, after.Time, after.Time, after.ID)
+ GROUP BY b.id,b.name,b.mode,b.created_at ORDER BY b.created_at DESC,b.id DESC`, after.Time, after.Time, after.Time, after.ID)
 	if err != nil {
 		return result, err
 	}

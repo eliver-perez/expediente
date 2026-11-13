@@ -6,391 +6,177 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
+	"math/rand/v2"
 	"strings"
 	"time"
 
 	"gestor-documental/db"
 	"gestor-documental/internal/domain"
-	_ "modernc.org/sqlite"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type Database struct {
 	Writer *sql.DB
 	Reader *sql.DB
-	// Separate pools prevent long analytical reads from exhausting the connections
-	// used by authentication and live processing progress.
+	// Dedicated capacity keeps analytics away from authentication and progress.
 	ControlReader   *sql.DB
 	StatusReader    *sql.DB
 	AnalyticsReader *sql.DB
+	dsn             string
+	schema          string
+	stop            func() error
 }
 
 func Open(ctx context.Context, stateDirectory string) (*Database, error) {
-	if err := PreparePrivateDirectory(stateDirectory); err != nil {
+	if err := PrepareLocalPrivateDirectory(stateDirectory); err != nil {
 		return nil, err
 	}
-	if err := requireLocalFilesystem(stateDirectory); err != nil {
+	if err := RejectUnknownDatabaseFiles(stateDirectory); err != nil {
 		return nil, err
 	}
-	databasePath := filepath.Join(stateDirectory, "documental.db")
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if info, err := os.Lstat(databasePath + suffix); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
-			return nil, fmt.Errorf("database path must be a regular local file")
-		} else if err != nil && !os.IsNotExist(err) {
-			return nil, err
-		}
-	}
-	databaseURL := sqliteFileURL(filepath.ToSlash(databasePath))
-	settings := url.Values{"_pragma": {"foreign_keys(1)", "busy_timeout(5000)", "synchronous(FULL)"}, "_txlock": {"immediate"}}
-	databaseURL.RawQuery = settings.Encode()
-	writer, err := sql.Open("sqlite", databaseURL.String())
+	dsn, schema, stop, err := preparePostgres(ctx, stateDirectory)
 	if err != nil {
 		return nil, err
 	}
-	writer.SetMaxOpenConns(1)
-	writer.SetMaxIdleConns(1)
-	fail := func(cause error) (*Database, error) { writer.Close(); return nil, cause }
-	var journalMode string
-	if err := writer.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil {
-		return fail(err)
-	}
-	if journalMode != "wal" {
-		return fail(fmt.Errorf("SQLite WAL unavailable"))
-	}
-	var engineVersion string
-	if err := writer.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&engineVersion); err != nil {
-		return fail(err)
-	}
-	var major, minor, patch int
-	if _, err := fmt.Sscanf(engineVersion, "%d.%d.%d", &major, &minor, &patch); err != nil || major < 3 || (major == 3 && (minor < 51 || (minor == 51 && patch < 3))) {
-		return fail(fmt.Errorf("SQLite engine must include the WAL fix (3.51.3 or newer)"))
-	}
-	if err := ProtectPrivatePath(databasePath, false); err != nil {
-		return fail(err)
-	}
-	// Probe the embedded engine, not the unrelated sqlite3 command installed on the host.
-	if _, err := writer.ExecContext(ctx, "CREATE VIRTUAL TABLE temp.fts_probe USING fts5(body); DROP TABLE temp.fts_probe;"); err != nil {
-		return fail(err)
-	}
-	if err := backupBeforeProcessingUpgrade(ctx, writer, stateDirectory); err != nil {
-		return fail(err)
-	}
-	if err := migrate(ctx, writer); err != nil {
-		return fail(err)
-	}
-	settings.Set("mode", "ro")
-	settings.Del("_txlock")
-	settings["_pragma"] = []string{"foreign_keys(1)", "busy_timeout(5000)", "query_only(1)"}
-	databaseURL.RawQuery = settings.Encode()
-	reader, err := sql.Open("sqlite", databaseURL.String())
+	result, err := openDatabase(ctx, dsn, schema)
 	if err != nil {
-		return fail(err)
-	}
-	reader.SetMaxOpenConns(4)
-	reader.SetMaxIdleConns(4)
-	if err := reader.PingContext(ctx); err != nil {
-		reader.Close()
-		return fail(err)
-	}
-	openReader := func(limit int) (*sql.DB, error) {
-		pool, err := sql.Open("sqlite", databaseURL.String())
-		if err != nil {
-			return nil, err
+		if stop != nil {
+			_ = stop()
 		}
-		pool.SetMaxOpenConns(limit)
-		pool.SetMaxIdleConns(limit)
-		if err = pool.PingContext(ctx); err != nil {
-			pool.Close()
-			return nil, err
-		}
-		return pool, nil
+		return nil, err
 	}
-	control, err := openReader(2)
-	if err != nil {
-		reader.Close()
-		return fail(err)
-	}
-	status, err := openReader(2)
-	if err != nil {
-		control.Close()
-		reader.Close()
-		return fail(err)
-	}
-	analytics, err := openReader(2)
-	if err != nil {
-		status.Close()
-		control.Close()
-		reader.Close()
-		return fail(err)
-	}
-	return &Database{Writer: writer, Reader: reader, ControlReader: control, StatusReader: status, AnalyticsReader: analytics}, nil
+	result.stop = stop
+	return result, nil
 }
 
-// sqliteFileURL accepts an absolute path with native separators already converted
-// by filepath.ToSlash. A Windows drive belongs in the path, never the URI authority.
-// See https://www.sqlite.org/uri.html#the_uri_path.
-func sqliteFileURL(path string) url.URL {
-	if len(path) >= 3 && path[1] == ':' && path[2] == '/' &&
-		(path[0] >= 'A' && path[0] <= 'Z' || path[0] >= 'a' && path[0] <= 'z') {
-		path = "/" + path
+func openDatabase(ctx context.Context, dsn, schema string) (*Database, error) {
+	writer, err := openPostgresPool(dsn, schema, false, 12)
+	if err != nil {
+		return nil, err
 	}
-	return url.URL{Scheme: "file", Path: path}
+	database := &Database{Writer: writer, dsn: dsn, schema: schema}
+	fail := func(err error) (*Database, error) { database.Close(); return nil, err }
+	if err = writer.PingContext(ctx); err != nil {
+		return fail(fmt.Errorf("PostgreSQL unavailable: %w", err))
+	}
+	var version int
+	if err = writer.QueryRowContext(ctx, "SHOW server_version_num").Scan(&version); err != nil {
+		return fail(err)
+	}
+	if version < 180000 {
+		return fail(fmt.Errorf("AIDEX requires PostgreSQL 18 or newer"))
+	}
+	if _, err = writer.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		return fail(err)
+	}
+	if err = migrate(ctx, writer); err != nil {
+		return fail(err)
+	}
+	for _, entry := range []struct {
+		target **sql.DB
+		limit  int
+	}{{&database.Reader, 6}, {&database.ControlReader, 2}, {&database.StatusReader, 2}, {&database.AnalyticsReader, 2}} {
+		*entry.target, err = openPostgresPool(dsn, schema, true, entry.limit)
+		if err != nil {
+			return fail(err)
+		}
+		if err = (*entry.target).PingContext(ctx); err != nil {
+			return fail(err)
+		}
+	}
+	return database, nil
 }
 
 func (database *Database) Close() error {
-	if database.AnalyticsReader != nil {
-		database.AnalyticsReader.Close()
+	var first error
+	for _, pool := range []*sql.DB{database.AnalyticsReader, database.StatusReader, database.ControlReader, database.Reader, database.Writer} {
+		if pool != nil {
+			if err := pool.Close(); first == nil {
+				first = err
+			}
+		}
 	}
-	if database.StatusReader != nil {
-		database.StatusReader.Close()
+	if database.stop != nil {
+		if err := database.stop(); first == nil {
+			first = err
+		}
+		database.stop = nil
 	}
-	if database.ControlReader != nil {
-		database.ControlReader.Close()
-	}
-	readerError := database.Reader.Close()
-	writerError := database.Writer.Close()
-	if readerError != nil {
-		return readerError
-	}
-	return writerError
+	return first
 }
 
 func (database *Database) Write(ctx context.Context, operation func(*sql.Tx) error) error {
-	transaction, err := database.Writer.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer transaction.Rollback()
-	if err := operation(transaction); err != nil {
-		return err
-	}
-	return transaction.Commit()
-}
-
-// RollbackEmpty is deliberately restricted to a never-used installation.
-// Once there is any user or audit evidence, recovery requires a consistent backup.
-func (database *Database) RollbackEmpty(ctx context.Context) error {
-	return database.Write(ctx, func(transaction *sql.Tx) error {
-		var count int
-		if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
-			return err
-		}
-		if count == 19 {
-			contents, err := db.Migrations.ReadFile("migrations/0019_scale_indexes.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 18 {
-			contents, err := db.Migrations.ReadFile("migrations/0018_library_description.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 17 {
-			contents, err := db.Migrations.ReadFile("migrations/0017_deletion_execution.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 16 {
-			contents, err := db.Migrations.ReadFile("migrations/0016_eula.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 15 {
-			var evidence int
-			if err := transaction.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM entity_deletions)+(SELECT count(*) FROM root_retired_documents)").Scan(&evidence); err != nil {
-				return err
-			}
-			if evidence > 0 {
-				return fmt.Errorf("rollback would discard lifecycle evidence")
-			}
-			contents, err := db.Migrations.ReadFile("migrations/0015_library_lifecycle.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 14 {
-			contents, err := db.Migrations.ReadFile("migrations/0014_observability.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 13 {
-			contents, err := db.Migrations.ReadFile("migrations/0013_advanced_settings.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 12 {
-			contents, err := db.Migrations.ReadFile("migrations/0012_preview_cache.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 11 {
-			contents, err := db.Migrations.ReadFile("migrations/0011_processing_policy.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 10 {
-			contents, err := db.Migrations.ReadFile("migrations/0010_document_extractors.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 9 {
-			contents, err := db.Migrations.ReadFile("migrations/0009_document_formats.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 8 {
-			contents, err := db.Migrations.ReadFile("migrations/0008_reconciliation.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 7 {
-			contents, err := db.Migrations.ReadFile("migrations/0007_processing_settings.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 6 {
-			contents, err := db.Migrations.ReadFile("migrations/0006_processing_visibility.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return err
-			}
-			count--
-		}
-		if count == 5 {
-			contents, err := db.Migrations.ReadFile("migrations/0005_license_client.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return fmt.Errorf("rollback refused: H6 contains data")
-			}
-			count--
-		}
-		if count == 4 {
-			contents, err := db.Migrations.ReadFile("migrations/0004_document_workflow.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err = transaction.ExecContext(ctx, string(contents)); err != nil {
-				return fmt.Errorf("rollback refused: H5 contains data")
-			}
-			count--
-		}
-		if count == 3 {
-			contents, err := db.Migrations.ReadFile("migrations/0003_managed_organization.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err := transaction.ExecContext(ctx, string(contents)); err != nil {
-				return fmt.Errorf("rollback refused: H4 contains data")
-			}
-			count--
-		}
-		if count == 2 {
-			contents, err := db.Migrations.ReadFile("migrations/0002_linked_libraries.down.sql")
-			if err != nil {
-				return err
-			}
-			if _, err := transaction.ExecContext(ctx, string(contents)); err != nil {
-				return fmt.Errorf("rollback refused: H3 contains data")
-			}
-		} else if count != 1 {
-			return fmt.Errorf("empty rollback is only supported for the initial H2 schema")
-		}
-		contents, err := db.Migrations.ReadFile("migrations/0001_identity.down.sql")
+	// Serializable isolation preserves read/check/write invariants previously
+	// provided by writer serialization. Only conflicting rows cause retries.
+	for attempt := 0; ; attempt++ {
+		tx, err := database.Writer.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 		if err != nil {
 			return err
 		}
-		if _, err := transaction.ExecContext(ctx, string(contents)); err != nil {
-			return fmt.Errorf("rollback refused: database has data or cannot be safely reversed")
+		err = operation(tx)
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			_ = tx.Rollback()
 		}
-		return nil
-	})
+		_ = tx.Rollback()
+		if err == nil {
+			return nil
+		}
+		pgError, ok := err.(*pgconn.PgError)
+		if !ok || (pgError.Code != "40001" && pgError.Code != "40P01" && pgError.Code != "23505") || attempt >= 16 {
+			return err
+		}
+		timer := time.NewTimer(time.Duration(5+min(attempt*7, 80)+rand.IntN(20)) * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// A committed commercial installation is recovered through verified backups.
+func (database *Database) RollbackEmpty(ctx context.Context) error {
+	return fmt.Errorf("schema rollback requires a verified backup")
+}
+
+// Scratch creates an isolated schema on the same server for archive validation.
+// No credentials or destination license records enter the scratch schema.
+func (database *Database) Scratch(ctx context.Context) (*Database, func(), error) {
+	schema := "inspect_" + strings.ReplaceAll(domain.NewID(), "-", "")
+	scratch, err := openDatabase(ctx, database.dsn, schema)
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() {
+		_ = scratch.Close()
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = database.Writer.ExecContext(cleanupCtx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+	}
+	return scratch, cleanup, nil
 }
 
 func migrate(ctx context.Context, connection *sql.DB) error {
-	transaction, err := connection.BeginTx(ctx, nil)
+	tx, err := connection.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer transaction.Rollback()
-	if _, err := transaction.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL) STRICT`); err != nil {
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(current_schema(),0))"); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(name TEXT PRIMARY KEY,checksum TEXT NOT NULL,applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
 	entries, err := db.Migrations.ReadDir("migrations")
 	if err != nil {
 		return err
 	}
-	known := make(map[string]bool)
+	known := map[string]bool{}
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".up.sql") {
 			continue
@@ -400,15 +186,11 @@ func migrate(ctx context.Context, connection *sql.DB) error {
 		if err != nil {
 			return err
 		}
-		// Git may check out migration text with CRLF on Windows. The installed
-		// database can have the LF checksum of the same SQL, so hash canonical
-		// line endings while executing the file's original bytes.
 		checksum := fmt.Sprintf("%x", sha256.Sum256(bytes.ReplaceAll(contents, []byte("\r\n"), []byte("\n"))))
-		rawChecksum := fmt.Sprintf("%x", sha256.Sum256(contents))
-		var previousChecksum string
-		err = transaction.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE name = ?", entry.Name()).Scan(&previousChecksum)
+		var previous string
+		err = tx.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE name=?", entry.Name()).Scan(&previous)
 		if err == nil {
-			if previousChecksum != checksum && previousChecksum != rawChecksum {
+			if previous != checksum {
 				return fmt.Errorf("migration checksum mismatch: %s", entry.Name())
 			}
 			continue
@@ -416,32 +198,46 @@ func migrate(ctx context.Context, connection *sql.DB) error {
 		if err != sql.ErrNoRows {
 			return err
 		}
-		if _, err := transaction.ExecContext(ctx, string(contents)); err != nil {
+		if _, err = tx.ExecContext(ctx, string(contents)); err != nil {
 			return fmt.Errorf("migration %s: %w", entry.Name(), err)
 		}
-		if _, err := transaction.ExecContext(ctx, "INSERT INTO schema_migrations VALUES (?, ?, ?)", entry.Name(), checksum, domain.Timestamp(time.Now())); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO schema_migrations VALUES(?,?,?)", entry.Name(), checksum, domain.Timestamp(time.Now())); err != nil {
 			return err
 		}
 	}
-	rows, err := transaction.QueryContext(ctx, "SELECT name FROM schema_migrations")
+	rows, err := tx.QueryContext(ctx, "SELECT name FROM schema_migrations")
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
+		if err = rows.Scan(&name); err != nil {
+			rows.Close()
 			return err
 		}
 		if !known[name] {
+			rows.Close()
 			return fmt.Errorf("database belongs to a newer release")
 		}
 	}
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
 		return err
 	}
-	if err := rows.Close(); err != nil {
+	return tx.Commit()
+}
+
+// WriteOnce uses PostgreSQL's READ COMMITTED isolation for operations protected
+// by row locks or atomic UPSERTs. It never replays a callback with file effects.
+func (database *Database) WriteOnce(ctx context.Context, operation func(*sql.Tx) error) error {
+	tx, err := database.Writer.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
 		return err
 	}
-	return transaction.Commit()
+	defer tx.Rollback()
+	if err = operation(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

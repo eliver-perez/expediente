@@ -72,7 +72,7 @@ func (service *Service) Cases(ctx context.Context, principal domain.Principal, l
 	if err != nil {
 		return result, err
 	}
-	statement := "SELECT " + caseColumns + " FROM cases WHERE library_id=? AND deleted_at IS NULL AND instr(identifier_key,?)>0 AND (?='' OR exercise=?) AND (?='' OR created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51"
+	statement := "SELECT " + caseColumns + " FROM cases WHERE library_id=? AND deleted_at IS NULL AND strpos(identifier_key,?)>0 AND (?='' OR exercise=?) AND (?='' OR created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51"
 	args := []any{libraryID, searchKey(query), exercise, exercise, after.Time, after.Time, after.Time, after.ID}
 	if status != "" {
 		predicate := map[string]string{
@@ -81,8 +81,8 @@ func (service *Service) Cases(ctx context.Context, principal domain.Principal, l
 			"empty":       "NOT EXISTS(SELECT 1 FROM documents d WHERE d.case_id=c.id AND d.deleted_at IS NULL AND d.approval_status<>'cancelled')",
 			"no_template": "coalesce(req.expected,0)=0",
 		}[status]
-		statement = `WITH ` + caseStatsValidDocs + `, req AS (SELECT r.case_id,sum(r.required_count) expected,sum(min(r.required_count,coalesce(v.valid_count,0))) fulfilled FROM case_requirements r LEFT JOIN valid_docs v ON v.case_id=r.case_id AND v.document_type_id=r.document_type_id WHERE r.library_id=? AND r.mandatory=1 GROUP BY r.case_id)
-		SELECT c.id,c.library_id,c.identifier,coalesce(c.exercise,''),coalesce(c.template_version_id,''),c.requirements_initialized_at IS NOT NULL,c.revision,c.created_at FROM cases c LEFT JOIN req ON req.case_id=c.id WHERE c.library_id=? AND c.deleted_at IS NULL AND instr(c.identifier_key,?)>0 AND (?='' OR c.exercise=?) AND (` + predicate + `) AND (?='' OR c.created_at<? OR (c.created_at=? AND c.id<?)) ORDER BY c.created_at DESC,c.id DESC LIMIT 51`
+		statement = `WITH ` + caseStatsValidDocs + `, req AS (SELECT r.case_id,sum(r.required_count) expected,sum(least(r.required_count,coalesce(v.valid_count,0))) fulfilled FROM case_requirements r LEFT JOIN valid_docs v ON v.case_id=r.case_id AND v.document_type_id=r.document_type_id WHERE r.library_id=? AND r.mandatory=1 GROUP BY r.case_id)
+		SELECT c.id,c.library_id,c.identifier,coalesce(c.exercise,''),coalesce(c.template_version_id,''),c.requirements_initialized_at IS NOT NULL,c.revision,c.created_at FROM cases c LEFT JOIN req ON req.case_id=c.id WHERE c.library_id=? AND c.deleted_at IS NULL AND strpos(c.identifier_key,?)>0 AND (?='' OR c.exercise=?) AND (` + predicate + `) AND (?='' OR c.created_at<? OR (c.created_at=? AND c.id<?)) ORDER BY c.created_at DESC,c.id DESC LIMIT 51`
 		args = append([]any{libraryID, libraryID}, args...)
 	}
 	rows, err := service.Database.Reader.QueryContext(ctx, statement, args...)
@@ -260,7 +260,7 @@ type RequirementsResult struct {
 // Unmaterialized uploads stay private even when their availability is damaged.
 // Staged bytes/text/metadata are visible only to their author or library reviewers.
 // This predicate is applied BEFORE totals, pagination, snippets and derived counts.
-const visibleDocumentSQL = "((f.availability<>'staged' AND NOT (f.storage_source='managed' AND f.primary_location_id IS NULL) AND NOT EXISTS(SELECT 1 FROM upload_items private_upload WHERE private_upload.document_id=d.id AND private_upload.status IN ('staged','retained'))) OR d.created_by=? OR EXISTS(SELECT 1 FROM library_role_assignments va JOIN role_permissions vp USING(role_id) WHERE va.user_id=? AND va.library_id=d.library_id AND (vp.permission_key='documents.review' OR (vp.permission_key='documents.finalize' AND f.storage_source='managed' AND ((d.category_id IS NOT NULL AND d.document_type_id IS NOT NULL) OR (coalesce(json_extract((SELECT settings_json FROM libraries WHERE id=d.library_id),'$.require_classification'),1)=0 AND EXISTS(SELECT 1 FROM upload_items prepared WHERE prepared.document_id=d.id AND prepared.status='staged' AND prepared.ready_for_incorporation=1))) AND coalesce(json_extract((SELECT settings_json FROM libraries WHERE id=d.library_id),'$.review_managed'),0)=0))))"
+const visibleDocumentSQL = "((f.availability<>'staged' AND NOT (f.storage_source='managed' AND f.primary_location_id IS NULL) AND NOT EXISTS(SELECT 1 FROM upload_items private_upload WHERE private_upload.document_id=d.id AND private_upload.status IN ('staged','retained'))) OR d.created_by=? OR EXISTS(SELECT 1 FROM library_role_assignments va JOIN role_permissions vp USING(role_id) WHERE va.user_id=? AND va.library_id=d.library_id AND (vp.permission_key='documents.review' OR (vp.permission_key='documents.finalize' AND f.storage_source='managed' AND ((d.category_id IS NOT NULL AND d.document_type_id IS NOT NULL) OR (coalesce(((((SELECT settings_json FROM libraries WHERE id=d.library_id))::jsonb #>> '{require_classification}')::boolean::int),1)=0 AND EXISTS(SELECT 1 FROM upload_items prepared WHERE prepared.document_id=d.id AND prepared.status='staged' AND prepared.ready_for_incorporation=1))) AND coalesce(((((SELECT settings_json FROM libraries WHERE id=d.library_id))::jsonb #>> '{review_managed}')::boolean::int),0)=0))))"
 
 func (service *Service) Requirements(ctx context.Context, principal domain.Principal, caseID string) (RequirementsResult, error) {
 	result := RequirementsResult{Items: []CaseRequirement{}}

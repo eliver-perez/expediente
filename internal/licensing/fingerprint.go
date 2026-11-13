@@ -8,7 +8,7 @@ import (
 )
 
 // V1 hashes one stable OS installation/platform identifier and its OS namespace.
-// Raw machine identifiers never enter SQLite, logs, artifacts or network requests.
+// Raw machine identifiers never enter PostgreSQL, logs, artifacts or network requests.
 func MachineFingerprint() (string, error) {
 	identifier, err := machineIdentifier()
 	if err != nil {

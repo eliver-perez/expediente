@@ -266,8 +266,8 @@ func (s *Service) generate(ctx context.Context, op Operation, password string) e
 		return err
 	}
 	archive := zip.NewWriter(plain)
-	manifest := Manifest{Product: "AIDEX", Format: 1, Schema: 15, Build: buildinfo.DisplayVersion(), Kind: op.Kind, CreatedAt: op.CreatedAt, Tables: map[string]int64{}, Entries: []Entry{}}
-	tx, err := s.DB.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	manifest := Manifest{Product: "AIDEX", Format: 1, Schema: 1, Build: buildinfo.DisplayVersion(), Kind: op.Kind, CreatedAt: op.CreatedAt, Tables: map[string]int64{}, Entries: []Entry{}}
+	tx, err := s.DB.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		plain.Close()
 		return err
@@ -292,11 +292,7 @@ func (s *Service) generate(ctx context.Context, op Operation, password string) e
 		plain.Close()
 		return err
 	}
-	// The archive still uses format/schema 15. EULA/deletion execution state is
-	// installation-local, the library description is a portable column, and
-	// migrations 19 and 20 change indexes and installation-local global roles.
-	// Import accepts older library headers.
-	if schema < 15 || schema > 20 {
+	if schema != 1 {
 		archive.Close()
 		plain.Close()
 		return fmt.Errorf("schema version incompatible: %d", schema)
@@ -405,7 +401,11 @@ func exportTable(ctx context.Context, tx *sql.Tx, archive *zip.Writer, table str
 	if err != nil {
 		return 0, Entry{}, err
 	}
-	query := "SELECT * FROM \"" + table + "\""
+	quoted := make([]string, len(columns))
+	for i, column := range columns {
+		quoted[i] = "\"" + column + "\""
+	}
+	query := "SELECT " + strings.Join(quoted, ",") + " FROM \"" + table + "\""
 	if table == "audit_events" {
 		query += " WHERE event_type NOT LIKE 'license.%'"
 	}
@@ -471,17 +471,15 @@ func (w *countWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 func tableColumns(ctx context.Context, tx *sql.Tx, table string) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, "PRAGMA table_info(\""+table+"\")")
+	rows, err := tx.QueryContext(ctx, `SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=? AND is_generated='NEVER' ORDER BY ordinal_position`, table)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []string{}
 	for rows.Next() {
-		var cid, notnull, pk int
-		var name, typ string
-		var defaultValue sql.NullString
-		if err = rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+		var name string
+		if err = rows.Scan(&name); err != nil {
 			return nil, err
 		}
 		out = append(out, name)

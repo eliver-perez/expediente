@@ -49,7 +49,7 @@ func requireLocalFilesystem(directory string) error {
 	}
 	driveType := windows.GetDriveType(&volume[0])
 	if driveType != windows.DRIVE_FIXED && driveType != windows.DRIVE_RAMDISK {
-		return fmt.Errorf("SQLite state must be on a local drive")
+		return fmt.Errorf("PostgreSQL state must be on a local drive")
 	}
 	return nil
 }

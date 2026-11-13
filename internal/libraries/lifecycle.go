@@ -195,8 +195,8 @@ func (s *Service) ResumeRoot(ctx context.Context, p domain.Principal, id string,
  SELECT ?,d.id,d.revision FROM documents d WHERE d.deleted_at IS NOT NULL
  AND EXISTS(SELECT 1 FROM physical_file_locations l WHERE l.physical_file_id=d.physical_file_id AND l.root_id=? AND l.retired_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM audit_events a WHERE a.document_id=d.id AND a.event_type='document.index_removed')
- AND EXISTS(SELECT 1 FROM root_operations op WHERE op.library_id=d.library_id AND op.operation_kind='retire' AND op.state='complete' AND json_extract(op.private_plan_json,'$.root_id')=? AND d.deleted_at>=op.created_at AND d.deleted_at<=op.updated_at)
- AND (SELECT json_extract(a.details_json,'$.reference_policy') FROM audit_events a WHERE a.event_type='storage.root_retired' AND json_extract(a.details_json,'$.root_id')=? ORDER BY a.occurred_at DESC,a.id DESC LIMIT 1)='remove_index_references'
+ AND EXISTS(SELECT 1 FROM root_operations op WHERE op.library_id=d.library_id AND op.operation_kind='retire' AND op.state='complete' AND ((op.private_plan_json)::jsonb #>> '{root_id}')=? AND d.deleted_at>=op.created_at AND d.deleted_at<=op.updated_at)
+ AND (SELECT ((a.details_json)::jsonb #>> '{reference_policy}') FROM audit_events a WHERE a.event_type='storage.root_retired' AND ((a.details_json)::jsonb #>> '{root_id}')=? ORDER BY a.occurred_at DESC,a.id DESC LIMIT 1)='remove_index_references'
  ON CONFLICT(root_id,document_id) DO NOTHING`, id, id, id, id); err != nil {
 			return err
 		}

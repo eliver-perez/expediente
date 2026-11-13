@@ -49,7 +49,7 @@ func TestInstallerCheckStateDoesNotOpenDatabaseAndRequiresExclusiveLock(t *testi
 		t.Fatal(err)
 	}
 	databasePath := filepath.Join(configuration.StateDirectory, "documental.db")
-	// A deliberately unreadable SQLite fixture proves preflight never migrates,
+	// A deliberately unreadable database fixture proves preflight never migrates,
 	// resets or needs to open the DB before replacing the faulty old executable.
 	contents := []byte("preexisting state must remain byte-for-byte unchanged")
 	if err := os.WriteFile(databasePath, contents, 0600); err != nil {

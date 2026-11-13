@@ -1,4 +1,4 @@
-// Package db embeds only implemented migrations, never schema.proposed.sql.
+// Package db embeds the PostgreSQL schema migrations used by every installation.
 package db
 
 import "embed"

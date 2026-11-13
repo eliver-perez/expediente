@@ -99,17 +99,15 @@ func decodeTable(pkg *Package, name string, visit func(map[string]any) error) er
 }
 
 func (s *Service) importLogical(ctx context.Context, op *Operation, pkg *Package, idx *restoreIndex) error {
-	// Only the writer connection changes its FK mode. The entire logical replace
-	// remains one transaction; FK and SQLite structural checks precede commit.
-	if _, err := s.DB.Writer.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
-		return err
-	}
-	defer s.DB.Writer.ExecContext(context.Background(), "PRAGMA foreign_keys=ON")
+	// Restore under one transaction, deferring cyclic references until validation.
 	tx, err := s.DB.Writer.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "SET CONSTRAINTS ALL DEFERRED"); err != nil {
+		return err
+	}
 	var username, display, hash string
 	err = tx.QueryRowContext(ctx, `SELECT username,display_name,password_hash FROM users WHERE id=? AND EXISTS(SELECT 1 FROM global_role_assignments WHERE user_id=users.id AND role_id='installation_admin')`, op.Actor).Scan(&username, &display, &hash)
 	if err != nil {
@@ -155,7 +153,7 @@ func (s *Service) importLogical(ctx context.Context, op *Operation, pkg *Package
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO role_permissions(role_id,permission_key) VALUES ('installation_admin','backup.manage'),('installation_admin','restore.manage')"); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO role_permissions(role_id,permission_key) VALUES ('installation_admin','backup.manage'),('installation_admin','restore.manage') ON CONFLICT DO NOTHING"); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO global_role_assignments(user_id,role_id) VALUES(?,'installation_admin')", newID); err != nil {
@@ -165,25 +163,15 @@ func (s *Service) importLogical(ctx context.Context, op *Operation, pkg *Package
 	if err = postImport(ctx, tx, op, idx, pkg.Manifest.Kind, newID); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
-	if err != nil {
+	// Explicit IDs from an archive do not advance PostgreSQL identity sequences.
+	// Advance both generators before workers can publish new extraction pages.
+	for _, table := range []string{"extraction_pages", "indexed_pages"} {
+		if _, err = tx.ExecContext(ctx, "SELECT setval(pg_get_serial_sequence(?, 'id'),coalesce(max(id),1),max(id) IS NOT NULL) FROM "+table, table); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
 		return err
-	}
-	if rows.Next() {
-		rows.Close()
-		return fmt.Errorf("restored data violate foreign keys")
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	var integrity string
-	if err = tx.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&integrity); err != nil {
-		return err
-	}
-	if integrity != "ok" {
-		return fmt.Errorf("SQLite integrity check failed")
 	}
 	if err = audit.Append(ctx, tx, time.Now(), audit.Event{Type: "backup.restore_committed", SystemActor: true, Metadata: domain.RequestMetadata{RequestID: domain.NewID(), ObservedIP: "local"}, Details: map[string]any{"operation_id": op.ID, "kind": pkg.Manifest.Kind, "requested_by": op.Actor, "recovery_user": newUser}}); err != nil {
 		return err
@@ -207,10 +195,7 @@ func importTable(ctx context.Context, tx *sql.Tx, pkg *Package, entry *zip.File,
 	if err = json.Unmarshal(scanner.Bytes(), &header); err != nil {
 		return err
 	}
-	// Pre-description AIDEX archives contain the original library columns.
-	// A missing trailing description uses the destination's empty default.
-	legacyLibrary := table == "libraries" && len(header)+1 == len(columns) && columns[len(columns)-1] == "description"
-	if len(header) != len(columns) && !legacyLibrary {
+	if len(header) != len(columns) {
 		return fmt.Errorf("column count mismatch")
 	}
 	for i := range header {
@@ -224,11 +209,11 @@ func importTable(ctx context.Context, tx *sql.Tx, pkg *Package, entry *zip.File,
 		placeholders[i] = "?"
 		quoted[i] = "\"" + name + "\""
 	}
-	verb := "INSERT"
+	suffix := ""
 	if table == "audit_events" {
-		verb = "INSERT OR IGNORE"
+		suffix = " ON CONFLICT(id) DO NOTHING"
 	}
-	statement, err := tx.PrepareContext(ctx, verb+" INTO \""+table+"\"("+strings.Join(quoted, ",")+") VALUES("+strings.Join(placeholders, ",")+")")
+	statement, err := tx.PrepareContext(ctx, "INSERT INTO \""+table+"\"("+strings.Join(quoted, ",")+") VALUES("+strings.Join(placeholders, ",")+")"+suffix)
 	if err != nil {
 		return err
 	}

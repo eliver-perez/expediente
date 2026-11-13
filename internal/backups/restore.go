@@ -337,7 +337,7 @@ func collectIndex(pkg *Package) (restoreIndex, error) {
 
 func (s *Service) apply(ctx context.Context, op *Operation) error {
 	var already int
-	err := s.DB.Reader.QueryRowContext(ctx, "SELECT count(*) FROM audit_events WHERE event_type='backup.restore_committed' AND json_extract(details_json,'$.operation_id')=?", op.ID).Scan(&already)
+	err := s.DB.Reader.QueryRowContext(ctx, "SELECT count(*) FROM audit_events WHERE event_type='backup.restore_committed' AND ((details_json)::jsonb #>> '{operation_id}')=?", op.ID).Scan(&already)
 	if err != nil {
 		return err
 	}

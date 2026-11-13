@@ -159,7 +159,7 @@ func (service *Service) ReindexDocument(ctx context.Context, principal domain.Pr
 		if _, err = tx.ExecContext(ctx, `INSERT INTO idempotency_requests VALUES(?,'document.reindex',?,?,?,'complete',?)`, current.User.ID, requestID, domain.Digest(documentID), identifier, now()); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE jobs SET payload_json=json_set(payload_json,'$.manual',json('true')) WHERE id=?`, identifier); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE jobs SET payload_json=jsonb_set((payload_json)::jsonb,'{manual}',(('true')::json)::jsonb)::text WHERE id=?`, identifier); err != nil {
 			return err
 		}
 		return record(ctx, tx, current, metadata, "document.reindex_requested", document.LibraryID, documentID, map[string]any{"job_id": identifier, "content_version_id": version, "sha256": observed.Hash, "format": observed.Detection.Format, "reused_job": reused})

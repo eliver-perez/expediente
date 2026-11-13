@@ -352,25 +352,37 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		if _, err := transaction.ExecContext(ctx, "UPDATE physical_files SET primary_location_id=coalesce((SELECT location.id FROM physical_file_locations location JOIN storage_roots owner ON owner.id=location.root_id WHERE location.physical_file_id=physical_files.id AND location.retired_at IS NULL AND owner.status<>'superseded' ORDER BY CASE owner.status WHEN 'active' THEN 0 ELSE 1 END,location.id LIMIT 1),primary_location_id) WHERE library_id=? AND storage_source='linked' AND EXISTS(SELECT 1 FROM physical_file_locations touched WHERE touched.id=physical_files.primary_location_id AND touched.root_id=? AND touched.retired_at IS NOT NULL)", root.LibraryID, root.ID); err != nil {
 			return err
 		}
-		missingRows, err := transaction.QueryContext(ctx, "SELECT d.id,coalesce(f.current_content_version_id,'') FROM physical_files f JOIN documents d ON d.physical_file_id=f.id WHERE f.library_id=? AND f.storage_source='linked' AND f.availability<>'missing' AND EXISTS(SELECT 1 FROM physical_file_locations touched WHERE touched.physical_file_id=f.id AND touched.root_id=?) AND NOT EXISTS(SELECT 1 FROM physical_file_locations WHERE physical_file_id=f.id AND retired_at IS NULL)", root.LibraryID, root.ID)
-		if err != nil {
-			return err
-		}
-		for missingRows.Next() {
-			var documentID, versionID string
-			if err = missingRows.Scan(&documentID, &versionID); err != nil {
-				missingRows.Close()
+		// Close each result stream before writing on the same PostgreSQL connection.
+		// Keyset batches keep absence reconciliation bounded for large libraries.
+		after := ""
+		for {
+			missingRows, err := transaction.QueryContext(ctx, "SELECT d.id,coalesce(f.current_content_version_id,'') FROM physical_files f JOIN documents d ON d.physical_file_id=f.id WHERE f.library_id=? AND f.storage_source='linked' AND f.availability<>'missing' AND EXISTS(SELECT 1 FROM physical_file_locations touched WHERE touched.physical_file_id=f.id AND touched.root_id=?) AND NOT EXISTS(SELECT 1 FROM physical_file_locations WHERE physical_file_id=f.id AND retired_at IS NULL) AND d.id>? ORDER BY d.id LIMIT 512", root.LibraryID, root.ID, after)
+			if err != nil {
 				return err
 			}
-			if err = appendDocumentObservation(ctx, transaction, domain.NewID(), "document.linked_missing", root.LibraryID, documentID, versionID); err != nil {
-				missingRows.Close()
+			batch := [][2]string{}
+			for missingRows.Next() {
+				var entry [2]string
+				if err = missingRows.Scan(&entry[0], &entry[1]); err != nil {
+					missingRows.Close()
+					return err
+				}
+				batch = append(batch, entry)
+			}
+			err = missingRows.Err()
+			missingRows.Close()
+			if err != nil {
 				return err
 			}
-		}
-		err = missingRows.Err()
-		missingRows.Close()
-		if err != nil {
-			return err
+			if len(batch) == 0 {
+				break
+			}
+			for _, entry := range batch {
+				if err = appendDocumentObservation(ctx, transaction, domain.NewID(), "document.linked_missing", root.LibraryID, entry[0], entry[1]); err != nil {
+					return err
+				}
+				after = entry[0]
+			}
 		}
 		if _, err := transaction.ExecContext(ctx, "UPDATE physical_files SET availability='missing' WHERE library_id=? AND storage_source='linked' AND EXISTS(SELECT 1 FROM physical_file_locations touched WHERE touched.physical_file_id=physical_files.id AND touched.root_id=?) AND NOT EXISTS(SELECT 1 FROM physical_file_locations WHERE physical_file_id=physical_files.id AND retired_at IS NULL)", root.LibraryID, root.ID); err != nil {
 			return err
@@ -378,7 +390,7 @@ func (service *Service) Scan(ctx context.Context, rootID string, maximumBytes in
 		if _, err := transaction.ExecContext(ctx, "UPDATE root_scans SET status='complete',completed_at=?,can_confirm_absence=1 WHERE id=?", now(), scanID); err != nil {
 			return err
 		}
-		if _, err := transaction.ExecContext(ctx, "UPDATE root_watch_recovery SET recovered_generation=max(recovered_generation,(SELECT loss_generation FROM root_scans WHERE id=?)) WHERE root_id=?", scanID, root.ID); err != nil {
+		if _, err := transaction.ExecContext(ctx, "UPDATE root_watch_recovery SET recovered_generation=greatest(recovered_generation,(SELECT loss_generation FROM root_scans WHERE id=?)) WHERE root_id=?", scanID, root.ID); err != nil {
 			return err
 		}
 		diagnostic := ""
@@ -590,7 +602,7 @@ func (service *Service) ingest(ctx context.Context, root Root, scanID string, ob
 			return err
 		}
 		if ctx.Value(manualProcessingKey{}) == true {
-			if _, err = transaction.ExecContext(ctx, `UPDATE jobs SET payload_json=json_set(payload_json,'$.manual',json('true')) WHERE physical_file_id=? AND job_type='extract' AND target_version=? AND status IN ('queued','retry_wait','paused')`, fileID, versionID); err != nil {
+			if _, err = transaction.ExecContext(ctx, `UPDATE jobs SET payload_json=jsonb_set((payload_json)::jsonb,'{manual}',(('true')::json)::jsonb)::text WHERE physical_file_id=? AND job_type='extract' AND target_version=? AND status IN ('queued','retry_wait','paused')`, fileID, versionID); err != nil {
 				return err
 			}
 		}

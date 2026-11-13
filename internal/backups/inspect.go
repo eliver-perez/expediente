@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"gestor-documental/internal/domain"
-	"gestor-documental/internal/storage"
 )
 
 func (s *Service) Inspect(ctx context.Context, source io.Reader, password, actor string) (Operation, error) {
@@ -69,7 +68,7 @@ func (s *Service) Inspect(ctx context.Context, source io.Reader, password, actor
 	return op, nil
 }
 
-// Inspect in a disposable SQLite database to catch malformed rows, constraints,
+// Inspect in a disposable PostgreSQL schema to catch malformed rows, constraints,
 // broken references and schema drift before a restore is scheduled. This
 // scratch database has a blank license state and never enters the archive.
 func (s *Service) validateLogical(ctx context.Context, pkg *Package) error {
@@ -86,24 +85,19 @@ func (s *Service) validateLogical(ctx context.Context, pkg *Package) error {
 			return fmt.Errorf("root inventory mismatch")
 		}
 	}
-	directory, err := os.MkdirTemp(s.directory, ".inspect-db-")
+	db, cleanup, err := s.DB.Scratch(ctx)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(directory)
-	db, err := storage.Open(ctx, directory)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if _, err = db.Writer.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
-		return err
-	}
+	defer cleanup()
 	transaction, err := db.Writer.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer transaction.Rollback()
+	if _, err = transaction.ExecContext(ctx, "SET CONSTRAINTS ALL DEFERRED"); err != nil {
+		return err
+	}
 	for i := len(tables) - 1; i >= 0; i-- {
 		if tables[i] == "audit_events" {
 			continue
@@ -121,26 +115,9 @@ func (s *Service) validateLogical(ctx context.Context, pkg *Package) error {
 			return fmt.Errorf("%s: %w", table, e)
 		}
 	}
-	rows, err := transaction.QueryContext(ctx, "PRAGMA foreign_key_check")
-	if err != nil {
-		return err
-	}
-	if rows.Next() {
-		rows.Close()
-		return fmt.Errorf("broken database references")
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	var result string
-	if err = transaction.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&result); err != nil {
-		return err
-	}
-	if result != "ok" {
-		return fmt.Errorf("SQLite integrity check failed")
-	}
+	// Force every deferred foreign key to be checked before accepting a package.
+	_, err = transaction.ExecContext(ctx, "SET CONSTRAINTS ALL IMMEDIATE")
+	return err
 	return nil
 }
 

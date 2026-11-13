@@ -203,7 +203,7 @@ func (service *Service) beginApproval(ctx context.Context, transaction *sql.Tx, 
 	if err = transaction.QueryRowContext(ctx, "SELECT current_configuration_revision FROM libraries WHERE id=?", document.LibraryID).Scan(&configurationRevision); err != nil {
 		return "", err
 	}
-	if _, err = transaction.ExecContext(ctx, "INSERT OR IGNORE INTO library_configuration_versions SELECT id,current_configuration_revision,mode,settings_json,?,? FROM libraries WHERE id=?", principal.User.ID, now(), document.LibraryID); err != nil {
+	if _, err = transaction.ExecContext(ctx, "INSERT INTO library_configuration_versions SELECT id,current_configuration_revision,mode,settings_json,?,? FROM libraries WHERE id=? ON CONFLICT DO NOTHING", principal.User.ID, now(), document.LibraryID); err != nil {
 		return "", err
 	}
 	if _, err = transaction.ExecContext(ctx, "INSERT INTO library_document_sequences VALUES(?,1) ON CONFLICT DO NOTHING", document.LibraryID); err != nil {

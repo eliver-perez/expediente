@@ -20,7 +20,7 @@ func (service *Service) BatchItems(ctx context.Context, principal domain.Princip
  coalesce(v.document_format,''),coalesce(v.index_block_reason,''),
  d.id IS NOT NULL AND d.deleted_at IS NULL AND `+visibleDocumentSQL+`,
  coalesce(j.status,''),coalesce(j.last_error_code,''),coalesce(p.operation,''),coalesce(e.result_code,''),
- ((SELECT paused FROM processing_policy WHERE singleton=1) OR NOT coalesce((1=1 `+advancedJobEligibility+`),1))
+ ((SELECT paused<>0 FROM processing_policy WHERE singleton=1) OR NOT coalesce((1=1 `+advancedJobEligibility+`),true))
  FROM upload_items u LEFT JOIN documents d ON d.id=u.document_id LEFT JOIN physical_files f ON f.id=d.physical_file_id
  LEFT JOIN content_versions v ON v.id=f.current_content_version_id
  LEFT JOIN jobs j ON j.id=(SELECT id FROM jobs WHERE physical_file_id=f.id AND job_type='extract' AND target_version=f.current_content_version_id ORDER BY created_at DESC,id DESC LIMIT 1)

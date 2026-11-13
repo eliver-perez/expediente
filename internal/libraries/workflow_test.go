@@ -286,7 +286,7 @@ func TestH5MaterializationFailureRecovery(t *testing.T) {
 			if d.Approval != want {
 				t.Fatal(d.Approval, want)
 			}
-			// Reopen the actual SQLite file and use the same restart recovery as production.
+			// Reopen the actual PostgreSQL file and use the same restart recovery as production.
 			configuration := s.Identity.Config
 			requireNoError(t, s.Database.Close())
 			reopened, err := storage.Open(ctx, configuration.StateDirectory)

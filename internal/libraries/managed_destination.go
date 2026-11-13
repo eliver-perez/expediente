@@ -28,7 +28,7 @@ func validateManagedDestination(ctx context.Context, q storage.Querier, libraryI
 
 // Cambia únicamente la configuración. Nunca mueve los documentos incorporados.
 func storeManagedDestination(ctx context.Context, tx *sql.Tx, p domain.Principal, libraryID, previous, next string, metadata domain.RequestMetadata) error {
-	if _, err := tx.ExecContext(ctx, "UPDATE libraries SET settings_json=json_set(settings_json,'$.default_managed_root_id',?) WHERE id=?", next, libraryID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE libraries SET settings_json=jsonb_set((settings_json)::jsonb,'{default_managed_root_id}',to_jsonb(?::text))::text WHERE id=?", next, libraryID); err != nil {
 		return err
 	}
 	return record(ctx, tx, p, metadata, "storage.destination_changed", libraryID, "", map[string]any{"previous_root_id": previous, "new_root_id": next})

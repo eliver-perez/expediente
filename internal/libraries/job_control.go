@@ -12,10 +12,10 @@ import (
 
 // A completed operation must not be abandoned in running/generating when its
 // final database write fails. Retry only the journal, never extraction/conversion.
-// SQLite bounds lock waits; the context cancels writes/backoff on shutdown.
+// PostgreSQL bounds lock waits; the context cancels writes/backoff on shutdown.
 // Do not impose a small deadline on startup cleanup of a large preview cache.
 // Shutdown leaves restart recovery
-// in charge. Log once outside SQLite because the database itself may be full.
+// in charge. Log once outside PostgreSQL because the database itself may be full.
 func retryWorkerWrite(ctx context.Context, details diagnostics.Context, write func(context.Context) error) bool {
 	details = details.Safe()
 	delay := time.Second

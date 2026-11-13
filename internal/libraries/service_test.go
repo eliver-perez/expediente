@@ -226,7 +226,7 @@ func TestDisconnectedRootPreservesAvailabilityAndScope(t *testing.T) {
 		t.Fatal("reader path disclosure or missing result")
 	}
 	var exact string
-	if err = service.Database.Reader.QueryRow("SELECT exact_query_text FROM search_audit_details ORDER BY rowid DESC LIMIT 1").Scan(&exact); err != nil || exact != "PR-008" {
+	if err = service.Database.Reader.QueryRow("SELECT s.exact_query_text FROM search_audit_details s JOIN audit_events a ON a.id=s.event_id ORDER BY a.occurred_at DESC,a.id DESC LIMIT 1").Scan(&exact); err != nil || exact != "PR-008" {
 		t.Fatal("exact query audit missing", err)
 	}
 }

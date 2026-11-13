@@ -202,7 +202,7 @@ func TestDefinitiveCancellationReleasesLibraryAndSurvivesRestart(t *testing.T) {
 	}
 }
 
-// Opt-in corpus test: actual files, actual SQLite commits, no external 9,000-file corpus required.
+// Opt-in corpus test: actual files, actual PostgreSQL commits, no external 9,000-file corpus required.
 func TestLargeLibrary9000(t *testing.T) {
 	if os.Getenv("AIDEX_LARGE_TEST") != "1" {
 		t.Skip("set AIDEX_LARGE_TEST=1 for the 9,000-file regression")
@@ -242,7 +242,7 @@ func TestLargeLibrary9000(t *testing.T) {
 	if before < 200 || before >= 9000 {
 		t.Fatal("bad interruption point", before)
 	}
-	// Close and reopen SQLite; the cache/checkpoint must survive a real connection restart.
+	// Close and reopen PostgreSQL; the cache/checkpoint must survive a real connection restart.
 	state := service.Identity.Config.StateDirectory
 	requireNoError(t, service.Database.Close())
 	database, err := storage.Open(ctx, state)
@@ -273,7 +273,7 @@ func TestLargeLibrary9000(t *testing.T) {
 		t.Fatal("duplicated extraction jobs", extractionJobs)
 	}
 	var integrity string
-	requireNoError(t, service.Database.Reader.QueryRow("PRAGMA integrity_check").Scan(&integrity))
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT CASE WHEN bool_and(convalidated) THEN 'ok' ELSE 'invalid' END FROM pg_constraint WHERE connamespace=current_schema()::regnamespace").Scan(&integrity))
 	if integrity != "ok" {
 		t.Fatal(integrity)
 	}

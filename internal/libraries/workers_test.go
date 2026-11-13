@@ -101,7 +101,7 @@ func TestNativeAndOCRWorkersBoundedAndRestartable(t *testing.T) {
 		t.Fatal("duplicate jobs or attempts", jobs, files, maximum)
 	}
 	var integrity string
-	requireNoError(t, service.Database.Reader.QueryRow("PRAGMA integrity_check").Scan(&integrity))
+	requireNoError(t, service.Database.Reader.QueryRow("SELECT CASE WHEN bool_and(convalidated) THEN 'ok' ELSE 'invalid' END FROM pg_constraint WHERE connamespace=current_schema()::regnamespace").Scan(&integrity))
 	if integrity != "ok" {
 		t.Fatal(integrity)
 	}

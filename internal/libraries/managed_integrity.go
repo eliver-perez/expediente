@@ -19,7 +19,9 @@ func rootJobKind(root Root) string {
 	}
 	return "scan"
 }
-func deletionPendingForRoot(ctx context.Context, q interface{ QueryRowContext(context.Context, string, ...any) *sql.Row }, root Root) (bool, error) {
+func deletionPendingForRoot(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, root Root) (bool, error) {
 	var count int
 	err := q.QueryRowContext(ctx, "SELECT count(*) FROM entity_deletions WHERE execution_status IN ('pending','running') AND ((kind='library' AND entity_id=?) OR (kind='root' AND entity_id=?))", root.LibraryID, root.ID).Scan(&count)
 	return count > 0, err

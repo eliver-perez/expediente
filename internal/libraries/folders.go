@@ -60,18 +60,18 @@ func (service *Service) Folders(ctx context.Context, principal domain.Principal,
 	if rootID != "" && prefix != "" {
 		// A range on (root_id, relative_path) visits only descendants of the
 		// selected folder. CROSS JOIN keeps locations as the outer loop.
-		query = "SELECT DISTINCT substr(l.relative_path,?,instr(substr(l.relative_path,?),'/')-1) AS folder FROM physical_file_locations l INDEXED BY physical_locations_explorer CROSS JOIN physical_files f CROSS JOIN documents d WHERE f.primary_location_id=l.id AND d.physical_file_id=f.id AND d.library_id=? AND d.deleted_at IS NULL AND l.root_id=? AND l.relative_path>=? AND l.relative_path<? AND instr(substr(l.relative_path,?),'/')>0 AND substr(l.relative_path,?,instr(substr(l.relative_path,?),'/')-1)>? ORDER BY folder LIMIT 51"
+		query = "SELECT DISTINCT substr(l.relative_path,?,strpos(substr(l.relative_path,?),'/')-1) AS folder FROM physical_file_locations l CROSS JOIN physical_files f CROSS JOIN documents d WHERE f.primary_location_id=l.id AND d.physical_file_id=f.id AND d.library_id=? AND d.deleted_at IS NULL AND l.root_id=? AND l.relative_path>=? AND l.relative_path<? AND strpos(substr(l.relative_path,?),'/')>0 AND substr(l.relative_path,?,strpos(substr(l.relative_path,?),'/')-1)>? ORDER BY folder LIMIT 51"
 		args = []any{start, start, libraryID, rootID, prefix + "/", prefix + "0", start, start, start, after}
 	} else if rootID != "" {
 		// Read distinct names from the path index, then check one live primary
 		// document per candidate folder. The old join visited every document
 		// before deduplicating names, even when the root had one folder.
 		query = `WITH folders AS MATERIALIZED (
- SELECT DISTINCT substr(relative_path,1,instr(relative_path,'/')-1) AS folder
- FROM physical_file_locations INDEXED BY physical_locations_explorer
- WHERE root_id=? AND instr(relative_path,'/')>0
+ SELECT DISTINCT substr(relative_path,1,strpos(relative_path,'/')-1) AS folder
+ FROM physical_file_locations
+ WHERE root_id=? AND strpos(relative_path,'/')>0
 ) SELECT folder FROM folders WHERE folder>? AND EXISTS(
- SELECT 1 FROM physical_file_locations l INDEXED BY physical_locations_explorer
+ SELECT 1 FROM physical_file_locations l
  CROSS JOIN physical_files f CROSS JOIN documents d
  WHERE l.root_id=? AND l.relative_path>=folder||'/' AND l.relative_path<folder||'0'
  AND f.primary_location_id=l.id AND d.physical_file_id=f.id
@@ -81,7 +81,7 @@ func (service *Service) Folders(ctx context.Context, principal domain.Principal,
 	} else {
 		// The root listing has no selective path range; the document-first plan
 		// is substantially faster than forcing the location index here.
-		query = "SELECT DISTINCT substr(l.relative_path,?,instr(substr(l.relative_path,?),'/')-1) AS folder FROM physical_file_locations l JOIN physical_files f ON f.primary_location_id=l.id JOIN documents d ON d.physical_file_id=f.id WHERE d.library_id=? AND d.deleted_at IS NULL AND (?='' OR l.root_id=?) AND (?='' OR substr(l.relative_path,1,length(?)+1)=? || '/') AND instr(substr(l.relative_path,?),'/')>0 AND substr(l.relative_path,?,instr(substr(l.relative_path,?),'/')-1)>? ORDER BY folder LIMIT 51"
+		query = "SELECT DISTINCT substr(l.relative_path,?,strpos(substr(l.relative_path,?),'/')-1) AS folder FROM physical_file_locations l JOIN physical_files f ON f.primary_location_id=l.id JOIN documents d ON d.physical_file_id=f.id WHERE d.library_id=? AND d.deleted_at IS NULL AND (?='' OR l.root_id=?) AND (?='' OR substr(l.relative_path,1,length(?)+1)=? || '/') AND strpos(substr(l.relative_path,?),'/')>0 AND substr(l.relative_path,?,strpos(substr(l.relative_path,?),'/')-1)>? ORDER BY folder LIMIT 51"
 		args = []any{start, start, libraryID, rootID, rootID, prefix, prefix, prefix, start, start, start, after}
 	}
 	rows, err := service.Database.Reader.QueryContext(ctx, query, args...)

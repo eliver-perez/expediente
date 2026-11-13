@@ -13,7 +13,7 @@ import (
 )
 
 // writeRecoveryPoint captures only the portable logical allowlist. A raw
-// SQLite copy would also copy the destination's activation and private keys.
+// PostgreSQL copy would also copy the destination's activation and private keys.
 func (s *Service) writeRecoveryPoint(ctx context.Context, id string) error {
 	final := filepath.Join(s.directory, id+".pre-restore.aidexbak")
 	if _, err := os.Lstat(final); err == nil {
@@ -39,14 +39,14 @@ func (s *Service) writeRecoveryPoint(ctx context.Context, id string) error {
 		return err
 	}
 	archive := zip.NewWriter(plain)
-	tx, err := s.DB.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.DB.Reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		archive.Close()
 		plain.Close()
 		return err
 	}
 	defer tx.Rollback()
-	manifest := Manifest{Product: "AIDEX", Format: 1, Schema: 15, Build: buildinfo.DisplayVersion(), Kind: "basic", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Tables: map[string]int64{}, Entries: []Entry{}}
+	manifest := Manifest{Product: "AIDEX", Format: 1, Schema: 1, Build: buildinfo.DisplayVersion(), Kind: "basic", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Tables: map[string]int64{}, Entries: []Entry{}}
 	for _, table := range tables {
 		if err = ctx.Err(); err != nil {
 			archive.Close()

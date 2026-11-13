@@ -111,12 +111,12 @@ func TestLifecycleLibraryIsolationAndArchive(t *testing.T) {
 	if foreign != 2 {
 		t.Fatal("foreign libraries damaged")
 	}
-	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*) FROM pragma_foreign_key_check").Scan(&foreign))
+	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*) FROM pg_constraint WHERE contype='f' AND connamespace=current_schema()::regnamespace AND NOT convalidated").Scan(&foreign))
 	if foreign != 0 {
 		t.Fatal("dangling FKs")
 	}
 	var integrity string
-	requireNoError(t, s.Database.Reader.QueryRow("PRAGMA integrity_check").Scan(&integrity))
+	requireNoError(t, s.Database.Reader.QueryRow("SELECT CASE WHEN bool_and(convalidated) THEN 'ok' ELSE 'invalid' END FROM pg_constraint WHERE connamespace=current_schema()::regnamespace").Scan(&integrity))
 	if integrity != "ok" {
 		t.Fatal(integrity)
 	}
@@ -169,7 +169,7 @@ func TestLifecycleConcurrentDeletionAndTransactionRollback(t *testing.T) {
 	requireNoError(t, err)
 	// An error after preparing the durable journal must restore ALL entity rows.
 	requireNoError(t, s.Database.Write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec("CREATE TRIGGER fail_lifecycle_delete BEFORE DELETE ON libraries BEGIN SELECT RAISE(ABORT,'synthetic interruption'); END")
+		_, err := tx.Exec("CREATE FUNCTION fail_lifecycle_delete_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic interruption'; RETURN NEW; END $$; CREATE TRIGGER fail_lifecycle_delete BEFORE DELETE ON libraries FOR EACH ROW EXECUTE FUNCTION fail_lifecycle_delete_fn();")
 		return err
 	}))
 	queued, err := s.ConfirmDeletion(ctx, p, plan.ID, plan.Name, domain.RequestMetadata{})
@@ -200,7 +200,7 @@ func TestLifecycleConcurrentDeletionAndTransactionRollback(t *testing.T) {
 	if n != 0 {
 		t.Fatal("uncommitted journal remained")
 	}
-	_, err = s.Database.Writer.Exec("DROP TRIGGER fail_lifecycle_delete")
+	_, err = s.Database.Writer.Exec("DROP TRIGGER fail_lifecycle_delete ON libraries")
 	requireNoError(t, err)
 	_, err = s.RetryDeletionCleanup(ctx, p, plan.ID)
 	requireNoError(t, err)
@@ -585,7 +585,7 @@ func TestLifecycleManagedOriginalAndDependencies(t *testing.T) {
 		t.Fatal("managed original changed")
 	}
 	var n int
-	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*) FROM pragma_foreign_key_check").Scan(&n))
+	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*) FROM pg_constraint WHERE contype='f' AND connamespace=current_schema()::regnamespace AND NOT convalidated").Scan(&n))
 	if n != 0 {
 		t.Fatal("dangling relationships")
 	}
@@ -714,7 +714,7 @@ func TestLifecycleRootResumeAndIsolation(t *testing.T) {
 	if err = s.ResumeRoot(ctx, p, root.ID, root.Revision+1, domain.RequestMetadata{}); err == nil {
 		t.Fatal("deleted root revived")
 	}
-	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*) FROM pragma_foreign_key_check").Scan(&removed))
+	requireNoError(t, s.Database.Reader.QueryRow("SELECT count(*) FROM pg_constraint WHERE contype='f' AND connamespace=current_schema()::regnamespace AND NOT convalidated").Scan(&removed))
 	if removed != 0 {
 		t.Fatal("dangling FKs")
 	}

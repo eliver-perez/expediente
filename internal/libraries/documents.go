@@ -66,7 +66,7 @@ func (service *Service) Document(ctx context.Context, principal domain.Principal
 	if err == nil && document.Format != "pdf" {
 		// Older DOCX runs retain blank paragraphs. Open useful content without
 		// changing those historical runs or forcing a new extraction.
-		err = service.Database.Reader.QueryRowContext(ctx, `SELECT coalesce(min(p.page_number),1) FROM extraction_pages p JOIN physical_files f ON f.indexed_extraction_id=p.extraction_id WHERE f.id=? AND length(trim(p.page_text,char(9)||char(10)||char(13)||' '))>0`, document.FileID).Scan(&document.FirstTextUnit)
+		err = service.Database.Reader.QueryRowContext(ctx, `SELECT coalesce(min(p.page_number),1) FROM extraction_pages p JOIN physical_files f ON f.indexed_extraction_id=p.extraction_id WHERE f.id=? AND length(btrim(p.page_text,chr(9)||chr(10)||chr(13)||' '))>0`, document.FileID).Scan(&document.FirstTextUnit)
 	}
 	return document, err
 }
@@ -387,7 +387,7 @@ func (service *Service) Retry(ctx context.Context, principal domain.Principal, j
 			err := transaction.QueryRowContext(ctx, "SELECT id FROM jobs WHERE job_type IN ('scan','verify_managed') AND target_version=(SELECT target_version FROM jobs WHERE id=?) AND status IN ('queued','running','retry_wait','paused')", jobID).Scan(&existing)
 			if err == nil {
 				identifier = existing
-				_, err = transaction.ExecContext(ctx, `UPDATE jobs SET payload_json=json_set(payload_json,'$.manual',json('true')) WHERE id=? AND status<>'running'`, existing)
+				_, err = transaction.ExecContext(ctx, `UPDATE jobs SET payload_json=jsonb_set((payload_json)::jsonb,'{manual}',(('true')::json)::jsonb)::text WHERE id=? AND status<>'running'`, existing)
 				return err
 			}
 			if err != sql.ErrNoRows {
@@ -399,7 +399,7 @@ func (service *Service) Retry(ctx context.Context, principal domain.Principal, j
 				return err
 			}
 		}
-		if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,retry_of_job_id,created_at) SELECT ?,library_id,physical_file_id,job_type,target_version,?,json_set(payload_json,'$.manual',json('true')),'queued',?,?,? FROM jobs WHERE id=?", identifier, identifier, now(), jobID, now(), jobID); err != nil {
+		if _, err = transaction.ExecContext(ctx, "INSERT INTO jobs(id,library_id,physical_file_id,job_type,target_version,idempotency_key,payload_json,status,available_at,retry_of_job_id,created_at) SELECT ?,library_id,physical_file_id,job_type,target_version,?,jsonb_set((payload_json)::jsonb,'{manual}',(('true')::json)::jsonb)::text,'queued',?,?,? FROM jobs WHERE id=?", identifier, identifier, now(), jobID, now(), jobID); err != nil {
 			return err
 		}
 		return record(ctx, transaction, current, metadata, "indexing.retry_requested", libraryID, "", map[string]any{"job_id": identifier, "retry_of": jobID, "reason": reason})
@@ -654,7 +654,7 @@ func (service *Service) Retire(ctx context.Context, principal domain.Principal, 
 		var expectedImpact string
 		var expected int64
 		var count int
-		if err = transaction.QueryRowContext(ctx, "SELECT json_extract(?,'$.revision'),json_extract(?,'$.root_id'),json_extract(?,'$.count'),coalesce(json_extract(?,'$.impact'),'')", configuration, plan, plan, plan).Scan(&expected, &plannedRoot, &count, &expectedImpact); err != nil {
+		if err = transaction.QueryRowContext(ctx, "SELECT (((?)::jsonb #>> '{revision}')::bigint),((?)::jsonb #>> '{root_id}'),(((?)::jsonb #>> '{count}')::bigint),coalesce(((?)::jsonb #>> '{impact}'),'')", configuration, plan, plan, plan).Scan(&expected, &plannedRoot, &count, &expectedImpact); err != nil {
 			return err
 		}
 		var currentCount int

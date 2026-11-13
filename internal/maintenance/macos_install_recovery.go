@@ -108,8 +108,8 @@ func macOSInstallerResidues(root *os.Root) ([]string, error) {
 			lower := strings.ToLower(path)
 			if strings.HasPrefix(path, "state/license/") {
 				kind = "estado de licencia potencialmente recuperable"
-			} else if strings.HasSuffix(lower, ".db") || strings.HasSuffix(lower, ".sqlite") || strings.HasSuffix(lower, ".sqlite3") || strings.HasSuffix(lower, "-wal") || strings.HasSuffix(lower, "-shm") {
-				kind = "base de datos, WAL o SHM potencialmente recuperable"
+			} else if strings.HasPrefix(lower, "state/postgresql/") || strings.HasSuffix(lower, ".db") {
+				kind = "estado de base de datos potencialmente recuperable"
 			}
 			return fmt.Errorf("falta config.json: %s en %q; restaura la configuración anterior. Se conservan todos los datos; no se inicializó ni borró ningún dato", kind, path)
 		}

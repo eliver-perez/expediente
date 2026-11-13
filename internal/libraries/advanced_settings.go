@@ -171,7 +171,7 @@ func (service *Service) ConfigureAdvanced(ctx context.Context, p domain.Principa
 		if library != "" {
 			_, err = tx.ExecContext(ctx, "UPDATE libraries SET ocr_languages=?,revision=revision+1 WHERE id=?", effective.OCRLanguages, library)
 		} else {
-			_, err = tx.ExecContext(ctx, `UPDATE libraries SET ocr_languages=coalesce((SELECT json_extract(configuration_json,'$.ocr_languages') FROM advanced_settings WHERE scope='library:'||libraries.id),?),revision=revision+1`, effective.OCRLanguages)
+			_, err = tx.ExecContext(ctx, `UPDATE libraries SET ocr_languages=coalesce((SELECT ((configuration_json)::jsonb #>> '{ocr_languages}') FROM advanced_settings WHERE scope='library:'||libraries.id),?),revision=revision+1`, effective.OCRLanguages)
 		}
 		if err != nil {
 			return err
@@ -211,15 +211,15 @@ type manualProcessingKey struct{}
 type scanPolicyKey struct{}
 
 // Filter in SQL before LIMIT so a disabled library cannot starve another queue.
-const manualJobSQL = `coalesce(json_extract(j.payload_json,'$.manual'),json_extract(j.payload_json,'$.manual_reindex'),0)`
-const automaticJobSQL = `coalesce((SELECT json_extract(configuration_json,'$.automatic_processing') FROM advanced_settings WHERE scope='library:'||j.library_id),(SELECT json_extract(configuration_json,'$.automatic_processing') FROM advanced_settings WHERE scope='global'),1)`
-const reprocessJobSQL = `coalesce((SELECT json_extract(configuration_json,'$.reprocess_changes') FROM advanced_settings WHERE scope='library:'||j.library_id),(SELECT json_extract(configuration_json,'$.reprocess_changes') FROM advanced_settings WHERE scope='global'),1)`
-const priorityJobSQL = `coalesce((SELECT json_extract(configuration_json,'$.manual_priority') FROM advanced_settings WHERE scope='library:'||j.library_id),(SELECT json_extract(configuration_json,'$.manual_priority') FROM advanced_settings WHERE scope='global'),1)`
+const manualJobSQL = `coalesce((((j.payload_json)::jsonb #>> '{manual}')::boolean::int),(((j.payload_json)::jsonb #>> '{manual_reindex}')::boolean::int),0)`
+const automaticJobSQL = `coalesce((SELECT (((configuration_json)::jsonb #>> '{automatic_processing}')::boolean::int) FROM advanced_settings WHERE scope='library:'||j.library_id),(SELECT (((configuration_json)::jsonb #>> '{automatic_processing}')::boolean::int) FROM advanced_settings WHERE scope='global'),1)`
+const reprocessJobSQL = `coalesce((SELECT (((configuration_json)::jsonb #>> '{reprocess_changes}')::boolean::int) FROM advanced_settings WHERE scope='library:'||j.library_id),(SELECT (((configuration_json)::jsonb #>> '{reprocess_changes}')::boolean::int) FROM advanced_settings WHERE scope='global'),1)`
+const priorityJobSQL = `coalesce((SELECT (((configuration_json)::jsonb #>> '{manual_priority}')::boolean::int) FROM advanced_settings WHERE scope='library:'||j.library_id),(SELECT (((configuration_json)::jsonb #>> '{manual_priority}')::boolean::int) FROM advanced_settings WHERE scope='global'),1)`
 const advancedJobEligibility = ` AND (j.job_type NOT IN ('scan','extract') OR ` + manualJobSQL + `=1 OR (` + automaticJobSQL + `=1 AND (j.job_type<>'extract' OR ` + reprocessJobSQL + `=1 OR NOT EXISTS(SELECT 1 FROM physical_files WHERE id=j.physical_file_id AND indexed_extraction_id IS NOT NULL)))) `
 const advancedJobPriority = `CASE WHEN ` + manualJobSQL + `=1 AND ` + priorityJobSQL + `=1 THEN 0 ELSE 1 END`
 
 func markManualRoot(ctx context.Context, tx *sql.Tx, rootID string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE jobs SET payload_json=json_set(payload_json,'$.manual',json('true')) WHERE target_version=? AND job_type IN ('scan','verify_managed') AND status IN ('queued','retry_wait','paused')`, rootID)
+	_, err := tx.ExecContext(ctx, `UPDATE jobs SET payload_json=jsonb_set((payload_json)::jsonb,'{manual}',(('true')::json)::jsonb)::text WHERE target_version=? AND job_type IN ('scan','verify_managed') AND status IN ('queued','retry_wait','paused')`, rootID)
 	return err
 }
 
