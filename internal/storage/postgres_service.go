@@ -177,9 +177,10 @@ func preparePostgres(ctx context.Context, state string) (string, string, func() 
 	}
 	status := exec.CommandContext(ctx, binary, "-D", data, "status")
 	if status.Run() != nil {
-		output, e := exec.CommandContext(ctx, binary, "-D", data, "-l", filepath.Join(directory, "server.log"), "-w", "-t", "30", "start").CombinedOutput()
+		logPath := filepath.Join(directory, "server.log")
+		e := startPostgres(ctx, binary, data, logPath)
 		if e != nil {
-			return fail(fmt.Errorf("start AIDEX PostgreSQL: %w: %s", e, output))
+			return fail(e)
 		}
 	}
 	stopSupervisor := func() {}
@@ -226,6 +227,28 @@ func preparePostgres(ctx context.Context, state string) (string, string, func() 
 	return postgresDSN(installation.Port, "aidex_app", installation.Password, "aidex"), "aidex", stop, nil
 }
 
+// On Windows the postgres child can retain pg_ctl's inherited standard handles.
+// Connecting pg_ctl to a pipe would keep CombinedOutput waiting after pg_ctl exits.
+func startPostgres(ctx context.Context, binary, data, logPath string) error {
+	output, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	command := exec.CommandContext(ctx, binary, "-D", data, "-l", logPath, "-w", "-t", "30", "start")
+	command.Stdout = output
+	command.Stderr = output
+	runErr := command.Run()
+	closeErr := output.Close()
+	if runErr != nil {
+		contents, _ := os.ReadFile(logPath)
+		if len(contents) > 4096 {
+			contents = contents[len(contents)-4096:]
+		}
+		return fmt.Errorf("start AIDEX PostgreSQL: %w: %s", runErr, contents)
+	}
+	return closeErr
+}
+
 // The AIDEX service owns recovery of its child engine. This also recovers a
 // surviving cluster after the host restarts; the OS starts only the AIDEX host.
 func supervisePostgres(binary, data, logPath string) func() {
@@ -248,7 +271,7 @@ func supervisePostgres(binary, data, logPath string) func() {
 				continue
 			}
 			restartCtx, stop := context.WithTimeout(ctx, 35*time.Second)
-			err = exec.CommandContext(restartCtx, binary, "-D", data, "-l", logPath, "-w", "-t", "30", "start").Run()
+			err = startPostgres(restartCtx, binary, data, logPath)
 			stop()
 			if ctx.Err() != nil {
 				return
