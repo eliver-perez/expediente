@@ -13,14 +13,14 @@ flowchart LR
   Browser[React en navegador LAN] --> TLS[HTTPS directo o proxy confiable]
   TLS --> HTTP[Go: sesión, CSRF, permisos y capacidades]
   HTTP --> Services[Servicios por módulo]
-  Services --> SQLite[(SQLite local: WAL + FTS5)]
+  Services --> PostgreSQL[(PostgreSQL 18 local + GIN)]
   Services --> Files[Adaptador de archivos por SO]
   Files --> Private[Temporal local privado]
   Files --> Managed[Raíces administradas configurables]
   Files --> Linked[Raíces vinculadas de lectura]
   Watch[Watcher recursivo + reconciliación] --> Jobs[Cola persistente]
   Jobs --> Workers[Texto nativo + OCR por página]
-  Workers --> SQLite
+  Workers --> PostgreSQL
   Watch --> Files
   HTTP --> License[Cliente licencia V1.0]
   License -. activación o renovación .-> External[Servidor externo de licencias]
@@ -34,8 +34,8 @@ Los procesos de desarrollo separados usan proxy del servidor frontend a loopback
 Los límites lógicos futuros dentro de `internal/` son `identity`, `authorization`,
 `audit`, `libraries`, `storage`, `documents`, `cases`, `workflow`, `jobs`, `indexing`,
 `search`, `licensing`, `operations` y `httpapi`. Crear cada uno con su hito. Los
-servicios controlan transacciones; adaptadores SQLite/SO no deciden permisos.
-SQL y FTS quedan localizados; no fingir portabilidad automática de FTS5 a MySQL.
+servicios controlan transacciones; adaptadores PostgreSQL/SO no deciden permisos.
+PostgreSQL es el único motor. La búsqueda usa tsvector/tsquery y un índice GIN.
 
 ## Modalidades y capacidades
 
@@ -103,7 +103,7 @@ desactualización. Esto permite reextraer sin perder resultados mientras se proc
 
 ## Auditoría y fallos
 
-Toda mutación de negocio incluye evento y tareas derivadas en su transacción SQLite.
+Toda mutación de negocio incluye evento y tareas derivadas en su transacción PostgreSQL.
 Accesos, descargas y búsquedas se registran también: consulta original exacta,
 bibliotecas realmente autorizadas, filtros y número de documentos encontrados.
 El log operativo no reemplaza la bitácora. Eventos repetidos de watcher se agrupan
@@ -127,7 +127,7 @@ Consulta y respaldo siguen posibles al vencer/revocar. Sin activación/firma vá
 solo asistencia y recuperación/exportación administrativa autorizada. Los jobs de
 escritura documental se pausan al perder capacidad; comprobaciones de integridad,
 eventos, auth y respaldos continúan. La lectura puede escribir auditoría y sesiones:
-«solo lectura» es del contenido documental, no un filesystem SQLite read-only.
+«solo lectura» es del contenido documental, no una conexión de persistencia de solo lectura.
 
 El servidor externo recibe solo campos del [contrato V1.0](LICENSE_CONTRACT.md).
 Una perpetua válida opera offline indefinidamente; el corte de versiones se aplica
@@ -135,12 +135,17 @@ al actualizador, no convierte el uso instalado en suscripción.
 
 ## Referencias técnicas consultadas
 
-SQLite admite lectores concurrentes y un escritor; WAL no es almacenamiento remoto.
-El diseño se basa en [WAL](https://www.sqlite.org/wal.html). FTS5 es una proyección
-regenerable del texto publicado; ver [FTS5](https://www.sqlite.org/fts5.html).
-La vigilancia por subdirectorio y sus límites de red se verificaron en la
-[documentación de fsnotify](https://github.com/fsnotify/fsnotify).
-El procedimiento de copia consistente usa la [API de backup SQLite](https://www.sqlite.org/backup.html).
+PostgreSQL permite escritores y lectores simultáneos mediante MVCC. Se mantienen
+pools separados de control, progreso y analítica, junto a un pool de 12 escritores.
+Las operaciones de negocio conservan aislamiento serializable con reintentos
+acotados; los UPSERTs y los reclamos protegidos por filas usan READ COMMITTED.
+Los trabajadores reclaman filas con `FOR UPDATE SKIP LOCKED`, con exclusión por
+archivo/raíz, leases y fencing tokens. Los respaldos leen una instantánea REPEATABLE READ.
+
+La [búsqueda nativa](https://www.postgresql.org/docs/18/textsearch.html) utiliza
+un vector generado por página e índice GIN. Se conservan palabras comunes,
+acentos, frases y filtros sin stemming. La vigilancia usa
+[fsnotify](https://github.com/fsnotify/fsnotify).
 Estas referencias no fijan por sí solas versiones ni sustituyen pruebas por SO.
 
 ## Implementación de organización H4
@@ -175,7 +180,7 @@ su privacidad, texto e historial. [Protocolo y pruebas](docs/H5.md).
 ## Cliente de licencias implementado en H6
 
 Cada `identity.Service` posee un `licensing.Client` de su instalación. Los gates
-consultan estado y piso de revisión en una lectura consistente de SQLite; una caché
+consultan estado y piso de revisión en una lectura consistente de PostgreSQL; una caché
 solo evita repetir la criptografía del mismo JWS, nunca congela la vigencia. Las
 escrituras revalidan capacidades dentro de la transacción de negocio y antes de
 publicar archivos. La pérdida de licencia pausa trabajo, conservando cola y datos.

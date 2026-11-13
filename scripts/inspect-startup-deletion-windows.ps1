@@ -3,7 +3,7 @@ $workspace = Split-Path -Parent $PSScriptRoot
 $output = Join-Path $workspace '.tools\real-benchmark\deletion-startup.json'
 $service = Get-CimInstance Win32_Service -Filter "Name='AIDEX'"
 $process = if ($service.ProcessId) { Get-Process -Id $service.ProcessId -ErrorAction SilentlyContinue }
-$files = Get-Item 'C:\ProgramData\AIDEX\state\documental.db*' -ErrorAction SilentlyContinue |
+$files = Get-Item 'C:\ProgramData\AIDEX\state\postgresql\data\PG_VERSION' -ErrorAction SilentlyContinue |
     Select-Object Name,Length,LastWriteTime
 $result = [pscustomobject]@{
     time=[DateTime]::UtcNow.ToString('o'); service_state=$service.State; pid=$service.ProcessId;

@@ -30,12 +30,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	unlock, err := storage.LockState(path)
-	if err != nil {
-		panic(err)
-	}
-	defer unlock()
-	database, err := storage.Open(ctx, path)
+	database, err := storage.Connect(ctx, path)
 	if err != nil {
 		panic(err)
 	}

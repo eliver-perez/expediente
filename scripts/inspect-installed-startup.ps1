@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $config = Get-Content -LiteralPath 'C:\ProgramData\AIDEX\config.json' -Raw | ConvertFrom-Json
-$database = Join-Path $config.state_directory 'documental.db'
+$database = $config.state_directory
 $output = Join-Path $root '.tools\real-benchmark\startup.json'
 $process = Get-Process -Name aidex-server -ErrorAction SilentlyContinue | Select-Object -First 1
 $files = foreach ($suffix in @('', '-wal', '-shm')) {

@@ -48,7 +48,7 @@ En H2, credenciales/alta no se guardan para replay idempotente: username único
 evita duplicados; ante respuesta perdida consultar la lista antes de repetir.
 PATCH de usuario y PUT de roles usan If-Match. Altas de biblioteca y cargas usan claves persistentes de idempotencia. `/libraries/:id/members/:user_id` requiere
 la entidad biblioteca y está implementado en H3. `GET /system/status` (system.configure)
-expone etapa, versión SQLite y estado de la política de licencia, sin rutas.
+expone etapa, versión PostgreSQL (`postgresql_version`) y estado de la política de licencia, sin rutas.
 Listas aceptan `limit` y `cursor`; sesiones: user_id/close_reason/from/to,
 intentos: outcome/from/to, eventos: event_type/actor_user_id/from/to. Fechas RFC3339.
 GET /roles requiere permissions.manage_global. H2 solo devuelve eventos globales

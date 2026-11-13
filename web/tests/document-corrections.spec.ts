@@ -11,7 +11,7 @@ test('incorporar sin clasificación, corregir y sustituir conservando versiones'
   test.setTimeout(90_000);page.setDefaultTimeout(10_000);await page.setViewportSize({width:1920,height:1080});
   const destination=await realpath(await mkdtemp(join(tmpdir(),'aidex-corrections-browser-')));
   try{
-    await login(page);await page.getByRole('link',{name:'Bibliotecas',exact:true}).click();await page.getByRole('button',{name:'Nueva biblioteca',exact:true}).click();await page.getByLabel('Nombre de la biblioteca',{exact:true}).fill('Correcciones 20261030');await page.getByLabel('Modalidad de biblioteca').selectOption('hybrid');await page.getByRole('button',{name:'Crear biblioteca',exact:true}).click();
+    await login(page);await page.getByRole('link',{name:'Bibliotecas',exact:true}).click();await page.getByRole('button',{name:'Nueva biblioteca',exact:true}).click();await page.getByLabel('Nombre de la biblioteca',{exact:true}).fill('Correcciones 20261030');await page.getByLabel('Modalidad de biblioteca').selectOption('hybrid');await page.getByRole('button',{name:'Crear biblioteca',exact:true}).click();await expect(page.getByRole('heading',{name:'Correcciones 20261030',exact:true})).toBeVisible();
     const all=await(await page.request.get('/api/v1/libraries')).json();const library=all.items.find((item:{name:string})=>item.name==='Correcciones 20261030');
     const plan=await post(page,`/libraries/${library.id}/root-plans`,{server_path:destination,storage_source:'managed'});await post(page,`/libraries/${library.id}/roots`,{plan_id:plan.id,expected_configuration_revision:plan.expected_configuration_revision});
     await page.reload();await page.getByRole('button',{name:'Abrir biblioteca Correcciones 20261030',exact:true}).click();

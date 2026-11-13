@@ -118,7 +118,6 @@ func (s *Service) validateLogical(ctx context.Context, pkg *Package) error {
 	// Force every deferred foreign key to be checked before accepting a package.
 	_, err = transaction.ExecContext(ctx, "SET CONSTRAINTS ALL IMMEDIATE")
 	return err
-	return nil
 }
 
 func validateInventory(pkg *Package) error {

@@ -51,20 +51,23 @@ después ejecutar `init`, `bootstrap`, `serve` con ese `.exe` de desarrollo.
 
 ```sh
 make check
-make test-e2e
+scripts/test_postgresql.sh npm --prefix web run test:e2e
 ```
 
 El primer comando incluye compilación/tipado React, formato Go, vet, pruebas con
-race detector y comprobaciones SQL H1 (Python 3.9+ con FTS5, sin paquetes pip).
+race detector sobre un clúster temporal PostgreSQL 18 real.
 El segundo requiere Chrome y puerto loopback 8099 disponible: utiliza cuentas
 ficticias, DB temporal y dos contextos independientes de navegador. No toca el
 estado de trabajo. Si falta Chrome, instalarlo desde `web/` con
 `npx playwright install chrome`. Alcance y evidencia en [H4](docs/H4.md).
 
 Dependencias fijadas en `go.mod`/`go.sum` y `web/package-lock.json`. Node usado
-localmente: 22.15.0. SQLite del sistema/Python: 3.51.0, utilizado solo para checks
-H1; el producto usa el motor embebido y exige corrección WAL (3.51.3 o posterior).
-[Referencia SQLite](https://www.sqlite.org/wal.html). Las herramientas PDF/OCR de H3 están instaladas localmente.
+localmente: 22.15.0. Para desarrollo se usan los binarios PostgreSQL 18 locales
+(o `AIDEX_POSTGRES_BIN`); `scripts/test_postgresql.sh` crea un clúster descartable.
+La prueba de aprovisionamiento verifica además el clúster privado con SCRAM,
+credenciales protegidas y rol técnico sin privilegios administrativos. El paquete
+comercial incluirá el motor: este requisito de desarrollo no se traslada al usuario.
+Las herramientas PDF/OCR de H3 están instaladas localmente.
 Su configuración y presupuestos se describen en [H3](docs/H3.md).
 
 ## Recuperación administrativa y migraciones
@@ -108,12 +111,16 @@ estado local, temporal local, ejecutables PDF/OCR y presupuestos. Sin claves
 privadas embebidas en config general. Configuración por biblioteca y sus revisiones
 vive en DB: raíces linked/managed, nomenclatura, campos, políticas y vigilancia.
 
-Validar espacio y permisos al configurar y antes de operaciones grandes. SQLite
-rechaza montajes de red como ubicación. Documentos finales pueden usar discos/NAS
+Validar espacio y permisos al configurar y antes de operaciones grandes. El clúster
+PostgreSQL privado requiere un sistema de archivos local verificado. Documentos finales pueden usar discos/NAS
 verificados. Cambiar estado/temporal requiere mantenimiento y plan explícito;
 cambiar destino futuro de biblioteca no mueve sus archivos históricos.
 
-## Paquetes y operación vigentes
+## Paquetes anteriores y preparación PostgreSQL
+
+La rama `feature/postgresql` no genera ni modifica instaladores. Los paquetes
+preexistentes no contienen este motor. La integración de binarios y servicios en
+cada instalador se realizará cuando se solicite expresamente. Ver [PostgreSQL](docs/POSTGRESQL.md).
 
 Primera edición comercial: AIDEX 1.0; versión técnica 1.0.0. Windows amd64, Ubuntu 24.04 amd64/arm64 y macOS Apple Silicon arm64; Intel queda excluido. Cuatro paquetes en dist/aidex-1.0.0. Instalación nueva: servicio Windows AIDEX, Ubuntu aidex.service y macOS app.aidex; backend aidex-server (en Windows .exe), launcher AIDEX.exe.
 

@@ -47,7 +47,7 @@ test('Fase 1: carpetas, omisiones paginadas, filtros, errores, retiro y reanudac
   try {
     await login(page); const name = 'Raíces lifecycle'; const library = await create(page, name);
     await page.getByRole('tab', { name: 'Carpetas', exact: true }).click(); await page.getByLabel('Ruta de la carpeta en el servidor').fill(join(dir, 'missing')); await page.getByRole('button', { name: 'Inspeccionar carpeta' }).click(); await expect(page.getByRole('alert')).toContainText('No se encontró');
-    await page.getByLabel('Ruta de la carpeta en el servidor').fill(root); await page.getByRole('button', { name: 'Inspeccionar carpeta' }).click(); await page.getByRole('button', { name: 'Registrar e indexar' }).click();
+    await page.getByLabel('Ruta de la carpeta en el servidor').fill(root); await page.getByRole('button', { name: 'Inspeccionar carpeta' }).click(); await page.getByRole('button', { name: 'Registrar e indexar' }).click();await expect(page.getByText('Raíz registrada. El escaneo está en cola.', {exact:true})).toBeVisible();
     const rootID = (await (await page.request.get(`/api/v1/libraries/${library.id}/roots`)).json()).items.find((item: { server_path: string }) => item.server_path === root)?.id;
     expect(rootID).toBeTruthy();
     await expect.poll(async () => (await (await page.request.get(`/api/v1/libraries/${library.id}/file-skips?page=1&page_size=10&sort=path&direction=asc`)).json()).total, { timeout: 30000 }).toBe(115);

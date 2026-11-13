@@ -1,4 +1,4 @@
-name: AIDEX H2–H7 checks
+name: AIDEX PostgreSQL checks
 on:
   push:
   pull_request:
@@ -9,8 +9,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14, windows-latest]
+        os: [ubuntu-24.04, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      AIDEX_TEST_POSTGRES_DSN: postgresql://aidex_ci@localhost:5432/aidex_test?sslmode=disable
     steps:
       - uses: actions/checkout@v7
         with:
@@ -23,19 +25,31 @@ jobs:
           node-version: '22.15.0'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - if: runner.os != 'Windows'
+        uses: ankane/setup-postgres@v1
+        with:
+          postgres-version: 18
+          database: aidex_test
+          user: aidex_ci
       - run: npm --prefix web ci
       - run: npm --prefix web run build
       - run: python scripts/check_format.py
       - run: go vet ./...
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-spa fonts-dejavu-core
-      - run: go test ./...
-      - run: go test -tags development ./...
       - if: runner.os != 'Windows'
-        run: go test -race -tags development ./...
+        run: go test ./...
+      - if: runner.os != 'Windows'
+        run: go test -tags development ./...
+      # Windows runtime QA follows on the Windows development machine; compile
+      # all production/development tests here without provisioning an installer.
+      - if: runner.os == 'Windows'
+        run: go test -run '^$' ./...
+      - if: runner.os == 'Windows'
+        run: go test -tags development -run '^$' ./...
+      - if: runner.os != 'Windows'
+        run: go test -race -timeout 20m -tags development ./...
       - run: go build -trimpath -o build/aidex-server ./cmd/gestor-documental
-      - if: runner.os == 'Linux'
-        run: python3 scripts/check_design.py
       - if: runner.os == 'Linux'
         working-directory: web
         run: npx playwright install --with-deps chrome

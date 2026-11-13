@@ -52,7 +52,71 @@ bibliotecas vinculadas, administradas e híbridas.
 1. Preparación: árbol limpio, remoto actualizado y rama creada; inventario de
    dependencias realizado en almacenamiento, migraciones, bibliotecas, HTTP,
    identidad, cliente de licencias, respaldos, mantenimiento, CLI y pruebas.
-2. Implementación y pruebas: pendientes.
+2. Persistencia implementada en `a2ce193`: esquema inicial PostgreSQL, SQL de
+   servicios, índices GIN, conexiones concurrentes, respaldos, mantenimiento y
+   aprovisionamiento. Se retiraron el controlador y las migraciones SQLite.
+3. Validación macOS: pruebas de producción con detector de carreras, pruebas de
+   almacenamiento/respaldos y cargas de 100 000 documentos y 200 000 páginas
+   aprobadas. La comprobación final de bibliotecas e interfaz sigue en curso.
 
 Este documento registra avances comprobados; no certifica la migración hasta
 que se documenten las pruebas sobre PostgreSQL real.
+
+
+## Ejecución local y contrato del runtime
+
+En desarrollo, `AIDEX_POSTGRES_BIN` permite elegir los binarios PostgreSQL 18;
+si se omite se busca el runtime junto al ejecutable y después en PATH. Los
+binarios con canal `production` utilizan exclusivamente el runtime del paquete,
+ubicado en `tools/postgresql/bin` junto al backend. Este runtime deberá contener
+los ejecutables, bibliotecas, extensiones (`unaccent`) y datos compartidos de su
+plataforma/arquitectura; copiar solo los ejecutables de Homebrew no constituye
+un runtime distribuible.
+
+Cada estado reserva `postgresql/installation.json` (credenciales, formato y
+puerto), `postgresql/data` (clúster), `postgresql/server.log` y su bloqueo privado.
+No se usa el puerto 5432 ni un servicio/clúster global. `initdb` activa checksums,
+UTF-8 y SCRAM. El administrador del motor y `aidex_app` tienen contraseñas
+aleatorias distintas; la aplicación usa `aidex_app`, sin SUPERUSER, CREATEDB ni
+CREATEROLE. El servicio AIDEX inicializa, arranca y supervisa su motor local;
+recupera una caída sin reinstalación y lo detiene tras cerrar sus pools.
+
+Las herramientas de diagnóstico se conectan al clúster ya iniciado mediante
+`storage.Connect`: no aplican migraciones ni toman control de su ciclo de vida.
+El estado no admite enlaces ni sistemas de archivos de red. Un directorio de
+datos sin descriptor de propiedad se conserva y se rechaza; no se inicializa
+sobre él. Las bases del motor anterior también se conservan y se rechazan.
+
+El esquema se aplica en una transacción protegida por bloqueo asesor, con
+checksum y rechazo de versiones desconocidas. Las actualizaciones mayores del
+motor requieren el runtime y el procedimiento de mantenimiento correspondientes;
+no se intenta ejecutar otro major contra un clúster existente. Autovacuum y
+recuperación WAL pertenecen al motor privado y no dependen de Internet.
+
+El CLUF conserva la identidad histórica de quien aceptó, como la bitácora;
+no se exporta ni reemplaza su evidencia local al restaurar otra instalación.
+Los respaldos portátiles incluyen correcciones y sustituciones documentales,
+excluyen licencias/sesiones/secretos y regeneran los vectores GIN al importar las
+páginas. La restauración ajusta las secuencias IDENTITY antes de reactivar trabajo.
+
+## Reproducción de pruebas
+
+```sh
+scripts/test_postgresql.sh
+scripts/test_postgresql.sh npm --prefix web run test:e2e
+AIDEX_PERF_SCALE=1 AIDEX_PERF_FOLDERS=1 scripts/test_postgresql.sh go test -v -tags development -timeout 12m -run 'TestSyntheticScale|TestFolderNavigationScale' ./internal/libraries
+AIDEX_PERF_POSTGRES=1 scripts/test_postgresql.sh go test -v -tags development -timeout 5m -run TestPostgresLargeIndexConcurrentDeletion ./internal/libraries
+```
+
+El arnés usa una carpeta temporal privada y un socket Unix sin TCP. Su modo
+trust se limita a esa fixture; el aprovisionamiento del producto y sus pruebas
+usan SCRAM. `AIDEX_TEST_POSTGRES_DSN` solo sirve para aislar esquemas en pruebas
+con binarios de canal `source`; no configura los paquetes de producción.
+
+## Fuera de la entrega de esta etapa
+
+No se han generado ni modificado instaladores. La inclusión y firma de runtimes,
+las cuentas y el arranque por el sistema operativo y las actualizaciones de
+paquetes se integrarán cuando se autorice el empaquetado. La compilación cruzada
+no sustituye las pruebas nativas de Windows y Ubuntu AMD64/ARM64. El servidor de
+licencias, la versión 1.0.0 y la interfaz del producto se mantienen.

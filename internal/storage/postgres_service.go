@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"gestor-documental/internal/buildinfo"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -28,7 +29,7 @@ type postgresInstallation struct {
 }
 
 func postgresBinary(name string) (string, error) {
-	if directory := os.Getenv("AIDEX_POSTGRES_BIN"); directory != "" {
+	if directory := os.Getenv("AIDEX_POSTGRES_BIN"); buildinfo.Channel == "source" && directory != "" {
 		return filepath.Join(directory, name+executableSuffix()), nil
 	}
 	if executable, err := os.Executable(); err == nil {
@@ -38,7 +39,7 @@ func postgresBinary(name string) (string, error) {
 		}
 	}
 	// Development fallback. Production packages supply their own complete runtime.
-	if path, err := exec.LookPath(name); err == nil {
+	if path, err := exec.LookPath(name); buildinfo.Channel == "source" && err == nil {
 		return path, nil
 	}
 	return "", fmt.Errorf("AIDEX PostgreSQL runtime is missing (%s)", name)
@@ -65,7 +66,7 @@ func postgresDSN(port int, user, password, database string) string {
 func preparePostgres(ctx context.Context, state string) (string, string, func() error, error) {
 	// The integration harness uses one real PostgreSQL server and an independent
 	// schema per state directory, so hundreds of fixtures need no extra servers.
-	if dsn := os.Getenv("AIDEX_TEST_POSTGRES_DSN"); dsn != "" {
+	if dsn := os.Getenv("AIDEX_TEST_POSTGRES_DSN"); buildinfo.Channel == "source" && dsn != "" {
 		digest := sha256.Sum256([]byte(state))
 		return dsn, "test_" + hex.EncodeToString(digest[:12]), nil, nil
 	}
@@ -136,8 +137,15 @@ func preparePostgres(ctx context.Context, state string) (string, string, func() 
 			return fail(fmt.Errorf("incomplete PostgreSQL initialization; existing data preserved"))
 		}
 		passwordFile := filepath.Join(directory, ".init-password")
-		if err = os.WriteFile(passwordFile, []byte(installation.AdminPassword+"\n"), 0600); err != nil {
-			return fail(err)
+		passwordHandle, e := os.OpenFile(passwordFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if e != nil {
+			return fail(e)
+		}
+		_, e = passwordHandle.WriteString(installation.AdminPassword + "\n")
+		closeErr := passwordHandle.Close()
+		if e != nil || closeErr != nil {
+			os.Remove(passwordFile)
+			return fail(fmt.Errorf("write private initialization credentials"))
 		}
 		binary, e := postgresBinary("initdb")
 		if e != nil {
@@ -156,6 +164,9 @@ func preparePostgres(ctx context.Context, state string) (string, string, func() 
 		return fail(fmt.Errorf("PostgreSQL major upgrade requires the matching AIDEX maintenance runtime"))
 	}
 	configuration := fmt.Sprintf("\n# Private AIDEX instance; never use the host's cluster.\nlisten_addresses = '127.0.0.1'\nport = %d\nunix_socket_directories = ''\npassword_encryption = 'scram-sha-256'\nmax_connections = 64\nshared_buffers = '128MB'\nfsync = on\nsynchronous_commit = on\nfull_page_writes = on\nlog_min_error_statement = 'panic'\nlog_parameter_max_length_on_error = 0\n", installation.Port)
+	if info, e := os.Lstat(filepath.Join(data, "postgresql.auto.conf")); e != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fail(fmt.Errorf("unsafe PostgreSQL configuration path"))
+	}
 	// postgresql.auto.conf belongs exclusively to this private cluster.
 	if err = os.WriteFile(filepath.Join(data, "postgresql.auto.conf"), []byte(configuration), 0600); err != nil {
 		return fail(err)

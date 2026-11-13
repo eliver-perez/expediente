@@ -8,7 +8,7 @@ Tu biblioteca digital, ordenada y al alcance.
 [Transición, codificación y validación](docs/TRANSICION-PRODUCCION.md).
 Paquetes nuevos: `dist/aidex-1.0.0/`; entregas anteriores conservadas como evidencia histórica.
 
-Producto comercial genérico de instalación local, con Go + React + SQLite WAL/FTS5
+Producto comercial genérico de instalación local, con Go + React + PostgreSQL 18 con búsqueda GIN
 y acceso por LAN. **H6 implementado:** cliente de licencias V1.0 online/offline, con simulador HTTPS,
 control de módulos y solo lectura al vencer. Incluye revisión, guardado definitivo
 recuperable, verificación de integridad,
@@ -77,14 +77,13 @@ como referencia. Ninguna propuesta amplía ese alcance.
 
 ```text
 cmd/gestor-documental/  CLI y servidor Go
-internal/               Configuración, SQLite, identidad, auditoría, HTTP y pruebas
+internal/               Configuración, PostgreSQL, identidad, auditoría, HTTP y pruebas
 web/                    React/TypeScript y pruebas de navegador
-db/schema.proposed.sql  Modelo de referencia de V1; NO es una migración
-db/migrations/          Migraciones H2–H6, checksum y reversión protegida
+db/migrations/          Esquema inicial y evolución de PostgreSQL
 docs/                   Especificaciones y criterios de aceptación
 packaging/              Instaladores y servicios por SO
 testdata/license/       Vectores V1 versionados para compartir con el servidor
-scripts/check_design.py Verificación aislada del diseño SQL y enlaces
+scripts/test_postgresql.sh Pruebas con PostgreSQL temporal aislado
 ```
 
 No se crean módulos con lógica ficticia. Cada hito incorporará solo los archivos,
@@ -95,12 +94,14 @@ migraciones y pruebas necesarios para entregar su funcionalidad completa.
 Desde esta carpeta, en la terminal de Visual Studio Code:
 
 ```sh
-python3 scripts/check_design.py
+scripts/test_postgresql.sh
 ```
 
-Requiere Python 3.9+ con su módulo `sqlite3` con FTS5. Usa una base temporal local y la elimina
-al terminar; no inicializa el producto ni descarga paquetes. Comprueba integridad,
-restricciones relevantes, sesión única, conservación y publicación de texto FTS,
-y enlaces locales de documentación. Se ejecuta también dentro de make check.
+El arnés inicia PostgreSQL 18 real en un directorio temporal privado, sin TCP,
+ejecuta las pruebas Go y el detector de carreras y destruye solo su clúster.
+Los binarios PostgreSQL son herramientas de desarrollo; el producto final los
+incluirá en su paquete. No requiere Python SQLite ni conversiones de datos.
+Consulta [la migración PostgreSQL](docs/POSTGRESQL.md) para conocer la arquitectura,
+el aprovisionamiento autónomo y las pruebas verificadas.
 
 La entrega actual es **AIDEX 1.0**. Consulta la guía de transición para conocer las verificaciones ejecutadas y las pruebas nativas pendientes.

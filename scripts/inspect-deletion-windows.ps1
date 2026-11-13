@@ -1,5 +1,5 @@
 param(
-    [string]$Database = 'C:\ProgramData\AIDEX\state\documental.db',
+    [string]$Database = 'C:\ProgramData\AIDEX\state',
     [string]$Output = ''
 )
 $ErrorActionPreference = 'Stop'

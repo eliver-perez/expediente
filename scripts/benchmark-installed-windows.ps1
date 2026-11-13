@@ -5,7 +5,7 @@ $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.Wind
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Ejecuta PowerShell como administrador.' }
 $configPath = 'C:\ProgramData\AIDEX\config.json'
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-$dbPath = Join-Path $config.state_directory 'documental.db'
+$dbPath = $config.state_directory
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $helper = Join-Path $root 'build\aidex-benchmark-user.exe'
 $replacement = Join-Path $root 'build\aidex-server.exe'

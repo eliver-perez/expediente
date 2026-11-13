@@ -51,6 +51,10 @@ func Open(ctx context.Context, stateDirectory string) (*Database, error) {
 }
 
 func openDatabase(ctx context.Context, dsn, schema string) (*Database, error) {
+	return connectDatabase(ctx, dsn, schema, true)
+}
+
+func connectDatabase(ctx context.Context, dsn, schema string, initialize bool) (*Database, error) {
 	writer, err := openPostgresPool(dsn, schema, false, 12)
 	if err != nil {
 		return nil, err
@@ -67,11 +71,13 @@ func openDatabase(ctx context.Context, dsn, schema string) (*Database, error) {
 	if version < 180000 {
 		return fail(fmt.Errorf("AIDEX requires PostgreSQL 18 or newer"))
 	}
-	if _, err = writer.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
-		return fail(err)
-	}
-	if err = migrate(ctx, writer); err != nil {
-		return fail(err)
+	if initialize {
+		if _, err = writer.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
+			return fail(err)
+		}
+		if err = migrate(ctx, writer); err != nil {
+			return fail(err)
+		}
 	}
 	for _, entry := range []struct {
 		target **sql.DB
@@ -149,6 +155,7 @@ func (database *Database) Scratch(ctx context.Context) (*Database, func(), error
 	schema := "inspect_" + strings.ReplaceAll(domain.NewID(), "-", "")
 	scratch, err := openDatabase(ctx, database.dsn, schema)
 	if err != nil {
+		_, _ = database.Writer.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		return nil, nil, err
 	}
 	cleanup := func() {

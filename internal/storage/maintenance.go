@@ -2,7 +2,11 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"gestor-documental/internal/buildinfo"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -77,4 +81,39 @@ func RejectUnknownDatabaseFiles(state string) error {
 		}
 	}
 	return nil
+}
+
+// Connect attaches diagnostic/maintenance clients to the already running private
+// cluster. It neither owns engine lifecycle nor applies migrations.
+func Connect(ctx context.Context, state string) (*Database, error) {
+	if err := PrepareLocalPrivateDirectory(state); err != nil {
+		return nil, err
+	}
+	if dsn := os.Getenv("AIDEX_TEST_POSTGRES_DSN"); buildinfo.Channel == "source" && dsn != "" {
+		digest := sha256.Sum256([]byte(state))
+		return connectDatabase(ctx, dsn, "test_"+hex.EncodeToString(digest[:12]), false)
+	}
+	if err := PrepareLocalPrivateDirectory(filepath.Join(state, "postgresql")); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(state, "postgresql", "installation.json")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("unsafe PostgreSQL installation descriptor")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var installation postgresInstallation
+	if err = json.Unmarshal(contents, &installation); err != nil {
+		return nil, err
+	}
+	if installation.Format != 1 || installation.Port < 1024 || installation.Port > 65535 || len(installation.Password) != 64 {
+		return nil, fmt.Errorf("invalid PostgreSQL installation descriptor")
+	}
+	return connectDatabase(ctx, postgresDSN(installation.Port, "aidex_app", installation.Password, "aidex"), "aidex", false)
 }

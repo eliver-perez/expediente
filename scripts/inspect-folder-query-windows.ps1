@@ -3,7 +3,7 @@ $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $folder=Join-Path $root '.tools\real-benchmark'
 try {
     $config=Get-Content 'C:\ProgramData\AIDEX\config.json' -Raw|ConvertFrom-Json
-    $database=Join-Path $config.state_directory 'documental.db'
+    $database=$config.state_directory
     $target=Get-Content (Join-Path $folder 'metadata.json') -Raw|ConvertFrom-Json
     $result=& (Join-Path $root 'build\aidex-benchmark-user.exe') folderbench $database $target.root_id 2>&1
     if($LASTEXITCODE -ne 0){throw ($result|Out-String)}

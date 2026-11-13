@@ -20,6 +20,25 @@ func TestManagedPostgresLifecycleAndCrashRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached, err := Connect(ctx, directory)
+	if err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err = attached.Reader.PingContext(ctx); err != nil {
+		attached.Close()
+		database.Close()
+		t.Fatal(err)
+	}
+	if err = attached.Close(); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	// Closing an attached diagnostic client must not stop the service's engine.
+	if err = database.Reader.PingContext(ctx); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
 	var privileged bool
 	if err = database.Reader.QueryRow("SELECT rolsuper OR rolcreatedb OR rolcreaterole FROM pg_roles WHERE rolname=current_user").Scan(&privileged); err != nil || privileged {
 		database.Close()

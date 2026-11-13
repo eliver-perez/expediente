@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $config = Get-Content -LiteralPath 'C:\ProgramData\AIDEX\config.json' -Raw | ConvertFrom-Json
-$database = Join-Path $config.state_directory 'documental.db'
+$database = $config.state_directory
 $output = Join-Path $root '.tools\real-benchmark\migrations.json'
 $entries = & (Join-Path $root 'build\aidex-benchmark-user.exe') migrations $database ignored | ConvertFrom-Json
 $result = foreach ($entry in $entries) {

@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
 $helper = Join-Path $workspace 'build\aidex-deletion-verify.exe'
-$database = 'C:\ProgramData\AIDEX\state\documental.db'
+$database = 'C:\ProgramData\AIDEX\state'
 $operation = '37421a3f-89c8-4986-89bb-eb6a12e036af'
 $output = Join-Path $workspace '.tools\real-benchmark\deletion-verified.json'
 $errorOutput = Join-Path $workspace '.tools\real-benchmark\deletion-verify-error.txt'

@@ -190,7 +190,7 @@ verifica certificados, prohíbe redirecciones y acota tiempos/tamaños; las resp
 remotas y errores nunca reflejan claves comerciales en logs o interfaz.
 
 Clave privada local fuera de DB, acceso privado del SO, referencia pública anclada
-a SQLite y recuperación con diario local/auditoría. No se regenera silenciosamente
+a PostgreSQL y recuperación con diario local/auditoría. No se regenera silenciosamente
 una identidad perdida. El hash de huella reemplaza al identificador de hardware
 original en archivos y red. Renovaciones/importaciones verifican binding completo
 y piso persistido de revisión; estado, evidencia y auditoría se guardan juntos.

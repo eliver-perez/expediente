@@ -37,7 +37,7 @@ test('biblioteca vinculada: raíz, OCR, búsqueda, texto retenido y vista lógic
     await page.getByRole('tab', { name: 'Documentos', exact: true }).click(); await expect(page.getByRole('button', { name: 'Planos', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Planos', exact: true }).click(); await expect(page.getByRole('button', { name: 'Plano-PR-008.pdf', exact: true })).toBeVisible();
     await page.screenshot({ path: 'test-results/h3-explorer.png', fullPage: true });
-    await page.getByRole('link', { name: 'Buscar documentos', exact: true }).click(); await page.getByLabel('Texto a buscar').fill('  "estructura metálica"  ');
+    await page.getByRole('link', { name: 'Buscar documentos', exact: true }).click();await page.getByRole('combobox', {name:'Biblioteca',exact:true}).selectOption(library.id); await page.getByLabel('Texto a buscar').fill('  "estructura metálica"  ');
     await page.getByRole('button', { name: 'Buscar documentos', exact: true }).click(); await expect(page.getByRole('heading', { name: '1 documento encontrado' })).toBeVisible();
     await page.getByRole('button', { name: 'Visualizar', exact: true }).click(); await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Descargar PDF' })).toBeVisible(); await expect(page.locator('.retained-text pre')).toContainText('estructura metálica');

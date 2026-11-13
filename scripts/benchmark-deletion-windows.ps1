@@ -11,7 +11,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $helper = Join-Path $workspace 'build\aidex-benchmark-user.exe'
 $config = Get-Content 'C:\ProgramData\AIDEX\config.json' -Raw | ConvertFrom-Json
-$database = Join-Path $config.state_directory 'documental.db'
+$database = $config.state_directory
 $base = 'http://127.0.0.1:18090'
 $trace = Join-Path $OutputDirectory 'deletion-progress.jsonl'
 $final = Join-Path $OutputDirectory 'deletion-result.json'

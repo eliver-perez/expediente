@@ -1,41 +1,17 @@
 # AIDEX — Modelo de datos
 
-El [SQL de referencia](db/schema.proposed.sql) describe V1 completa para revisar
-invariantes; **no es una migración inicial que cree todos los módulos**. H2 implementa
-solo identidad/permisos globales/auditoría en `db/migrations/0001_identity.up.sql`,
-con checksum y reversión protegida de DB vacía en `0001_identity.down.sql`.
-Las tablas auxiliares `bootstrap_state` y `authentication_throttles` completan
-el alta única y los límites persistentes. En H2 no se crearon tablas documentales. El SQL de referencia no se aplica a datos de cliente.
+El [esquema PostgreSQL inicial](db/migrations/0001_postgresql.up.sql) contiene
+todas las entidades de AIDEX 1.0.0, sus relaciones, restricciones, permisos e
+índices. Es la única base soportada; no hay conversión de datos anteriores.
+`schema_migrations` registra checksum y fecha. Un bloqueo asesor por esquema
+protege las actualizaciones, aplicadas atómicamente. El texto SQL se conserva
+canónico entre Windows, macOS y Ubuntu.
 
-H3 agrega `0002_linked_libraries.up.sql`: bibliotecas/permisos, raíces/planes/vistas,
-identidades y ubicaciones, versiones/extracciones/páginas, documentos vinculados,
-FTS, cola/checkpoints, notificaciones y detalle sensible de búsquedas. La tabla
-`documents` conserva su identidad al aplicar H4. [Entrega H3](docs/H3.md).
-
-H4 agrega `0003_managed_organization.up.sql`: catálogos, plantillas/versiones,
-expedientes/requerimientos, configuraciones versionadas y lotes/items de cargas.
-Las columnas de clasificación se añaden sin reconstruir documentos, páginas ni FTS.
-FK simples y triggers de clasificación comprueban biblioteca/categoría/tipo; el
-servicio serializa la multiplicidad por expediente dentro de la transacción.
-La inicialización copia una versión de plantilla una sola vez. `receiving` registra
-una transferencia antes de publicar su documento; el localizador privado permanece
-en `upload_items`. Reversión únicamente vacía. [Entrega H4](docs/H4.md).
-
-H5 agrega `0004_document_workflow.up.sql`: `review_requests`, `materializations`
-y `library_document_sequences`; columnas de versión/actor/fecha aprobada en
-`documents` y `retain_until` en cargas. Una revisión pendiente por documento y
-una materialización inicial por documento evitan duplicación. La operación fija
-ruta, hash, tamaño, revisión documental y de configuración, raíz y decisión.
-Se conservan todas las tablas/filas H4. [Entrega H5](docs/H5.md).
-
-H6 agrega `0005_license_client.up.sql`: `license_installation` (identidad pública),
-`license_state` (JWS actual y tiempos), `license_revision_floors` (máximo por
-activación, hash y retiro), `license_artifacts` (solicitudes/respuestas trazables)
-y `license_operations` (peticiones idempotentes preparadas/completadas/fallidas).
-La clave privada permanece en un archivo protegido, no en SQLite. Los artefactos
-no contienen la clave comercial. La reversión se niega después de crear identidad
-o evidencia; los cambios previos se revierten en la misma transacción si otra
-migración impide revertir. [Checksums y recuperación H6](docs/H6.md).
+Las claves de páginas usan BIGINT IDENTITY. Los contadores, tamaños y fencing
+usan BIGINT. Se preservan los indicadores 0/1 con restricciones y el contrato
+JSON/UTC de la aplicación. Las relaciones son diferibles para restaurar y
+validar atómicamente ciclos; el resto se comprueba inmediatamente. Los triggers
+protegen auditoría, configuraciones históricas, origen físico y clasificación.
 
 ## Relaciones principales
 
@@ -78,7 +54,7 @@ erDiagram
 
 UUID opacos para entidades; `INTEGER` interno solo en páginas FTS. No usar nombre,
 contrato, hash o ruta como PK. Campos normalizados `*_key` se calculan en Go con
-reglas explícitas; SQLite `NOCASE` no decide por sí solo Unicode ni case-folding de
+reglas explícitas; la colación de la base de datos no decide por sí solo Unicode ni case-folding de
 un volumen. Instantes UTC con precisión fija para ordenar/comparar correctamente.
 Validación RFC 3339, UUID, JSON con forma esperada y longitudes se hace en Go.
 
@@ -171,16 +147,16 @@ verificar bytes aprobados o nueva revisión; no inventar que se aprobó la modif
 La búsqueda une FTS → `indexed_pages` → archivo → documento y bibliotecas permitidas
 antes de calcular conteos, extractos o devolver rutas. FTS no decide permisos.
 Una transacción elimina páginas publicadas del archivo, inserta páginas completas
-de la extracción ganadora y cambia `indexed_extraction_id`. Triggers actualizan
-FTS. Si falla/revierte, el texto anterior sigue íntegro. `missing` no borra páginas.
+de la extracción ganadora y cambia `indexed_extraction_id`. La columna generada actualiza automáticamente el vector y su índice GIN. Si falla/revierte, el texto anterior sigue íntegro. `missing` no borra páginas.
 Eliminación manual del índice es lógica/auditada: quita publicación FTS y excluye
 documento; conserva metadatos/historial según retención, nunca borra el original.
 
-La normalización `unicode61 remove_diacritics 2` favorece búsquedas con/sin acentos.
+La normalización Unicode con `unaccent` y la configuración `simple` conserva
+palabras comunes, términos completos y búsquedas con/sin acentos.
 Nombre e identificador exacto/con guiones usan filtros SQL parametrizados; no
 interpretar toda entrada como sintaxis FTS. El compilador acepta términos/frases,
-escapa literales y rechaza entrada mal formada con error estable. Los detalles de
-[FTS5](https://www.sqlite.org/fts5.html) fundamentan la proyección y sus triggers.
+escapa literales y rechaza entrada mal formada con error estable. La [búsqueda PostgreSQL](https://www.postgresql.org/docs/18/textsearch.html)
+implementa el vector GIN, las frases y los fragmentos de coincidencias.
 
 ## Retención y evolución
 

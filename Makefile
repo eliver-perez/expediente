@@ -15,15 +15,12 @@ build-dev: frontend
 	$(GO) build -tags development -trimpath -o build/aidex-server-dev ./cmd/gestor-documental
 
 test:
-	$(GO) test -race ./...
-	$(GO) test -race -tags development ./...
+	scripts/test_postgresql.sh
 
 check: frontend
 	python3 scripts/check_format.py
 	$(GO) vet ./...
-	$(GO) test -race ./...
-	$(GO) test -race -tags development ./...
-	python3 scripts/check_design.py
+	scripts/test_postgresql.sh
 
 test-e2e: frontend
 	npm --prefix web run test:e2e
