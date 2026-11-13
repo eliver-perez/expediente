@@ -22,9 +22,6 @@ func recognizedArchive(path, configPath string) bool {
 	if strings.HasPrefix(path, configPath+".before-license-") {
 		return backupTimestamp.MatchString(strings.TrimPrefix(path, configPath+".before-license-"))
 	}
-	if strings.HasPrefix(name, "before-processing-") {
-		return backupTimestamp.MatchString(strings.TrimSuffix(strings.TrimPrefix(name, "before-processing-"), ".db"))
-	}
 	return installationArchive.MatchString(name)
 }
 

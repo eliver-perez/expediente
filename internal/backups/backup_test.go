@@ -263,6 +263,15 @@ func TestBasicAndFullTransferNeverMoveLicenseOrOriginals(t *testing.T) {
 	source := installation(t, "source")
 	original, checksum := syntheticDocument(t, source)
 	syntheticPrivateUpload(t, source)
+	// Portable correction/replacement evidence must survive a foreign restore.
+	for _, query := range []string{
+		"INSERT INTO document_corrections(id,document_id,library_id,operation,requested_by,document_revision,proposed_json,previous_json,reason,status,requested_at) SELECT 'portable-correction',id,library_id,'classification',?,1,'{}','{}','Fixture portable','pending',created_at FROM documents WHERE original_filename='classified.docx'",
+		"INSERT INTO document_replacements(id,previous_document_id,previous_revision,new_document_id,requested_by,reason,previous_json,status,requested_at) SELECT 'portable-replacement',old.id,1,new.id,?, 'Fixture portable','{}','cancelled',old.created_at FROM documents old CROSS JOIN documents new WHERE old.original_filename='original.pdf' AND new.original_filename='classified.docx'",
+	} {
+		if _, err := source.db.Writer.Exec(query, source.admin); err != nil {
+			t.Fatal(err)
+		}
+	}
 	syntheticPendingWork(t, source)
 	syntheticLifecycleEvidence(t, source, checksum)
 	_, err := source.db.Writer.Exec("UPDATE license_state SET current_jws='secret-source-activation' WHERE singleton=1")
@@ -433,6 +442,12 @@ func TestBasicAndFullTransferNeverMoveLicenseOrOriginals(t *testing.T) {
 				payload, readErr := os.ReadFile(filepath.Join(dest.cfg.PrivateUploadDirectory(), locator))
 				if readErr != nil || string(payload) != "classified private original" {
 					t.Fatal("private classified file was not restored", readErr)
+				}
+			}
+			for _, table := range []string{"document_corrections", "document_replacements"} {
+				var count int
+				if err = dest.db.Reader.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 1 {
+					t.Fatal("portable evidence lost", table, count, err)
 				}
 			}
 			var matches, acceptances int

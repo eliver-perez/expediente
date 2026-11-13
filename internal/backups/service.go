@@ -67,10 +67,6 @@ func New(db *storage.Database, cfg config.Config) (*Service, error) {
 			_ = os.Remove(filepath.Join(directory, entry.Name()))
 			continue
 		}
-		if strings.HasPrefix(entry.Name(), ".inspect-db-") && entry.IsDir() {
-			_ = os.RemoveAll(filepath.Join(directory, entry.Name()))
-			continue
-		}
 		if strings.HasPrefix(entry.Name(), ".operation-") && strings.HasSuffix(entry.Name(), ".tmp") {
 			_ = os.Remove(filepath.Join(directory, entry.Name()))
 			continue

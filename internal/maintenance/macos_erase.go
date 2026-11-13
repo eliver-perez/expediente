@@ -228,15 +228,13 @@ func macOSInternalFile(path, configPath string) bool {
 	switch parts[1] {
 	case "license":
 		return len(parts) == 3 && installationArchive.MatchString(name)
-	case "upgrade-backups":
-		return len(parts) == 3 && strings.HasPrefix(name, "before-processing-") && strings.HasSuffix(name, ".db") && recognizedArchive(name, configPath)
 	case "previews":
 		return len(parts) == 3 && strings.HasSuffix(name, ".preview") && generatedID.MatchString(strings.TrimSuffix(name, ".preview"))
 	case "extraction", "preview-work":
 		return len(parts) > 3 && generatedWork.MatchString(name)
 	case "backups":
 		if len(parts) > 3 {
-			return strings.HasPrefix(name, ".inspect-db-")
+			return false
 		}
 		for _, extension := range []string{".json", ".aidexbak", ".plain", ".pre-restore.aidexbak"} {
 			if strings.HasSuffix(name, extension) && generatedID.MatchString(strings.TrimSuffix(name, extension)) {

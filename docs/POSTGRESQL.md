@@ -55,12 +55,15 @@ bibliotecas vinculadas, administradas e híbridas.
 2. Persistencia implementada en `a2ce193`: esquema inicial PostgreSQL, SQL de
    servicios, índices GIN, conexiones concurrentes, respaldos, mantenimiento y
    aprovisionamiento. Se retiraron el controlador y las migraciones SQLite.
-3. Validación macOS: pruebas de producción con detector de carreras, pruebas de
-   almacenamiento/respaldos y cargas de 100 000 documentos y 200 000 páginas
-   aprobadas. La comprobación final de bibliotecas e interfaz sigue en curso.
+3. Validación macOS aprobada: suites de producción y desarrollo con detector de
+   carreras, 143 casos/subcasos de bibliotecas, 37 flujos de navegador y cinco
+   flujos adicionales contra el motor aprovisionado por AIDEX. Cargas de 100 000
+   documentos, 200 000 páginas y 9 000 archivos físicos verificadas. Evidencia y
+   límites en [el registro de QA](qa/postgresql-macos-20261113.md).
 
-Este documento registra avances comprobados; no certifica la migración hasta
-que se documenten las pruebas sobre PostgreSQL real.
+La implementación y la validación de esta etapa en macOS están terminadas. El
+empaquetado y las pruebas nativas de las otras plataformas siguen pendientes
+según el alcance indicado al final de este documento.
 
 
 ## Ejecución local y contrato del runtime
