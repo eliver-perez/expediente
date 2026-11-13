@@ -61,9 +61,10 @@ bibliotecas vinculadas, administradas e híbridas.
    documentos, 200 000 páginas y 9 000 archivos físicos verificadas. Evidencia y
    límites en [el registro de QA](qa/postgresql-macos-20261113.md).
 
-La implementación y la validación de esta etapa en macOS están terminadas. El
-empaquetado y las pruebas nativas de las otras plataformas siguen pendientes
-según el alcance indicado al final de este documento.
+La validación nativa de Windows también terminó, con pruebas funcionales,
+servicio temporal, navegador y documentos físicos reales. Sus resultados y
+límites están en [el registro de QA Windows](qa/postgresql-windows-20261113.md).
+El empaquetado y la validación nativa de Linux siguen pendientes.
 
 
 ## Ejecución local y contrato del runtime
