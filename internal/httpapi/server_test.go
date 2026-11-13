@@ -35,8 +35,8 @@ func TestSuppliedContractIsEmbeddedAndOldDraftDoesNotAuthorizeIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := "\n---\n\n**NOTA DE ELABORACIÓN (NO INTEGRAR AL TEXTO CONTRACTUAL MOSTRADO AL USUARIO):**"
-	parts := strings.Split(string(source), marker)
-	if len(parts) != 2 || strings.TrimSpace(parts[0])+"\n" != eulaText {
+	parts := strings.Split(strings.ReplaceAll(string(source), "\r\n", "\n"), marker)
+	if len(parts) != 2 || strings.TrimSpace(parts[0])+"\n" != strings.ReplaceAll(eulaText, "\r\n", "\n") {
 		t.Fatal("embedded contract differs from the supplied 18-clause text")
 	}
 	fixture := newHTTPFixtureWithLicense(t, false)
