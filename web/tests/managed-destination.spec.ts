@@ -23,6 +23,7 @@ test('destino inicial, cambio desde tarjetas y limpieza de inspecciones',async({
 });
 
 test('macOS ofrece autorización administrada y descarta respuestas de una ruta anterior',async({page})=>{
+ test.skip(process.platform !== 'darwin', 'macOS privacy flow');
  page.setDefaultTimeout(10000);await page.setViewportSize({width:1920,height:1080});await library(page,'Autorización administrada');await page.getByLabel('Origen de la carpeta').selectOption('managed');const path=page.getByLabel('Ruta de la carpeta en el servidor');await path.fill('/Users/Prueba/Biblioteca');
  let diagnostic='ROOT_PERMISSION_DENIED';
  await page.route('**/api/v1/libraries/*/root-plans',route=>route.fulfill({status:422,contentType:'application/json',body:JSON.stringify({error:{code:diagnostic,message:'El destino necesita permisos de escritura.'}})}));

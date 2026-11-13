@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { mkdtemp, copyFile, mkdir, utimes, rename, rm, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { expectPdfLoaded } from './pdf-viewer';
 
 async function login(page: Page) {
   await page.goto('/login'); await page.getByLabel('Usuario', { exact: true }).fill('admin-e2e');
@@ -41,12 +42,7 @@ test('biblioteca vinculada: raíz, OCR, búsqueda, texto retenido y vista lógic
     await page.getByRole('button', { name: 'Buscar documentos', exact: true }).click(); await expect(page.getByRole('heading', { name: '1 documento encontrado' })).toBeVisible();
     await page.getByRole('button', { name: 'Visualizar', exact: true }).click(); await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Descargar PDF' })).toBeVisible(); await expect(page.locator('.retained-text pre')).toContainText('estructura metálica');
-    // Wait for Chrome's native PDF viewer, not just the surrounding dialog.
-    await expect.poll(async () => {
-      const viewer = page.frames().find(frame => frame.url().startsWith('chrome-extension://'));
-      if (!viewer) return 0;
-      return viewer.locator('pdf-viewer').evaluate(element => (element as HTMLElement & { loadProgress_: number }).loadProgress_).catch(() => 0);
-    }).toBe(100);
+    await expectPdfLoaded(page);
     await page.screenshot({ path: 'test-results/h3-document.png', fullPage: true });
     await page.getByRole('button', { name: 'Cerrar ficha' }).click();
     await rename(native, native + '.removed');

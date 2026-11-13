@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('acceso local y LAN real, UUID en HTTP y vuelta a local', async ({ page }) => {
+  test.skip(process.platform === 'win32', 'isolated browser server has no installer-managed firewall rule');
   async function openSettings() {
     const menu = page.getByRole('button', { name: 'Menú', exact: true });
     if (await menu.isVisible() && await menu.getAttribute('aria-expanded') === 'false') await menu.click();

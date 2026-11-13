@@ -1,6 +1,6 @@
 import {test, expect, type Page} from '@playwright/test';
 import {mkdtemp, realpath, mkdir, rm} from 'node:fs/promises';
-import {join} from 'node:path';
+import {basename, join} from 'node:path';
 import {tmpdir} from 'node:os';
 async function library(page: Page, name: string) {
   await page.goto('/login'); await page.getByLabel('Usuario', {exact:true}).fill('admin-e2e'); await page.getByLabel('Contraseña', {exact:true}).fill('Browser-fixture-password-2026');
@@ -19,7 +19,7 @@ test('cliente remoto explora únicamente raíces habilitadas y selecciona subcar
     await page.route('**/api/v1/folder-selections',route=>route.continue({headers:{...route.request().headers(),'X-Forwarded-For':'192.0.2.1'}}));
     await page.getByRole('button',{name:'Seleccionar carpeta',exact:true}).click(); const dialog=page.getByRole('dialog');
     await expect(dialog.getByRole('heading',{name:'Seleccionar carpeta del servidor'})).toBeVisible();
-    await dialog.getByRole('button',{name:directory.split('/').pop()!,exact:true}).click();
+    await dialog.getByRole('button',{name:basename(directory),exact:true}).click();
     await dialog.getByRole('button',{name:'Expedientes',exact:true}).click(); await dialog.getByRole('button',{name:'Seleccionar esta carpeta',exact:true}).click();
     await expect(path).toHaveValue(join(directory,'Expedientes')); await expect(page.getByText('Esta subcarpeta ya pertenece a una raíz.',{exact:false})).toBeVisible();
   } finally {await rm(directory,{recursive:true,force:true});}

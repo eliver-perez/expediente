@@ -1,6 +1,8 @@
-param([string[]]$GoArgs = @('test', './...'))
+param([string[]]$GoArgs = @('test', './...'), [switch]$Browser)
 
 $ErrorActionPreference = 'Stop'
+$originalTemp = $env:TEMP
+$originalTmp = $env:TMP
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runtime = Join-Path $workspace '.tools\postgresql-windows\runtime\pgsql\bin'
 $goRoot = Join-Path $workspace '.tools\go-sdk\go'
@@ -41,7 +43,13 @@ function Invoke-PgCtl([string]$arguments) {
 
 $started = $false
 try {
-    $env:PATH = "$runtime;$goRoot\bin;$env:PATH"
+    $extractors = 'C:\Program Files\AIDEX\tools\Library\bin'
+    if (Test-Path -LiteralPath $extractors) {
+        $env:PATH = "$extractors;$runtime;$goRoot\bin;$env:PATH"
+        $env:TESSDATA_PREFIX = 'C:\Program Files\AIDEX\tools\tessdata'
+    } else {
+        $env:PATH = "$runtime;$goRoot\bin;$env:PATH"
+    }
     $init = & (Join-Path $runtime 'initdb.exe') -D $data --username=aidex_test "--pwfile=$passwordFile" --auth=scram-sha-256 --encoding=UTF8 --locale=C --data-checksums 2>&1
     if ($LASTEXITCODE -ne 0) { throw "initdb falló: $($init | Out-String)" }
     Remove-Item -LiteralPath $passwordFile
@@ -60,10 +68,29 @@ try {
     $env:GOCACHE = Join-Path $workspace '.tools\gocache'
     $env:TEMP = Join-Path $workspace '.tools\postgresql-windows\testtmp'
     $env:TMP = $env:TEMP
-    & (Join-Path $goRoot 'bin\go.exe') @GoArgs
-    if ($LASTEXITCODE -ne 0) { throw "go $($GoArgs -join ' ') terminó con código $LASTEXITCODE" }
+    if ($Browser) {
+        Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+        # Browser fixtures create linked roots in os.TempDir. They must not
+        # inherit the Go cache directory under the source tree, which AIDEX
+        # correctly rejects as overlapping its program files.
+        $env:TEMP = $originalTemp
+        $env:TMP = $originalTmp
+        $node = Join-Path $workspace '.tools\node-sdk\node-v22.15.0-win-x64'
+        $browserPath = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+        if (-not (Test-Path -LiteralPath $browserPath)) { throw 'Microsoft Edge no está disponible para Playwright.' }
+        $env:PATH = "$node;$env:PATH"
+        $env:PLAYWRIGHT_EXECUTABLE_PATH = $browserPath
+        $savedErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue' # Playwright writes ordinary diagnostics to stderr.
+        try { & (Join-Path $node 'npm.cmd') --prefix web run test:e2e }
+        finally { $ErrorActionPreference = $savedErrorAction }
+        if ($LASTEXITCODE -ne 0) { throw "Playwright terminó con código $LASTEXITCODE" }
+    } else {
+        & (Join-Path $goRoot 'bin\go.exe') @GoArgs
+        if ($LASTEXITCODE -ne 0) { throw "go $($GoArgs -join ' ') terminó con código $LASTEXITCODE" }
+    }
 } finally {
-    Remove-Item Env:\AIDEX_TEST_POSTGRES_DSN,Env:\AIDEX_POSTGRES_BIN,Env:\PGPASSWORD -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIDEX_TEST_POSTGRES_DSN,Env:\AIDEX_POSTGRES_BIN,Env:\PGPASSWORD,Env:\PLAYWRIGHT_EXECUTABLE_PATH -ErrorAction SilentlyContinue
     $password = $null
     if ($started) {
         try { Invoke-PgCtl ('-D "' + $data + '" -m immediate -w -t 30 stop') } catch { Write-Warning $_ }

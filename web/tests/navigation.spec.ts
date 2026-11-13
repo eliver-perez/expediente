@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { mkdtemp, copyFile, mkdir, utimes, rm, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { expectPdfLoaded } from './pdf-viewer';
 
 test('búsqueda agrupada independiente, navegación, PDF ampliado y recursos',async({page})=>{
  const directory=await realpath(await mkdtemp(join(tmpdir(),'aidex-r4-browser-')));
@@ -23,7 +24,7 @@ test('búsqueda agrupada independiente, navegación, PDF ampliado y recursos',as
   await second.getByRole('button',{name:'Contraer resultados'}).click();await expect(second.locator('.document-row').first()).not.toBeVisible();await second.getByRole('button',{name:'Expandir resultados'}).click();await expect(second.locator('.document-row')).toHaveCount(13);
   await page.screenshot({path:'test-results/r4-grouped-search.png',fullPage:true});
   await first.getByRole('button',{name:'Visualizar',exact:true}).first().click();const frame=page.locator('iframe[title="Vista previa del PDF"]');const original=await frame.elementHandle();await frame.evaluate(element=>(element as HTMLElement).dataset.testIdentity='same-viewer');const source=await frame.getAttribute('src');
-  await expect.poll(async()=>{const viewer=page.frames().find(frame=>frame.url().startsWith('chrome-extension://'));if(!viewer)return 0;return viewer.locator('pdf-viewer').evaluate(element=>(element as HTMLElement & {loadProgress_:number}).loadProgress_).catch(()=>0);}).toBe(100);
+  await expectPdfLoaded(page);
   await page.getByRole('button',{name:'Ampliar PDF',exact:true}).click();await expect(page.locator('.document-dialog')).toHaveClass(/pdf-expanded/);expect(await frame.getAttribute('src')).toBe(source);expect(await original?.evaluate(element=>element.isConnected)).toBeTruthy();await expect(page.locator('.retained-text')).not.toBeVisible();await page.screenshot({path:'test-results/r4-expanded-pdf.png',fullPage:true});
   await page.getByRole('button',{name:'Volver a vista dividida'}).click();await expect(frame).toHaveAttribute('data-test-identity','same-viewer');await expect(page.locator('.retained-text')).toBeVisible();await page.getByRole('button',{name:'Cerrar ficha'}).click();
   await page.getByRole('link',{name:'Bibliotecas',exact:true}).click();await page.getByRole('button',{name:/Navegación R4 A/}).click();await page.getByRole('button',{name:'Vista de cuadrícula',exact:true}).click();await expect(page.locator('.file-tile')).toHaveCount(13);await page.getByRole('button',{name:'Subcarpeta Carpeta',exact:true}).click();await expect(page.locator('.file-tile')).toHaveCount(1);
