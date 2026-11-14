@@ -414,8 +414,7 @@ func TestLifecycleCleanupRecoveryAndUnsafeFiles(t *testing.T) {
 				requireNoError(t, os.Remove(path))
 				requireNoError(t, os.Symlink(target, path))
 			case "permission":
-				requireNoError(t, os.Chmod(private, 0500))
-				defer os.Chmod(private, 0700)
+				// The denial is applied around cleanup below.
 			case "container_replaced":
 				requireNoError(t, os.Rename(private, private+"-original"))
 				requireNoError(t, os.Mkdir(private, 0700))
@@ -427,7 +426,13 @@ func TestLifecycleCleanupRecoveryAndUnsafeFiles(t *testing.T) {
 				requireNoError(t, err)
 			}
 			resumed := New(s.Identity)
-			requireNoError(t, resumed.cleanDeletionFiles(ctx, plan.ID, 100))
+			if scenario == "permission" {
+				withDeniedDirectory(t, private, 0500, func() {
+					requireNoError(t, resumed.cleanDeletionFiles(ctx, plan.ID, 100))
+				})
+			} else {
+				requireNoError(t, resumed.cleanDeletionFiles(ctx, plan.ID, 100))
+			}
 			state, err := resumed.DeletionStatus(ctx, p, plan.ID)
 			requireNoError(t, err)
 			shouldComplete := scenario == "commit" || scenario == "renamed" || scenario == "removed"
@@ -443,7 +448,6 @@ func TestLifecycleCleanupRecoveryAndUnsafeFiles(t *testing.T) {
 				}
 			}
 			if scenario == "permission" {
-				requireNoError(t, os.Chmod(private, 0700))
 				state, err = resumed.RetryDeletionCleanup(ctx, p, plan.ID)
 				requireNoError(t, err)
 				if state.State != "complete" {
@@ -614,12 +618,11 @@ func TestLifecycleDirectoryDiagnostics(t *testing.T) {
 	if !strings.Contains(plan.Notice, "reanud") {
 		t.Fatal(plan.Notice)
 	}
-	requireNoError(t, os.Chmod(path, 0000))
-	defer os.Chmod(path, 0700)
-	if _, err = s.PlanRoot(ctx, p, lib, path, domain.RequestMetadata{}); failureCode(err) != "ROOT_PERMISSION_DENIED" {
-		t.Fatal("permission diagnosis", err)
-	}
-	requireNoError(t, os.Chmod(path, 0700))
+	withDeniedDirectory(t, path, 0000, func() {
+		if _, err = s.PlanRoot(ctx, p, lib, path, domain.RequestMetadata{}); failureCode(err) != "ROOT_PERMISSION_DENIED" {
+			t.Fatal("permission diagnosis", err)
+		}
+	})
 	if _, err = s.PlanRoot(ctx, p, lib, filepath.Join(dir, "missing"), domain.RequestMetadata{}); failureCode(err) != "ROOT_NOT_FOUND" {
 		t.Fatal(err)
 	}

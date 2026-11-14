@@ -172,17 +172,18 @@ func TestManagedDestinationPermissionFailureUsesAuthorizationCode(t *testing.T) 
 	s, p, dir := fixture(t)
 	lib := managedLibrary(t, s, p, "hybrid")
 	path := filepath.Join(dir, "Solo lectura")
-	requireNoError(t, os.MkdirAll(path, 0500))
-	defer os.Chmod(path, 0700)
-	if _, err := s.PlanStorageRoot(ctx, p, lib, path, "managed", domain.RequestMetadata{}); failureCode(err) != "ROOT_PERMISSION_DENIED" {
-		t.Fatal("no ofrece autorización para escritura", err)
-	}
-	requireNoError(t, os.Chmod(path, 0700))
+	requireNoError(t, os.MkdirAll(path, 0700))
+	withDeniedDirectory(t, path, 0500, func() {
+		if _, err := s.PlanStorageRoot(ctx, p, lib, path, "managed", domain.RequestMetadata{}); failureCode(err) != "ROOT_PERMISSION_DENIED" {
+			t.Fatal("no ofrece autorización para escritura", err)
+		}
+	})
 	id := registerManagedDestination(t, s, p, lib, path)
-	requireNoError(t, os.Chmod(path, 0500))
-	if err := s.SetManagedDestination(ctx, p, lib, id, destinationRevision(t, s, lib), domain.RequestMetadata{}); failureCode(err) != "ROOT_PERMISSION_DENIED" {
-		t.Fatal("no comprobó escritura efectiva", err)
-	}
+	withDeniedDirectory(t, path, 0500, func() {
+		if err := s.SetManagedDestination(ctx, p, lib, id, destinationRevision(t, s, lib), domain.RequestMetadata{}); failureCode(err) != "ROOT_PERMISSION_DENIED" {
+			t.Fatal("no comprobó escritura efectiva", err)
+		}
+	})
 	entries, err := os.ReadDir(path)
 	requireNoError(t, err)
 	if len(entries) != 0 {
