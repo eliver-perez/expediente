@@ -30,6 +30,8 @@ Se extrajo **en memoria** el binario exacto desde el instalador y se verificó s
 
 La instalación parcial bloqueada se retiró con un script que verificó la ruta, el servicio, el estado detenido de PostgreSQL y cada hash del manifiesto antes de borrar 2,702 archivos empaquetados. Quedaron conservados `config.json`, el clúster PostgreSQL y cualquier archivo ajeno al paquete. No queda servicio AIDEX registrado. La validación de **reinstalación completa** sigue pendiente hasta que Defender permita ejecutar el binario después de la revisión.
 
+La investigación posterior de eventos, hashes, código y componentes está en [defender-windows-20261113.md](defender-windows-20261113.md).
+
 ## Evidencia
 
 Registros locales ignorados por Git: `.tools/packaging/build.log`, `smoke-result.json`, `continue-result.json`, `service-diagnostic.txt`, `cleanup-result.json`, `ms-submit.log`, `ms-submission-result.txt` y `aidex-server-defender-sample.zip`. Los JSON de resultados no contienen la contraseña temporal; su archivo se borró tras la prueba. `scripts/build_installers.py`, `packaging/windows/installer.nsi`, `packaging/windows/postgresql.lock.json`, `packaging/windows/manage.ps1` y `scripts/check_production_packages.py` son los archivos de producto y paquete modificados.
