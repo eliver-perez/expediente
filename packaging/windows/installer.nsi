@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
@@ -19,8 +19,8 @@ Var SelectedPort
 Var PortInput
 Var ExistingInstall
 Name "AIDEX"
-!define MUI_ICON "${STAGE}/aidex.ico"
-!define MUI_UNICON "${STAGE}/aidex.ico"
+!define MUI_ICON "${STAGE}aidex.ico"
+!define MUI_UNICON "${STAGE}aidex.ico"
 OutFile "${OUTPUT}"
 InstallDir "$PROGRAMFILES64\AIDEX"
 RequestExecutionLevel admin
@@ -82,7 +82,7 @@ FunctionEnd
 Function PortPage
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
-    File "${STAGE}/manage.ps1"
+    File "${STAGE}manage.ps1"
     nsDialogs::Create 1018
     Pop $0
     ${If} $ExistingInstall == "1"
@@ -172,9 +172,9 @@ FunctionEnd
 Section "Instalar"
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
-    File "${STAGE}/manage.ps1"
-    File "${STAGE}/installer-action.ps1"
-    File /oname=aidex-repair.exe "${STAGE}/aidex-server.exe"
+    File "${STAGE}manage.ps1"
+    File "${STAGE}installer-action.ps1"
+    File /oname=aidex-repair.exe "${STAGE}aidex-server.exe"
     GetTempFileName $LogPath
     nsExec::ExecToStack /TIMEOUT=660000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\installer-action.ps1" -ManageScript "$PLUGINSDIR\manage.ps1" -LogPath "$LogPath" -Action Preflight -InstallRoot "$INSTDIR" -PreflightBinary "$PLUGINSDIR\aidex-repair.exe"'
     Pop $0
@@ -184,7 +184,7 @@ Section "Instalar"
         Abort "No se pudo preparar la instalación; consulta el detalle."
     ${EndIf}
     SetOutPath "$INSTDIR"
-    File /r "${STAGE}/*"
+    File /r "${STAGE}*"
     GetTempFileName $LogPath
     nsExec::ExecToStack /TIMEOUT=660000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-action.ps1" -ManageScript "$INSTDIR\manage.ps1" -LogPath "$LogPath" -Action Configure -InstallRoot "$INSTDIR" -Port $SelectedPort'
     Pop $0

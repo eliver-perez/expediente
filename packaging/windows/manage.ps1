@@ -200,7 +200,7 @@ try {
             Stop-Aidex
             if (Test-Path $Config) {
                 if (!$PreflightBinary -or !(Test-Path -LiteralPath $PreflightBinary)) { throw 'Falta el comprobador del nuevo instalador.' }
-                # Check exclusive access without opening or altering SQLite.
+                # Check exclusive access without opening or altering PostgreSQL.
                 Invoke-Native $PreflightBinary @('check-state','--config',$Config)
             }
         }

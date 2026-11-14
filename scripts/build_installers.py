@@ -2,7 +2,7 @@
 """Build AIDEX production installers. No host service or account is modified.
 
 Frontend must be built first. Native runtime verification remains a separate step.
-Windows requires a conda-forge win-64 prefix and NSIS (see docs/H7.md).
+Windows requires the locked OCR runtime, PostgreSQL 18 archive and NSIS.
 """
 import argparse
 import gzip
@@ -17,6 +17,7 @@ import struct
 import subprocess
 import tarfile
 import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "1.0.0"
@@ -316,7 +317,8 @@ def reuse_verified_windows_runtime(prior, destination, docs):
     ):
         raise RuntimeError("Prior Windows OCR lock differs from current lock")
     selected = [path for path in prior.rglob("*") if path.is_file() and (
-        path.relative_to(prior).parts[0] == "tools"
+        (path.relative_to(prior).parts[0] == "tools"
+         and path.relative_to(prior).parts[:2] != ("tools", "postgresql"))
         or path.relative_to(prior).parts[:2] == ("docs", "third-party")
         or path == lock_path
     )]
@@ -339,6 +341,46 @@ def reuse_verified_windows_runtime(prior, destination, docs):
     print(f"Verified {len(selected)} Windows OCR runtime files against prior installer manifest")
 
 
+def windows_postgresql(archive, destination, docs):
+    """Copy the complete EDB PostgreSQL server runtime from its pinned archive."""
+    lock = json.loads((ROOT / "packaging/windows/postgresql.lock.json").read_text(encoding="utf-8"))
+    if archive.name != lock["archive"]:
+        raise RuntimeError("Windows PostgreSQL archive name differs from lock")
+    with archive.open("rb") as archive_file:
+        digest = hashlib.file_digest(archive_file, "sha256").hexdigest()
+    if digest != lock["sha256"]:
+        raise RuntimeError("Windows PostgreSQL archive differs from lock")
+    required = {"bin/initdb.exe", "bin/pg_ctl.exe", "bin/postgres.exe",
+                "lib/unaccent.dll", "share/extension/unaccent.control",
+                "share/extension/unaccent--1.1.sql"}
+    copied = set()
+    with zipfile.ZipFile(archive) as source:
+        for member in source.infolist():
+            parts = Path(member.filename).parts
+            if member.is_dir() or len(parts) < 3 or parts[0] != "pgsql":
+                continue
+            if parts[1] in ("bin", "lib", "share"):
+                relative = Path(*parts[1:])
+                if any(part in ("", ".", "..") for part in parts) or relative.is_absolute() or relative.as_posix() in copied:
+                    raise RuntimeError(f"Unsafe PostgreSQL archive path: {member.filename}")
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with source.open(member) as input_file, target.open("wb") as output_file:
+                    shutil.copyfileobj(input_file, output_file)
+                copied.add(relative.as_posix())
+        if not required <= copied:
+            raise RuntimeError("PostgreSQL archive is missing required server or unaccent files: "
+                               + ", ".join(sorted(required - copied)))
+        for name in ("server_license.txt", "commandlinetools_3rd_party_licenses.txt"):
+            with source.open("pgsql/" + name) as input_file:
+                target = docs / "third-party" / "postgresql" / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("wb") as output_file:
+                    shutil.copyfileobj(input_file, output_file)
+    (docs / "postgresql-runtime.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    print(f"PostgreSQL {lock['version']} runtime: {len(copied)} files from pinned archive")
+
+
 def check_pe_imports(directory):
     """Detect missing non-system DLLs before shipping; native execution is still required."""
     system = set("kernel32 kernelbase ntdll user32 advapi32 gdi32 shell32 ole32 oleaut32 comdlg32 comctl32 "
@@ -346,7 +388,8 @@ def check_pe_imports(directory):
                  "userenv usp10 rpcrt4 psapi powrprof netapi32 mpr dhcpcsvc dnsapi mswsock "
                  "msvcrt imm32 setupapi winspool winhttp wininet shcore uxtheme dwrite d2d1 "
                  "dxgi d3d11 d3d12 dbghelp hid authz wintrust ncrypt cfgmgr32 win32u wsock32 "
-                 "msasn1 cabinet msimg32 cryptbase bcryptprimitives credui netutils wkscli dsrole d3dcompiler_47".split())
+                 "msasn1 cabinet msimg32 cryptbase bcryptprimitives credui netutils wkscli dsrole d3dcompiler_47 "
+                 "winspool.drv oleacc".split())
     available = {path.name.lower() for path in directory.glob("*")}
     missing = []
     for path in directory.glob("*"):
@@ -423,9 +466,9 @@ def check_windows_icon(executable, gui=False):
     print(f"Windows icon resources: {executable.name}: {sorted(sizes)} OK")
 
 
-def windows(output, work, prefix, makensis, powershell=None, prior_runtime=None):
-    if (not prefix and not prior_runtime) or not makensis:
-        raise RuntimeError("Windows requires --windows-tools or --windows-runtime-payload, and --makensis")
+def windows(output, work, prefix, makensis, postgres_archive, powershell=None, prior_runtime=None):
+    if (not prefix and not prior_runtime) or not makensis or not postgres_archive:
+        raise RuntimeError("Windows requires OCR runtime, --windows-postgres-archive, and --makensis")
     powershell = powershell or shutil.which("powershell.exe") or shutil.which("pwsh")
     if not powershell:
         raise RuntimeError("Windows packaging requires PowerShell to validate the generated script; use --powershell")
@@ -451,6 +494,12 @@ def windows(output, work, prefix, makensis, powershell=None, prior_runtime=None)
     else:
         windows_tools(prefix, payload / "tools", payload / "docs")
     check_pe_imports(payload / "tools/Library/bin")
+    windows_postgresql(postgres_archive, payload / "tools/postgresql", payload / "docs")
+    # The locked conda VC runtime is already redistributed for OCR. PostgreSQL's
+    # binaries need the same app-local CRT on machines without a global VC++ setup.
+    for name in ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"):
+        copy(payload / "tools/Library/bin" / name, payload / "tools/postgresql/bin" / name)
+    check_pe_imports(payload / "tools/postgresql/bin")
     copy(ROOT / "packaging/windows/admin.cmd", payload / "admin.cmd")
     copy(ROOT / "packaging/windows/server-port.cmd", payload / "server-port.cmd")
     manifest = [{"path": path.relative_to(payload).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -466,7 +515,7 @@ def windows(output, work, prefix, makensis, powershell=None, prior_runtime=None)
         if (candidate / "Stubs").is_dir():
             environment.setdefault("NSISDIR", str(candidate))
             break
-    run([makensis, f"{define}VERSION={package_version}", f"{define}STAGE={payload}",
+    run([makensis, f"{define}VERSION={package_version}", f"{define}STAGE={payload}{os.sep}",
          f"{define}OUTPUT={output / ('AIDEX-' + package_version + '-Windows-amd64.exe')}", ROOT / "packaging/windows/installer.nsi"], env=environment)
     copy(payload / "docs/windows-ocr.lock.json", output / "windows-ocr.lock.json")
     copy(ROOT / "packaging/windows/ocr-explicit.txt", output / "windows-ocr-explicit.txt")
@@ -481,6 +530,8 @@ def main():
     parser.add_argument("--windows-runtime-payload", type=Path,
                         help="Extracted prior installer payload; verify OCR files against its SHA manifest and current lock")
     parser.add_argument("--makensis")
+    parser.add_argument("--windows-postgres-archive", type=Path,
+                        help="Pinned EDB PostgreSQL 18 Windows x64 binary archive")
     parser.add_argument("--powershell", help="PowerShell parser for Windows scripts (prefers Windows PowerShell 5.1 on Windows)")
     parser.add_argument("--ubuntu-arch", choices=["amd64", "arm64", "all"], default="all",
                         help="Ubuntu architectures to build (default: both)")
@@ -489,10 +540,12 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     targets = ["macos", "ubuntu", "windows"] if args.target == "all" else [args.target]
     for target in targets:
-        with tempfile.TemporaryDirectory(prefix="aidex-package-") as directory:
+        # NSIS reads the staged files directly; keep its Windows stage on the
+        # output volume and remove it when packaging finishes.
+        with tempfile.TemporaryDirectory(prefix="aidex-package-", dir=output if target == "windows" else None) as directory:
             work = Path(directory).resolve()
             if target == "windows":
-                windows(output, work, args.windows_tools, args.makensis, args.powershell,
+                windows(output, work, args.windows_tools, args.makensis, args.windows_postgres_archive, args.powershell,
                         args.windows_runtime_payload)
             elif target == "ubuntu":
                 architectures = ["amd64", "arm64"] if args.ubuntu_arch == "all" else [args.ubuntu_arch]

@@ -5,8 +5,9 @@
 La rama `feature/postgresql` parte de `5e3c44f`, sincronizado con
 `origin/main` el 13 de noviembre de 2026. Incluye `220c711` (rendimiento,
 procesamiento y navegación en Windows) y `5e3c44f` (eliminación masiva,
-manifiestos y progreso). No se cambia la versión comercial ni se generan
-instaladores. No se modifica el servidor de licencias.
+manifiestos y progreso). La versión comercial permanece en 1.0.0. El
+instalador Windows se incorporó después de la validación nativa; no se
+modifica el servidor de licencias.
 
 PostgreSQL será el único motor. No habrá conversión de datos de SQLite,
 compatibilidad con sus bases ni selección de motor. El esquema inicial de
@@ -30,9 +31,8 @@ PostgreSQL recoge las entidades, permisos, restricciones e índices existentes.
 - Clúster privado por instalación, binarios y datos separados, credenciales
   protegidas, autenticación SCRAM, acceso por loopback y puerto propio. El
   aprovisionamiento no debe usar ni modificar clústeres ajenos.
-- El futuro paquete incluirá los binarios apropiados para macOS, Windows y
-  Ubuntu AMD64/ARM64. En esta etapa se desarrolla el ciclo de vida del motor y
-  se prueba con los binarios locales de desarrollo, sin editar instaladores.
+- El instalador Windows incluye el runtime PostgreSQL 18.6 privado. El
+  empaquetado de macOS y Ubuntu AMD64/ARM64 sigue pendiente.
 
 Referencias técnicas: [pgx stdlib](https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib),
 [búsqueda textual](https://www.postgresql.org/docs/18/textsearch-controls.html),
@@ -64,7 +64,10 @@ bibliotecas vinculadas, administradas e híbridas.
 La validación nativa de Windows también terminó, con pruebas funcionales,
 servicio temporal, navegador y documentos físicos reales. Sus resultados y
 límites están en [el registro de QA Windows](qa/postgresql-windows-20261113.md).
-El empaquetado y la validación nativa de Linux siguen pendientes.
+El [registro del instalador Windows](qa/postgresql-windows-installer-20261113.md)
+documenta la instalación, el arranque, la autenticación y la desinstalación
+conservando datos, además de la detección de Defender que bloqueó la
+reinstalación. El empaquetado y la validación nativa de Linux siguen pendientes.
 
 
 ## Ejecución local y contrato del runtime
@@ -117,10 +120,11 @@ trust se limita a esa fixture; el aprovisionamiento del producto y sus pruebas
 usan SCRAM. `AIDEX_TEST_POSTGRES_DSN` solo sirve para aislar esquemas en pruebas
 con binarios de canal `source`; no configura los paquetes de producción.
 
-## Fuera de la entrega de esta etapa
+## Límites del empaquetado
 
-No se han generado ni modificado instaladores. La inclusión y firma de runtimes,
-las cuentas y el arranque por el sistema operativo y las actualizaciones de
-paquetes se integrarán cuando se autorice el empaquetado. La compilación cruzada
-no sustituye las pruebas nativas de Windows y Ubuntu AMD64/ARM64. El servidor de
-licencias, la versión 1.0.0 y la interfaz del producto se mantienen.
+Se generó el instalador Windows AMD64 sin firma comercial. La reinstalación
+completa queda pendiente de la revisión de Microsoft Defender indicada en el
+registro de QA; no se añadieron exclusiones de antivirus. No se generaron
+instaladores macOS ni Ubuntu. La compilación cruzada no sustituye las pruebas
+nativas pendientes en Ubuntu AMD64/ARM64. El servidor de licencias y la
+interfaz del producto se mantienen.

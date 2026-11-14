@@ -206,6 +206,14 @@ def main():
         assert b'-Action AuthorizeFolder' not in launcher
         assert 'ExecWait' not in installer_source and installer_source.count('nsExec::ExecToStack /TIMEOUT=660000') == 3
         builder.check_pe_imports(manifest.parent / 'tools/Library/bin')
+        postgres = manifest.parent / 'tools/postgresql'
+        for name in ('bin/initdb.exe', 'bin/pg_ctl.exe', 'bin/postgres.exe',
+                     'lib/unaccent.dll', 'share/extension/unaccent.control'):
+            assert (postgres / name).is_file(), name
+        lock = json.loads((builder.ROOT / 'packaging/windows/postgresql.lock.json').read_text(encoding='utf-8'))
+        assert json.loads((manifest.parent / 'docs/postgresql-runtime.json').read_text(encoding='utf-8')) == lock
+        assert (manifest.parent / 'docs/third-party/postgresql/server_license.txt').is_file()
+        builder.check_pe_imports(postgres / 'bin')
         assert not (manifest.parent / 'gestor-documental.exe').exists()
         check_docs(manifest.parent / 'docs')
         results.append({'target': 'windows-amd64', 'result': 'PASS', 'scope': 'installer metadata, UTF-8 BOM/parser/template, both scripts, complete SHA manifest, icons, DLL closure, current documentation'})
