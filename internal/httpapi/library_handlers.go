@@ -41,6 +41,7 @@ func (server *Server) libraryRoutes(mux *http.ServeMux) {
 		"POST /api/v1/documents/{document}/reindex": server.reindexDocument, "GET /api/v1/documents/{document}": server.document, "GET /api/v1/documents/{document}/content": server.documentContent, "GET /api/v1/documents/{document}/download": server.documentContent,
 		"GET /api/v1/documents/{document}/pages/{page}/text": server.documentText, "GET /api/v1/documents/{document}/history": server.documentHistory, "POST /api/v1/documents/{document}/remove-index": server.removeDocumentIndex,
 		"GET /api/v1/libraries/{library}/processing":        server.processing,
+		"GET /api/v1/libraries/{library}/processing/stats":  server.processingStats,
 		"POST /api/v1/jobs/{job}/cancel":                    server.cancelJob,
 		"POST /api/v1/jobs/{job}/pause":                     server.pauseJob,
 		"POST /api/v1/roots/{root}/retry-errors":            server.retryScanErrors,
@@ -380,12 +381,22 @@ func (server *Server) inspectPath(writer http.ResponseWriter, request *http.Requ
 }
 
 func (server *Server) processing(w http.ResponseWriter, r *http.Request, p domain.Principal) {
-	report, err := server.libraries.Processing(r.Context(), p, r.PathValue("library"))
+	var report libraries.ProcessingReport
+	var err error
+	if r.URL.Query().Get("view") == "activity" {
+		report, err = server.libraries.ProcessingActivity(r.Context(), p, r.PathValue("library"))
+	} else {
+		report, err = server.libraries.Processing(r.Context(), p, r.PathValue("library"))
+	}
 	if err != nil {
 		server.fail(w, r, err)
 		return
 	}
 	writeJSON(w, 200, report)
+}
+func (server *Server) processingStats(w http.ResponseWriter, r *http.Request, p domain.Principal) {
+	report, err := server.libraries.ProcessingStatistics(r.Context(), p, r.PathValue("library"))
+	server.libraryResult(w, r, 200, report, err)
 }
 func (server *Server) cancelJob(w http.ResponseWriter, r *http.Request, p domain.Principal) {
 	err := server.libraries.CancelJob(r.Context(), p, r.PathValue("job"), metadata(r))

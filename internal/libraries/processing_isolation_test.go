@@ -27,7 +27,7 @@ func TestProgressAndDashboardWithGeneralReadersExhausted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	started := time.Now()
-	report, err := service.Processing(ctx, principal, library)
+	report, err := service.ProcessingActivity(ctx, principal, library)
 	if err != nil {
 		t.Fatal(err)
 	}

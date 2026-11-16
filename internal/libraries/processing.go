@@ -67,28 +67,29 @@ type ProcessingReport struct {
 }
 
 func (service *Service) Processing(ctx context.Context, principal domain.Principal, libraryID string) (ProcessingReport, error) {
-	report := ProcessingReport{StatsAvailable: true, PerformanceAvailable: true, Scans: []ScanProgress{}, Active: []Job{}, Errors: []ScanError{}, Skips: []ScanError{}}
+	return service.processing(ctx, principal, libraryID, true)
+}
+
+// ProcessingActivity never waits for the full-library counts. Its dedicated
+// status pool remains usable while PostgreSQL is calculating those counts.
+func (service *Service) ProcessingActivity(ctx context.Context, principal domain.Principal, libraryID string) (ProcessingReport, error) {
+	return service.processing(ctx, principal, libraryID, false)
+}
+
+func (service *Service) processing(ctx context.Context, principal domain.Principal, libraryID string, includeStats bool) (ProcessingReport, error) {
+	report := ProcessingReport{PerformanceAvailable: true, Scans: []ScanProgress{}, Active: []Job{}, Errors: []ScanError{}, Skips: []ScanError{}}
 	if err := service.Read(ctx, principal, libraryID, "indexing.run"); err != nil {
 		return report, err
 	}
-	// One row per physical file/document, never per location or historical job.
-	statsCtx, cancelStats := context.WithTimeout(ctx, 750*time.Millisecond)
-	err := service.Database.Reader.QueryRowContext(statsCtx, `WITH file_states AS (
- SELECT f.storage_source AS source,f.extraction_freshness AS freshness,coalesce(v.index_block_reason,'') AS index_reason,
- coalesce((SELECT status FROM jobs WHERE physical_file_id=f.id AND target_version=f.current_content_version_id AND job_type='extract' ORDER BY created_at DESC,id DESC LIMIT 1),'') AS status,
- CASE WHEN jsonb_typeof((e.summary_json)::jsonb #> '{ocr_pages}') IS NOT NULL
- THEN (((e.summary_json)::jsonb #>> '{ocr_pages}')::bigint)>0
- ELSE EXISTS(SELECT 1 FROM extraction_pages WHERE extraction_id=f.indexed_extraction_id AND extraction_method IN ('ocr','empty')) END AS ocr
- FROM physical_files f JOIN documents d ON d.physical_file_id=f.id LEFT JOIN content_versions v ON v.id=f.current_content_version_id LEFT JOIN extraction_runs e ON e.id=f.indexed_extraction_id WHERE f.library_id=? AND d.deleted_at IS NULL AND `+visibleDocumentSQL+`)
-	 SELECT count(*),coalesce(sum((source='linked')::int),0),coalesce(sum((source='managed')::int),0),coalesce(sum((freshness='current')::int),0),coalesce(sum((freshness<>'current' AND status='failed')::int),0),coalesce(sum((freshness<>'current' AND status<>'failed' AND index_reason='')::int),0),coalesce(sum((freshness='current' AND NOT ocr)::int),0),coalesce(sum((freshness='current' AND ocr)::int),0),coalesce(sum((freshness<>'current' AND index_reason<>'')::int),0) FROM file_states`, libraryID, principal.User.ID, principal.User.ID).Scan(&report.Stats.Total, &report.Stats.Linked, &report.Stats.Managed, &report.Stats.Processed, &report.Stats.Errors, &report.Stats.Pending, &report.Stats.Native, &report.Stats.OCR, &report.Stats.StoredOnly)
-	statsTimedOut := statsCtx.Err() == context.DeadlineExceeded
-	cancelStats()
-	if statsTimedOut && ctx.Err() == nil {
-		report.StatsAvailable = false
-		err = nil
-	}
-	if err != nil {
-		return report, err
+	if includeStats {
+		stats, err := service.calculateProcessingStats(ctx, principal, libraryID)
+		if err != nil {
+			return report, err
+		}
+		report.StatsAvailable = stats.Available
+		if stats.Stats != nil {
+			report.Stats = *stats.Stats
+		}
 	}
 	rows, err := service.Database.StatusReader.QueryContext(ctx, `SELECT s.id,s.root_id,r.canonical_path,s.status,s.started_at,coalesce(p.updated_at,s.started_at),coalesce(s.completed_at,''),coalesce(p.current_path,''),s.directories_seen,jsonb_array_length((s.checkpoint_json)::jsonb),s.files_seen,coalesce(p.unchanged_files,0),coalesce(p.hashed_files,0),coalesce(p.excluded_directories,0),(SELECT count(*) FROM scan_errors e WHERE e.root_id=r.id),coalesce(c.paused,0),(SELECT count(*) FROM document_file_skips skipped WHERE skipped.root_id=r.id AND skipped.observed_at>=s.started_at)
  FROM storage_roots r JOIN root_scans s ON s.id=(SELECT id FROM root_scans WHERE root_id=r.id ORDER BY started_at DESC,id DESC LIMIT 1) LEFT JOIN scan_progress p ON p.scan_id=s.id LEFT JOIN root_scan_controls c ON c.root_id=r.id WHERE r.library_id=? AND r.status<>'superseded' ORDER BY r.created_at`, libraryID)

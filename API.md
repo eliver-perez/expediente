@@ -121,6 +121,14 @@ Endpoints adicionales H3:
 - `GET /libraries/:id/folder-views`, `/folders`, `/members`, `/member-candidates?q=`.
 - `PUT /libraries/:id/members/:user_id`: `{role_ids}`; lector, gestor, auditor, colaborador o revisor.
 - `GET /libraries/:id/jobs`, `/audit-events`: páginas de historial con cursor.
+- `GET /libraries/:id/processing?view=activity`: recorridos, trabajos y actividad,
+  sin esperar al conteo completo (`stats_available=false` en esta vista).
+- `GET /libraries/:id/processing/stats`: conteo completo autorizado por
+  `indexing.run`, con `stats_available`, `stats` y `stats_updated_at` (hora del
+  snapshot PostgreSQL). Usa el pool de analítica y un límite de cinco segundos.
+  Si vence el plazo, devuelve `stats_available=false` y `stats_error`, sin
+  `stats` ni fecha; el cliente conserva la última respuesta completa. La ruta
+  `/processing` sin `view` conserva el informe combinado por compatibilidad.
 - `GET /search-events`: detalle exacto, filtrado antes de paginar por permisos en
   **todos** sus ámbitos; independiente de `audit.read_global`.
 
