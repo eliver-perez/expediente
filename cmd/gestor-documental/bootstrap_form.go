@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// The elevated Windows form passes credentials through a redirected handle.
+// The desktop setup form passes credentials through a redirected handle.
 // The interactive CLI still requires a terminal and keeps its existing reader.
 func readBootstrapForm(input io.Reader) (string, string, string, error) {
 	const limit = 8192

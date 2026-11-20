@@ -7,7 +7,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func authorizeWindowsBootstrap(requirePipe bool) error {
+func authorizeBootstrapForm(requirePipe bool) error {
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		return fmt.Errorf("el asistente requiere autorización de un administrador de Windows")
 	}

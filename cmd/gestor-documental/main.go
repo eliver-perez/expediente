@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"gestor-documental/internal/identity"
 	"gestor-documental/internal/libraries"
 	"gestor-documental/internal/licensing"
+	"gestor-documental/internal/macoscontrol"
 	"gestor-documental/internal/maintenance"
 	"gestor-documental/internal/network"
 	"gestor-documental/internal/storage"
@@ -61,6 +63,8 @@ func run(ctx context.Context, ready func()) error {
 	initialTessdata := flags.String("tessdata", "", "Directorio absoluto de idiomas OCR (solo init)")
 	initialFontconfig := flags.String("fontconfig", "", "Archivo absoluto de fuentes (solo init)")
 	samples := flags.String("sample-directory", "", "Directorio de PDF de diagnóstico (solo doctor)")
+	bootstrapSocket := flags.String("bootstrap-socket", "", "Conexión local del asistente de macOS")
+	bootstrapUID := flags.Int("bootstrap-peer-uid", 0, "Identidad local del asistente de macOS")
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -78,6 +82,12 @@ func run(ctx context.Context, ready func()) error {
 	}
 	if *samples != "" && command != "doctor" {
 		return fmt.Errorf("sample-directory only applies to doctor")
+	}
+	if command == "macos-receive-bootstrap" {
+		return receiveMacOSBootstrap(ctx, *configurationPath, *bootstrapSocket, *bootstrapUID)
+	}
+	if *bootstrapSocket != "" || *bootstrapUID != 0 {
+		return fmt.Errorf("opciones reservadas para el asistente de macOS")
 	}
 	if command == "init" {
 		if *initialTools != "" && !filepath.IsAbs(*initialTools) {
@@ -172,11 +182,11 @@ func run(ctx context.Context, ready func()) error {
 	}
 
 	if command == "bootstrap-status" || command == "bootstrap-ui" {
-		if err := authorizeWindowsBootstrap(command == "bootstrap-ui"); err != nil {
+		if err := authorizeBootstrapForm(command == "bootstrap-ui"); err != nil {
 			return err
 		}
 	}
-	if command != "serve" && command != "doctor" && command != "check-state" && command != "configure-port" && command != "bootstrap-ready" && command != "bootstrap-status" && command != "bootstrap-ui" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
+	if command != "serve" && command != "doctor" && command != "check-state" && command != "configure-port" && command != "bootstrap-ready" && command != "bootstrap-status" && command != "bootstrap-ui" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" && command != "macos-document-roots" {
 		return fmt.Errorf("comando no reconocido")
 	}
 	var configuration config.Config
@@ -192,6 +202,17 @@ func run(ctx context.Context, ready func()) error {
 	if command == "doctor" {
 		return doctor(ctx, configuration, *samples)
 	}
+	if command == "macos-document-roots" {
+		if runtime.GOOS != "darwin" || os.Geteuid() == 0 {
+			return fmt.Errorf("la consulta requiere la cuenta de servicio de AIDEX en macOS")
+		}
+		// The erasure process holds the outer state lock while we inspect the catalog.
+		roots, err := maintenance.MacOSRegisteredDocumentRoots(ctx, configuration)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(roots)
+	}
 	unlock, err := storage.LockState(configuration.StateDirectory)
 	if err != nil {
 		return err
@@ -205,10 +226,12 @@ func run(ctx context.Context, ready func()) error {
 		if err != nil {
 			return err
 		}
+		macoscontrol.Endpoint(*configurationPath, updated.ListenAddress, updated.PublicURL)
 		fmt.Println("Puerto configurado:", updated.ListenAddress)
 		return nil
 	}
 	if command == "check-state" {
+		macoscontrol.Endpoint(*configurationPath, configuration.ListenAddress, configuration.PublicURL)
 		fmt.Println("Configuración y acceso exclusivo al estado: OK. No se abrió ni migró la base de datos.")
 		return nil
 	}
@@ -224,10 +247,12 @@ func run(ctx context.Context, ready func()) error {
 		}
 		switch {
 		case configured:
+			macoscontrol.Database(*configurationPath, configuration.StateDirectory, "configured")
 			fmt.Println("configured")
 		case usersExist:
 			return fmt.Errorf("ya existen usuarios; utiliza la recuperación local de AIDEX")
 		default:
+			macoscontrol.Database(*configurationPath, configuration.StateDirectory, "required")
 			fmt.Println("required")
 		}
 		return nil
@@ -280,6 +305,7 @@ func run(ctx context.Context, ready func()) error {
 		if err != nil {
 			return err
 		}
+		macoscontrol.Database(*configurationPath, configuration.StateDirectory, "configured")
 		fmt.Println("Operación completada y registrada. Inicia sesión con la nueva contraseña.")
 		return nil
 	}
@@ -302,6 +328,8 @@ func run(ctx context.Context, ready func()) error {
 	if administratorReady == 0 {
 		return fmt.Errorf("ejecuta bootstrap antes de iniciar el servicio")
 	}
+	macoscontrol.Database(*configurationPath, configuration.StateDirectory, "configured")
+	macoscontrol.Endpoint(*configurationPath, configuration.ListenAddress, configuration.PublicURL)
 	background, err := libraries.New(service).Start(ctx)
 	if err != nil {
 		return err

@@ -2,11 +2,15 @@ package maintenance
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -59,12 +63,17 @@ func EraseMacOSInstallation(configPath string) (string, error) {
 		return "", err
 	}
 	defer unlock()
-	protected, err := macOSDocumentRoots(cfg)
-	if err != nil {
-		return "", err
+	cluster := filepath.Join(cfg.StateDirectory, "postgresql")
+	protected := []string{cfg.PrivateUploadDirectory()}
+	if storage.PostgresPresent(cfg.StateDirectory) {
+		registered, err := macOSDocumentRoots(configPath, cfg)
+		if err != nil {
+			return "", err
+		}
+		protected = append(protected, registered...)
 	}
 	for _, path := range protected {
-		if containsPath(path, configPath) || containsPath(path, cfg.StateDirectory) {
+		if containsPath(path, configPath) || containsPath(path, cfg.StateDirectory) || containsPath(cluster, path) {
 			return "", fmt.Errorf("una ruta documental se superpone con los metadatos; se conservan los datos")
 		}
 	}
@@ -77,6 +86,10 @@ func EraseMacOSInstallation(configPath string) (string, error) {
 	err = fs.WalkDir(root.FS(), "data", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if path == "data/state/postgresql" {
+			// The cluster is validated and removed by the private engine eraser.
+			return fs.SkipDir
 		}
 		if entry.IsDir() {
 			directories = append(directories, path)
@@ -107,11 +120,6 @@ func EraseMacOSInstallation(configPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if storage.PostgresPresent(cfg.StateDirectory) {
-		if err = storage.ResetPostgres(context.Background(), cfg.StateDirectory); err != nil {
-			return "", err
-		}
-	}
 	archive := ""
 	if len(preserve) > 0 {
 		archive = filepath.Join("Documentos conservados", domain.NewID())
@@ -129,6 +137,11 @@ func EraseMacOSInstallation(configPath string) (string, error) {
 				return filepath.Join(code, archive), err
 			}
 		}
+	}
+	// Preserve registered originals before dropping the catalog that identifies
+	// them. A retry after cluster deletion then sees only remaining metadata.
+	if err = storage.ErasePrivatePostgres(cfg.StateDirectory); err != nil {
+		return archivePath(code, archive), err
 	}
 	// Mantener configuración y bloqueo hasta haber borrado el resto. Un fallo
 	// conserva las herramientas y no se comunica como desinstalación completada.
@@ -172,18 +185,38 @@ func containsPath(parent, child string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
-func macOSDocumentRoots(cfg config.Config) ([]string, error) {
-	roots := []string{cfg.PrivateUploadDirectory()}
-	if !storage.PostgresPresent(cfg.StateDirectory) {
-		return roots, nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func macOSDocumentRoots(configPath string, cfg config.Config) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
+	if runtime.GOOS != "darwin" || os.Geteuid() != 0 {
+		return MacOSRegisteredDocumentRoots(ctx, cfg)
+	}
+	// The parent holds the installation lock and handles the filesystem.
+	// PostgreSQL must run as the account that owns the private cluster.
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	output, err := exec.CommandContext(ctx, "/usr/bin/sudo", "-n", "-u", "_aidex",
+		executable, "macos-document-roots", "--config", configPath).Output()
+	if err != nil {
+		return nil, fmt.Errorf("no se pudieron verificar las rutas documentales con la cuenta de AIDEX; se conservan los datos: %w", err)
+	}
+	var roots []string
+	if err := json.Unmarshal(output, &roots); err != nil {
+		return nil, err
+	}
+	return roots, nil
+}
+
+// MacOSRegisteredDocumentRoots reads the catalog while its caller holds the
+// installation lock. The package calls it as the service account.
+func MacOSRegisteredDocumentRoots(ctx context.Context, cfg config.Config) (roots []string, result error) {
 	db, err := storage.Open(ctx, cfg.StateDirectory)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer func() { result = errors.Join(result, db.Close()) }()
 	rows, err := db.Reader.QueryContext(ctx, "SELECT canonical_path FROM storage_roots")
 	if err != nil {
 		return nil, fmt.Errorf("no se pudieron verificar las rutas documentales; se conservan los datos: %w", err)
@@ -205,9 +238,6 @@ func macOSDocumentRoots(cfg config.Config) ([]string, error) {
 // Solo nombres reservados o formatos generados por AIDEX. Lo desconocido se
 // conserva como posible documento, aunque esté dentro de una carpeta interna.
 func macOSInternalFile(path, configPath string) bool {
-	if strings.HasPrefix(path, "state/postgresql/") {
-		return storage.IsPostgresMetadata(strings.TrimPrefix(path, "state/postgresql/"))
-	}
 	if rotatedServiceLog.MatchString(path) || temporaryConfig.MatchString(path) {
 		return true
 	}
