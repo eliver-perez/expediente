@@ -1,5 +1,5 @@
 // Package maintenance implements explicit local maintenance while the service
-// is stopped. It never traverses library roots or removes a directory tree.
+// is stopped. It never traverses library roots.
 package maintenance
 
 import (
@@ -29,17 +29,57 @@ func recognizedArchive(path, configPath string) bool {
 // snapshots, and unknown files are deliberately left at their existing paths.
 // The caller must obtain explicit confirmation before invoking this operation.
 func EraseInternal(configPath string) error {
+	return eraseInternal(configPath, false)
+}
+
+// EraseWindowsInstallation also removes the stopped, private PostgreSQL cluster
+// owned by the Windows package. The caller has obtained explicit confirmation.
+func EraseWindowsInstallation(configPath string) error {
+	configPath = filepath.Clean(configPath)
+	if !filepath.IsAbs(configPath) || !strings.EqualFold(filepath.Base(configPath), "config.json") || !strings.EqualFold(filepath.Base(filepath.Dir(configPath)), "AIDEX") {
+		return fmt.Errorf("la eliminación completa requiere el área interna del paquete AIDEX")
+	}
+	return eraseInternal(configPath, true)
+}
+
+func eraseInternal(configPath string, windowsPackage bool) error {
+	if windowsPackage {
+		if err := regularWithoutLinks(configPath); err != nil {
+			return err
+		}
+	}
 	configuration, err := config.Load(configPath)
 	if err != nil {
+		if windowsPackage && os.IsNotExist(err) {
+			// A rerun after successful erasure is harmless. Without configuration,
+			// any remaining cluster could instead belong to a recoverable setup.
+			if _, statErr := os.Lstat(filepath.Join(filepath.Dir(configPath), "state", "postgresql")); os.IsNotExist(statErr) {
+				return nil
+			}
+			return fmt.Errorf("existe un clúster sin configuración verificable; se conservan los datos")
+		}
 		return err
+	}
+	state := configuration.StateDirectory
+	if windowsPackage {
+		if !strings.EqualFold(filepath.Clean(state), filepath.Join(filepath.Dir(configPath), "state")) {
+			return fmt.Errorf("el estado está fuera del área interna del paquete; se conservan los datos")
+		}
+		cluster := filepath.Join(state, "postgresql")
+		uploads := configuration.PrivateUploadDirectory()
+		if containsPath(cluster, uploads) || containsPath(uploads, cluster) {
+			return fmt.Errorf("las cargas se superponen con el clúster PostgreSQL; se conservan los datos")
+		}
 	}
 	unlock, err := storage.LockState(configuration.StateDirectory)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	state := configuration.StateDirectory
 	paths := []string{filepath.Join(state, "license", "installation.json"), filepath.Join(state, "license", "recovery.json")}
+	if windowsPackage {
+		paths = append(paths, filepath.Join(filepath.Dir(configPath), "connection.json"))
+	}
 	for _, pattern := range []string{filepath.Join(state, "license", "installation.previous-*.json"), configPath + ".before-license-*"} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
@@ -68,9 +108,12 @@ func EraseInternal(configPath string) error {
 		if err := regularWithoutLinks(path); err != nil {
 			return err
 		}
-
 	}
-	if storage.PostgresPresent(state) {
+	if windowsPackage {
+		if err := storage.ErasePrivatePostgres(state); err != nil {
+			return err
+		}
+	} else if storage.PostgresPresent(state) {
 		if err := storage.ResetPostgres(context.Background(), state); err != nil {
 			return err
 		}

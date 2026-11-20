@@ -6,7 +6,7 @@ $Source = Join-Path $PSScriptRoot '../packaging/windows/manage.ps1'
 $Tokens = $null; $Errors = $null
 $Ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$Tokens, [ref]$Errors)
 Assert-True (!$Errors.Count) 'Invalid manage script'
-foreach ($Name in @('Get-AidexServiceCommand','Assert-AidexServiceOwnership','Assert-NoLegacyServices','ConvertTo-AidexNativeArgument','Write-LauncherTarget')) {
+foreach ($Name in @('Get-AidexServiceCommand','Assert-AidexServiceOwnership','Assert-NoLegacyServices','ConvertTo-AidexNativeArgument','Write-LauncherTarget','Assert-PrivatePath','Remove-PackagedFiles','Remove-AidexInstallation')) {
     $Nodes = @($Ast.FindAll({param($Node) $Node -is [Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq $Name}, $true))
     Assert-True ($Nodes.Count -eq 1) "Missing $Name"
     . ([scriptblock]::Create($Nodes[0].Extent.Text))
@@ -75,6 +75,48 @@ try {
     Assert-True ($Saved.public_url -eq $URL -and $Saved.service_name -eq 'AIDEX') 'UTF-8 configuration corrupted'
     Assert-True ($Saved.PSObject.Properties.Name.Count -eq 2) 'Private configuration published'
 
+    & {
+        $Calls = [Collections.Generic.List[string]]::new()
+        function Stop-Aidex { $Calls.Add('stop') }
+        function Remove-AidexFirewall { $Calls.Add('firewall') }
+        function Get-Service { return [pscustomobject]@{ Name = 'AIDEX' } }
+        function Invoke-Native($Program, [string[]]$Arguments) {
+            $Calls.Add($Arguments[0])
+            if ($Arguments[0] -eq 'erase-windows-installation') {
+                Assert-True ($Arguments -contains '--confirm-erase-internal-data') 'Confirmation did not reach the native command'
+                if ($RejectErase) { throw 'Fixture refused erasure' }
+            }
+        }
+        function Remove-Item([string]$LiteralPath, [switch]$Force, [switch]$Recurse) {
+            if ($LiteralPath -eq 'HKLM:\Software\AIDEX') { $Calls.Add('registry'); return }
+            Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force:$Force -Recurse:$Recurse
+        }
+
+        foreach ($EraseInternalData in @($false, $true)) {
+            $Calls.Clear()
+            $Runtime = Join-Path $InstallRoot 'tools\postgresql\bin\postgres.exe'
+            New-Item -ItemType Directory -Path (Split-Path -Parent $Runtime) -Force | Out-Null
+            [IO.File]::WriteAllText($Runtime, 'runtime fixture')
+            $Unknown = Join-Path $InstallRoot 'tools\original.pdf'
+            [IO.File]::WriteAllText($Unknown, 'original fixture')
+            $Manifest = Join-Path $InstallRoot 'package-files.json'
+            @{path='tools/postgresql/bin/postgres.exe'; sha256=(Get-FileHash -LiteralPath $Runtime).Hash.ToLowerInvariant()} | ConvertTo-Json | Set-Content -LiteralPath $Manifest -Encoding UTF8
+            if ($EraseInternalData) {
+                $RejectErase = $true
+                $Rejected = $false
+                try { Remove-AidexInstallation } catch { $Rejected = ($_.Exception.Message -eq 'Fixture refused erasure') }
+                Assert-True ($Rejected -and ($Calls -join ',') -eq 'stop,erase-windows-installation' -and (Test-Path -LiteralPath $Runtime)) 'Failed erasure unregistered the service or removed its runtime'
+                $Calls.Clear()
+            }
+            $RejectErase = $false
+            Remove-AidexInstallation
+            $Expected = if ($EraseInternalData) { 'stop,erase-windows-installation,firewall,registry,delete' } else { 'stop,check-state,firewall,registry,delete' }
+            Assert-True (($Calls -join ',') -eq $Expected) "Unexpected removal sequence: $($Calls -join ',')"
+            Assert-True (!(Test-Path -LiteralPath (Join-Path $InstallRoot 'tools\postgresql'))) 'Packaged runtime survived'
+            Assert-True ([IO.File]::ReadAllText($Unknown) -eq 'original fixture') 'Unknown physical file changed'
+        }
+    }
+
     # On macOS replace only process launch/WindowStyle with pwsh. The actual
     # encoded command, PowerShell streams and UTF-16LE writer remain unchanged.
     if ($PSVersionTable.Platform -eq 'Unix') {
@@ -95,7 +137,7 @@ try {
     Assert-True ($Bytes[0] -eq 0xff -and $Bytes[1] -eq 0xfe) 'Missing UTF-16LE BOM'
     $Text = [IO.File]::ReadAllText($Log, [Text.Encoding]::Unicode)
     Assert-True ($Text.Contains($Message) -and $Text.Contains($Root)) 'Unicode message or path corrupted'
-    Write-Host 'PASS: production service identity, foreign path/account rejection, Unicode paths/messages and exit status.'
+    Write-Host 'PASS: production service identity, removal choices, PostgreSQL runtime cleanup, Unicode paths/messages and exit status.'
 } finally {
     Remove-Item -LiteralPath $Root -Recurse -Force
 }

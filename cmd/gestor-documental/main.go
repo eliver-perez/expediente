@@ -143,6 +143,16 @@ func run(ctx context.Context, ready func()) error {
 		}
 		return nil
 	}
+	if command == "erase-windows-installation" {
+		if runtime.GOOS != "windows" || !*confirmErase {
+			return fmt.Errorf("la eliminación completa requiere Windows y confirmación explícita")
+		}
+		if err := maintenance.EraseWindowsInstallation(*configurationPath); err != nil {
+			return err
+		}
+		fmt.Println("Eliminación del clúster PostgreSQL y de la configuración interna verificada.")
+		return nil
+	}
 	if command == "erase-internal-data" {
 		if !*confirmErase {
 			return fmt.Errorf("se requiere confirmar la eliminación de los datos internos; los documentos físicos se conservan")

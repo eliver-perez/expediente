@@ -140,12 +140,18 @@ function Remove-PackagedFiles {
     $Manifest = Join-Path $InstallRoot 'package-files.json'
     $Entries = Get-Content -LiteralPath $Manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     $RootPrefix = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
+    $Directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     # Validate the complete manifest before removing anything. Unknown or changed
     # files are preserved, even if someone placed documents in the program folder.
     foreach ($Entry in $Entries) {
         $Path = [IO.Path]::GetFullPath((Join-Path $InstallRoot $Entry.path))
         if (!$Path.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase) -or $Entry.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Manifiesto de programa inválido.' }
         Assert-PrivatePath $Path
+        $Parent = [IO.Path]::GetDirectoryName($Path)
+        while ($Parent.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            if (!$Directories.Add($Parent)) { break }
+            $Parent = [IO.Path]::GetDirectoryName($Parent)
+        }
     }
     foreach ($Entry in $Entries) {
         $Path = Join-Path $InstallRoot $Entry.path
@@ -156,7 +162,24 @@ function Remove-PackagedFiles {
         }
     }
     Remove-Item -LiteralPath $Manifest
-    # Leave directories in place; the installer only removes empty top-level folders.
+    foreach ($Directory in ($Directories | Sort-Object Length -Descending)) {
+        if ((Test-Path -LiteralPath $Directory -PathType Container) -and !(Get-ChildItem -LiteralPath $Directory -Force | Select-Object -First 1)) {
+            # The single-argument overload removes only empty directories.
+            [IO.Directory]::Delete($Directory)
+        }
+    }
+}
+function Remove-AidexInstallation {
+    Stop-Aidex
+    if ($EraseInternalData) {
+        Invoke-Native $Binary @('erase-windows-installation','--config',$Config,'--confirm-erase-internal-data')
+    } elseif (Test-Path -LiteralPath $Config) {
+        Invoke-Native $Binary @('check-state','--config',$Config)
+    }
+    Remove-AidexFirewall
+    Remove-Item -LiteralPath 'HKLM:\Software\AIDEX' -Recurse -Force -ErrorAction SilentlyContinue
+    if (Get-Service $ServiceName -ErrorAction SilentlyContinue) { Invoke-Native sc.exe @('delete',$ServiceName) }
+    Remove-PackagedFiles
 }
 function Authorize-AidexFolder {
     if ($Ticket -cnotmatch '^[a-f0-9]{64}$') { throw 'Solicitud de autorización inválida.' }
@@ -295,16 +318,8 @@ try {
         'Doctor' { Invoke-Native $Binary @('doctor','--config',$Config,'--sample-directory',(Join-Path $InstallRoot 'docs\pdf')) }
         'AuthorizeFolder' { Authorize-AidexFolder }
         'Remove' {
-            Stop-Aidex
-            if (Test-Path $Config) { Invoke-Native $Binary @('check-state','--config',$Config) }
-            Remove-AidexFirewall
-            Remove-Item -Path 'HKLM:\Software\AIDEX' -Recurse -Force -ErrorAction SilentlyContinue
-            if ($EraseInternalData -and (Test-Path $Config)) {
-                Invoke-Native $Binary @('erase-internal-data','--config',$Config,'--confirm-erase-internal-data')
-            }
-            if (Get-Service $ServiceName -ErrorAction SilentlyContinue) { Invoke-Native sc.exe @('delete',$ServiceName) }
-            Remove-PackagedFiles
-            if ($EraseInternalData) { Write-Host "Datos internos eliminados. Documentos físicos conservados; las cargas privadas permanecen en $DataRoot\state\uploads." }
+            Remove-AidexInstallation
+            if ($EraseInternalData) { Write-Host 'Clúster PostgreSQL y configuración interna eliminados. Los documentos físicos y las cargas privadas permanecen en sus rutas.' }
             else { Write-Host "Datos, configuración y documentos preservados en $DataRoot." }
         }
     }
