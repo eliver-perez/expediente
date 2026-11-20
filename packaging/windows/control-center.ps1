@@ -319,10 +319,10 @@ function Update-Controls {
 }
 function Start-Operation([string]$Action, [int]$SelectedPort = 0) {
     if ($script:Child) { return }
-    $Arguments = '-NoProfile -STA -NonInteractive -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Operation ' + $Action
-    if ($Action -eq 'Port') { $Arguments += ' -Port ' + $SelectedPort }
+    $Arguments = @('--control-operation', $Action)
+    if ($Action -eq 'Port') { $Arguments += [string]$SelectedPort }
     try {
-        $script:Child = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList $Arguments -WindowStyle Hidden -PassThru
+        $script:Child = Start-Process -FilePath $Launcher -Verb RunAs -ArgumentList $Arguments -WindowStyle Hidden -PassThru
         $Feedback.Text = 'Operación en curso. Espera un momento…'
         Update-Controls
     } catch {

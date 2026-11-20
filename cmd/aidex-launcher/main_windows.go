@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,8 +17,22 @@ import (
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--control-center" {
-		if err := openControlCenter(); err != nil {
+		if err := runControlCenter(nil); err != nil {
 			showMessage("No se pudo abrir el Centro de Control. Vuelve a ejecutar el instalador de AIDEX.")
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "--control-operation" {
+		arguments, ok := controlOperation(os.Args[2:])
+		if !ok {
+			os.Exit(1)
+		}
+		if err := runControlCenter(arguments); err != nil {
+			if process, ok := err.(*exec.ExitError); ok {
+				os.Exit(process.ExitCode())
+			}
+			showMessage("No se pudo abrir la operación administrativa de AIDEX.")
 			os.Exit(1)
 		}
 		return
@@ -62,7 +77,22 @@ func main() {
 	}
 }
 
-func openControlCenter() error {
+func controlOperation(input []string) ([]string, bool) {
+	if len(input) == 1 {
+		switch input[0] {
+		case "Start", "Stop", "Restart", "Setup":
+			return []string{"-Operation", input[0]}, true
+		}
+	}
+	if len(input) == 2 && input[0] == "Port" {
+		if port, err := strconv.Atoi(input[1]); err == nil && port >= 1 && port <= 65535 {
+			return []string{"-Operation", "Port", "-Port", strconv.Itoa(port)}, true
+		}
+	}
+	return nil, false
+}
+
+func runControlCenter(operation []string) error {
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -71,8 +101,8 @@ func openControlCenter() error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe"),
-		"-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(filepath.Dir(executable), "control-center.ps1"))
+	args := []string{"-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(filepath.Dir(executable), "control-center.ps1")}
+	cmd := exec.Command(filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe"), append(args, operation...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
 	return cmd.Run()
 }
