@@ -7,6 +7,8 @@ las licencias de estas dependencias.
 - Go y dependencias: inventario exacto en go.mod/go.sum del proyecto; runtime enlazado en el binario.
 - React y frontend: inventario en web/package-lock.json del proyecto, versiones compiladas.
 - macOS: Poppler/Tesseract/tesseract-lang instalados por Homebrew; este paquete no los redistribuye.
+- macOS ARM64: PostgreSQL 18.7 privado, compilado desde la fuente oficial.
+  El paquete incluye la licencia y el enlace y SHA-256 de la fuente en `third-party/postgresql/`.
 - Ubuntu: dependencias suministradas por los repositorios Ubuntu 24.04, avisos en /usr/share/doc de cada paquete.
 - Windows: compilaciones conda-forge. `windows-ocr.lock.json` identifica URL, versión, build, licencia y SHA256
   del paquete original. `docs/third-party/` conserva avisos, recetas de construcción y parches de sus proveedores.

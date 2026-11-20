@@ -17,6 +17,15 @@ fi
 if [ -f "$CONFIG" ] && [ ! -f "$BASE/data/package-version" ]; then
     echo '[AIDEX preinstall] Instalación parcial: se conservará y validará la configuración existente en postinstall.'
 fi
+if [ -f "$CONFIG" ]; then
+    STATE=$(/usr/bin/plutil -extract state_directory raw -o - "$CONFIG")
+    case "$STATE" in /*) ;; *) aidex_fail 'El directorio de estado configurado no es válido.';; esac
+    for FILE in "$STATE/documental.db" "$STATE/documental.db-wal" "$STATE/documental.db-shm"; do
+        if [ -e "$FILE" ] || [ -L "$FILE" ]; then
+            aidex_fail 'Esta instalación utiliza SQLite. Este paquete requiere una instalación nueva o existente con PostgreSQL. La instalación anterior sigue intacta.'
+        fi
+    done
+fi
 aidex_stage detener-servicio
 aidex_stop_service
 aidex_stage retirar-acceso-anterior

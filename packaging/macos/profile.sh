@@ -9,11 +9,11 @@ aidex_select_profile() {
     BINARY="$CODE/bin/aidex-server"
     LABEL=app.aidex
     PLIST="$prefix/Library/LaunchDaemons/app.aidex.plist"
-    for path in "$BINARY" "$CODE/bin/aidex-folder-helper" "$CODE/bin/aidex-folder-picker" "$prefix/Applications/AIDEX/Seleccionar carpeta AIDEX.app" "$prefix/Applications/AIDEX/Autorizar carpeta AIDEX.app" "$BASE" "$CODE" "$CONFIG" "$BASE/data/logs" "$BASE/data/package-version" "$BASE/data/service-enabled" "$PLIST" "$CODE/package-files.tsv" "$CODE/package-files.tsv.new"; do
+    for path in "$BINARY" "$CODE/bin/aidex-folder-helper" "$CODE/bin/aidex-folder-picker" "$CODE/bin/aidex-manage" "$CODE/bin/tools/postgresql" "$CODE/control" "$prefix/Applications/AIDEX/Centro de Control de AIDEX.app" "$prefix/Applications/AIDEX/Seleccionar carpeta AIDEX.app" "$prefix/Applications/AIDEX/Autorizar carpeta AIDEX.app" "$BASE" "$CODE" "$CONFIG" "$BASE/data/logs" "$BASE/data/package-version" "$BASE/data/service-enabled" "$PLIST" "$CODE/package-files.tsv" "$CODE/package-files.tsv.new"; do
         current=$path
         while [ "$current" != / ] && [ -n "$current" ]; do
             [ ! -L "$current" ] || { echo "Enlace no permitido: $current" >&2; return 1; }
-            current=$(dirname "$current")
+            current=$(/usr/bin/dirname "$current")
         done
     done
 }

@@ -31,8 +31,9 @@ PostgreSQL recoge las entidades, permisos, restricciones e índices existentes.
 - Clúster privado por instalación, binarios y datos separados, credenciales
   protegidas, autenticación SCRAM, acceso por loopback y puerto propio. El
   aprovisionamiento no debe usar ni modificar clústeres ajenos.
-- El instalador Windows incluye el runtime PostgreSQL 18.6 privado. El
-  empaquetado de macOS y Ubuntu AMD64/ARM64 sigue pendiente.
+- Windows incluye el runtime PostgreSQL 18.6 privado. macOS ARM64 incluye
+  PostgreSQL 18.7 compilado desde el código fuente oficial. El empaquetado
+  PostgreSQL de Ubuntu AMD64/ARM64 sigue pendiente.
 
 Referencias técnicas: [pgx stdlib](https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib),
 [búsqueda textual](https://www.postgresql.org/docs/18/textsearch-controls.html),
@@ -120,11 +121,21 @@ trust se limita a esa fixture; el aprovisionamiento del producto y sus pruebas
 usan SCRAM. `AIDEX_TEST_POSTGRES_DSN` solo sirve para aislar esquemas en pruebas
 con binarios de canal `source`; no configura los paquetes de producción.
 
+## Compilar el instalador de macOS
+
+`make installer-macos` genera el `.pkg` ARM64. El empaquetador verifica el
+SHA-256 del código fuente de PostgreSQL, compila contra el SDK de Apple para
+macOS 13 o posterior y comprueba las dependencias de cada binario y módulo.
+Para compilar sin conexión se puede pasar
+`--macos-postgres-source /ruta/postgresql-18.7.tar.bz2` a
+`python3 scripts/build_installers.py --target macos` una vez compilado el frontend.
+El paquete incluye los avisos y la referencia a la fuente verificada.
+
 ## Límites del empaquetado
 
 Se generó el instalador Windows AMD64 sin firma comercial. La reinstalación
 completa queda pendiente de la revisión de Microsoft Defender indicada en el
-registro de QA; no se añadieron exclusiones de antivirus. No se generaron
-instaladores macOS ni Ubuntu. La compilación cruzada no sustituye las pruebas
+registro de QA; no se añadieron exclusiones de antivirus. La compilación
+cruzada no sustituye las pruebas
 nativas pendientes en Ubuntu AMD64/ARM64. El servidor de licencias y la
 interfaz del producto se mantienen.

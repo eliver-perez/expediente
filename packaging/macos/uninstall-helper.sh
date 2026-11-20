@@ -7,6 +7,7 @@ umask 077
 CODE='/Library/Application Support/AIDEX'
 APP='/Applications/AIDEX/Desinstalar AIDEX.app'
 APPS='/Applications/AIDEX'
+CONTROL_APP="$APPS/Centro de Control de AIDEX.app"
 PLIST='/Library/LaunchDaemons/app.aidex.plist'
 RECEIPT='app.aidex'
 ACCOUNT='_aidex'
@@ -28,14 +29,14 @@ no_links() {
 
 allowed_file() {
     case "$1" in
-        "$CODE/bin/"*|"$CODE/docs/"*|"$CODE/profile.sh"|"$MANIFEST"|"$APPS/Configurar AIDEX.command"|"$APPS/Configurar puerto.command"|"$APPS/Desinstalar AIDEX.command"|"$APPS/Abrir AIDEX.webloc"|"$APP/Contents/"*|"$APPS/Autorizar carpeta AIDEX.app/Contents/"*|"$APPS/Seleccionar carpeta AIDEX.app/Contents/"*|"$PLIST") ;;
+        "$CODE/bin/"*|"$CODE/docs/"*|"$CODE/profile.sh"|"$MANIFEST"|"$APPS/Configurar AIDEX.command"|"$APPS/Configurar puerto.command"|"$APPS/Desinstalar AIDEX.command"|"$APPS/Abrir AIDEX.webloc"|"$APP/Contents/"*|"$APPS/Autorizar carpeta AIDEX.app/Contents/"*|"$APPS/Seleccionar carpeta AIDEX.app/Contents/"*|"$CONTROL_APP/Contents/"*|"$PLIST") ;;
         *) echo "Archivo ajeno al paquete: $1" >&2; return 1;;
     esac
     case "$1" in */../*|*/./*|*/..|*/.|*'//'*) echo 'Ruta insegura en inventario.' >&2; return 1;; esac
     no_links "$1"
 }
 
-for path in "$CODE" "$CONFIG" "$MANIFEST" "$PLIST" "$APPS" "$APP"; do no_links "$path"; done
+for path in "$CODE" "$CODE/control" "$CONFIG" "$MANIFEST" "$PLIST" "$APPS" "$APP" "$CONTROL_APP"; do no_links "$path"; done
 
 # El inventario con SHA-256 es el principal. En una instalación parcial puede
 # faltar; el recibo de pkgutil es la alternativa para archivos de este paquete.
@@ -95,6 +96,11 @@ if [ "$ERASED" = yes ] && [ -d "$CODE/Documentos conservados" ]; then
     /usr/bin/sudo "$CODE/bin/aidex-folder-helper" preserve-archive
 fi
 
+# These two local views contain only status generated from the private state.
+if [ -d "$CODE/control" ]; then
+    /usr/bin/sudo -u "$ACCOUNT" /bin/rm -f "$CODE/control/endpoint.json" "$CODE/control/database.json"
+fi
+
 SKIPPED=0
 while IFS="$TAB" read -r HASH FILE; do
     [ -f "$FILE" ] || continue
@@ -107,10 +113,10 @@ done < "$LIST"
 
 # Solo se eliminan directorios vacíos de ubicaciones fijas del paquete.
 /bin/rm -f "$MANIFEST"
-for tree in "$APPS/Seleccionar carpeta AIDEX.app" "$APPS/Autorizar carpeta AIDEX.app" "$APP" "$CODE/docs"; do
+for tree in "$APPS/Seleccionar carpeta AIDEX.app" "$APPS/Autorizar carpeta AIDEX.app" "$APP" "$CONTROL_APP" "$CODE/docs" "$CODE/bin/tools"; do
     [ ! -d "$tree" ] || /usr/bin/find "$tree" -depth -type d -exec /bin/rmdir '{}' \; 2>/dev/null || true
 done
-for directory in "$APPS" "$CODE/bin" "$CODE"; do
+for directory in "$APPS" "$CODE/control" "$CODE/bin" "$CODE"; do
     [ ! -d "$directory" ] || /bin/rmdir "$directory" 2>/dev/null || true
 done
 if /usr/sbin/pkgutil --pkg-info "$RECEIPT" >/dev/null 2>&1; then

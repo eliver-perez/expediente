@@ -19,6 +19,8 @@ import tarfile
 import tempfile
 import zipfile
 
+from macos_postgresql import build_postgresql
+
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "1.0.0"
 PACKAGE_REVISION = ""
@@ -101,7 +103,26 @@ def macos_uninstaller(destination, work):
     run(["codesign", "--verify", "--deep", "--strict", destination])
 
 
-def macos(output, work):
+def macos_control_center(destination, icon, work):
+    name = "Centro de Control de AIDEX"
+    contents = destination / "Contents"
+    executable = contents / "MacOS/AIDEXControlCenter"
+    executable.parent.mkdir(parents=True)
+    run(["/usr/bin/swiftc", "-swift-version", "5", "-O", "-target", "arm64-apple-macosx13.0",
+         "-module-cache-path", work / "swift-cache", "-o", executable,
+         ROOT / "packaging/macos/ControlCenter.swift", ROOT / "packaging/macos/ControlService.swift"])
+    copy(icon, contents / "Resources/aidex.icns")
+    (contents / "Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleIdentifier": "mx.com.aidex.control-center", "CFBundleName": name, "CFBundleDisplayName": name,
+        "CFBundleExecutable": executable.name, "CFBundlePackageType": "APPL", "CFBundleIconFile": "aidex.icns",
+        "CFBundleDevelopmentRegion": "es", "CFBundleVersion": VERSION, "CFBundleShortVersionString": VERSION,
+        "LSMinimumSystemVersion": "13.0", "NSHighResolutionCapable": True,
+    }))
+    run(["codesign", "--force", "--sign", "-", destination])
+    run(["codesign", "--verify", "--strict", destination])
+
+
+def macos(output, work, postgres_source):
     payload = work / "root"
     base = payload / "Library/Application Support/AIDEX"
     binary(base / "bin/aidex-server", "darwin", "arm64")
@@ -115,11 +136,16 @@ def macos(output, work):
          "./cmd/macos-folder-helper"], env=helper_environment)
     run(["codesign", "--force", "--sign", "-", base / "bin/aidex-folder-helper"])
     documents(base / "docs")
+    build_postgresql(postgres_source, base / "bin/tools/postgresql", base / "docs", work)
     copy(ROOT / "packaging/macos/profile.sh", base / "profile.sh")
+    copy(ROOT / "packaging/macos/installer-common.sh", base / "bin/installer-common.sh")
+    copy(ROOT / "packaging/macos/manage.sh", base / "bin/aidex-manage", 0o755)
     apps = payload / "Applications/AIDEX"
     for source, name in [("admin.command", "Configurar AIDEX.command"), ("port.command", "Configurar puerto.command")]:
         copy(ROOT / "packaging/macos" / source, apps / name, 0o755)
     macos_uninstaller(apps / "Desinstalar AIDEX.app", work)
+    macos_control_center(apps / "Centro de Control de AIDEX.app",
+                         apps / "Desinstalar AIDEX.app/Contents/Resources/aidex.icns", work)
     authorization_app = apps / "Autorizar carpeta AIDEX.app"
     run(["osacompile", "-o", authorization_app, ROOT / "packaging/macos/authorize-folder.applescript"])
     info = authorization_app / "Contents/Info.plist"
@@ -534,6 +560,8 @@ def main():
     parser.add_argument("--windows-runtime-payload", type=Path,
                         help="Extracted prior installer payload; verify OCR files against its SHA manifest and current lock")
     parser.add_argument("--makensis")
+    parser.add_argument("--macos-postgres-source", type=Path,
+                        help="Local copy of the pinned PostgreSQL source archive for an offline build")
     parser.add_argument("--windows-postgres-archive", type=Path,
                         help="Pinned EDB PostgreSQL 18 Windows x64 binary archive")
     parser.add_argument("--powershell", help="PowerShell parser for Windows scripts (prefers Windows PowerShell 5.1 on Windows)")
@@ -556,7 +584,10 @@ def main():
                 for architecture in architectures:
                     ubuntu(output, work / architecture, architecture)
             else:
-                macos(output, work)
+                macos(output, work, args.macos_postgres_source)
+    if targets == ["macos"]:
+        print(f"Installer: {output / f'AIDEX-{VERSION}-macOS-arm64.pkg'}")
+        return
     documents(output / "LEEME")
     if "ubuntu" in targets:
         for name in ["prepare-offline.sh", "install-offline.sh"]:

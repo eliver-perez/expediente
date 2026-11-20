@@ -116,11 +116,11 @@ PostgreSQL privado requiere un sistema de archivos local verificado. Documentos 
 verificados. Cambiar estado/temporal requiere mantenimiento y plan explícito;
 cambiar destino futuro de biblioteca no mueve sus archivos históricos.
 
-## Paquetes anteriores y preparación PostgreSQL
+## Paquetes con PostgreSQL
 
-La rama `feature/postgresql` no genera ni modifica instaladores. Los paquetes
-preexistentes no contienen este motor. La integración de binarios y servicios en
-cada instalador se realizará cuando se solicite expresamente. Ver [PostgreSQL](docs/POSTGRESQL.md).
+Los instaladores de Windows y macOS ARM64 en `feature/postgresql` incluyen
+PostgreSQL privado y pueden actualizar instalaciones de AIDEX que ya usan
+ese motor. Consulta la [compilación y el empaquetado](docs/POSTGRESQL.md).
 
 Primera edición comercial: AIDEX 1.0; versión técnica 1.0.0. Windows amd64, Ubuntu 24.04 amd64/arm64 y macOS Apple Silicon arm64; Intel queda excluido. Cuatro paquetes en dist/aidex-1.0.0. Instalación nueva: servicio Windows AIDEX, Ubuntu aidex.service y macOS app.aidex; backend aidex-server (en Windows .exe), launcher AIDEX.exe.
 

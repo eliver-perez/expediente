@@ -52,6 +52,7 @@ fi
 aidex_stage preparar-directorios
 /usr/bin/dscl . -create /Users/$ACCOUNT RealName 'AIDEX'
 /usr/bin/install -d -o "$ACCOUNT" -g "$ACCOUNT" -m 700 "$BASE/data" "$BASE/data/logs"
+/usr/bin/install -d -o "$ACCOUNT" -g "$ACCOUNT" -m 755 "$CODE/control"
 aidex_stage detener-servicio
 aidex_stop_service
 aidex_stage validar-configuracion
@@ -90,50 +91,13 @@ HASH=$(/usr/bin/shasum -a 256 "$PLIST" | /usr/bin/cut -d ' ' -f 1)
 /bin/mv "$CODE/package-files.tsv.new" "$CODE/package-files.tsv"
 # Distinguir la ausencia normal del primer administrador de un error real.
 aidex_stage verificar-administrador
-# Su salida/código se resuelve abajo; no heredar ERR en esta consulta esperada.
-if READY_OUTPUT=$(trap - ERR; /usr/bin/sudo -u "$ACCOUNT" "$BINARY" bootstrap-ready --config "$CONFIG" 2>&1); then
-    :
-else
-    READY_STATUS=$?
-    if [ "$READY_OUTPUT" = 'Error: falta crear el primer administrador' ]; then
-        echo '[AIDEX postinstall] Instalación completada. Abre Aplicaciones → AIDEX → Configurar AIDEX.command para crear el primer administrador e iniciar el servicio.'
-        exit 0
-    fi
-    aidex_fail "No se pudo verificar el administrador (bootstrap-ready, código $READY_STATUS). No se inició el servicio; los datos se conservan."
-fi
-aidex_stage verificar-puerto
-ADDRESS=$(/usr/bin/plutil -extract listen_address raw -o - "$CONFIG")
-PORT=${ADDRESS##*:}
-case "$PORT" in *[!0-9]*|'') aidex_fail 'Puerto configurado inválido; se conservan los datos.';; esac
-[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || aidex_fail 'Puerto configurado fuera de intervalo.'
-if /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && ! /bin/launchctl print "system/$LABEL" >/dev/null 2>&1; then
-    aidex_fail "El puerto $PORT está ocupado por otro proceso. Revisa Configurar puerto.command. Los datos se conservaron."
-fi
-aidex_stage habilitar-servicio
-/bin/launchctl enable "system/$LABEL"
-# Si el trabajo volvió a cargarse, retirar su definición antes de registrar el
-# plist reparado. kickstart reinicia el proceso con los argumentos almacenados
-# por launchd y podría conservar los duplicados de una definición anterior.
-if /bin/launchctl print "system/$LABEL" >/dev/null 2>&1; then
-    aidex_stage retirar-definicion-cargada
-    aidex_stop_service
-fi
-aidex_stage registrar-servicio
-/bin/launchctl bootstrap system "$PLIST"
-aidex_stage verificar-respuesta-http
-HEALTH_HOST=${ADDRESS%:*}
-case "$HEALTH_HOST" in 0.0.0.0) HEALTH_HOST=127.0.0.1;; '[::]') HEALTH_HOST='[::1]';; esac
-ATTEMPT=0
-while [ "$ATTEMPT" -lt 30 ]; do
-    if /usr/bin/curl --noproxy '*' -fsS --connect-timeout 1 --max-time 2 "http://$HEALTH_HOST:$PORT/health/live" 2>/dev/null | /usr/bin/grep -q '"product":"AIDEX"'; then
-        if [ ! -f "$BASE/data/service-enabled" ]; then
-            /usr/bin/sudo -u "$ACCOUNT" /usr/bin/touch "$BASE/data/service-enabled"
-        fi
-        aidex_stage completado
-        echo "Servicio AIDEX operativo en el puerto $PORT."
-        exit 0
-    fi
-    ATTEMPT=$((ATTEMPT + 1))
-    /bin/sleep 1
-done
-aidex_fail "El servicio no respondió en el puerto $PORT dentro del plazo de comprobación. Revisa data/logs/service.log; los datos se conservaron."
+READY=$(/usr/bin/sudo -u "$ACCOUNT" "$BINARY" bootstrap-status --config "$CONFIG")
+case "$READY" in
+    required)
+        echo '[AIDEX postinstall] Instalación completada. Abre Aplicaciones → AIDEX → Centro de Control de AIDEX para crear el primer administrador.'
+        exit 0;;
+    configured) ;;
+    *) aidex_fail 'No se pudo verificar el administrador. Los datos se conservan.';;
+esac
+aidex_start_service replace
+aidex_stage completado
