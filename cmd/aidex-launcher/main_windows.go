@@ -104,6 +104,13 @@ func runControlCenter(operation []string) error {
 	args := []string{"-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(filepath.Dir(executable), "control-center.ps1")}
 	cmd := exec.Command(filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe"), append(args, operation...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
+	if len(operation) == 0 {
+		// The resident form doesn't need a launcher process holding AIDEX.exe open.
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		return cmd.Process.Release()
+	}
 	return cmd.Run()
 }
 
