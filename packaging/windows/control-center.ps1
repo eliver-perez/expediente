@@ -4,6 +4,7 @@ param([ValidateSet('Start','Stop','Restart','Port','Setup')][string]$Operation,
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+Add-Type -Path (Join-Path $PSScriptRoot 'control-appearance.cs') -ReferencedAssemblies @('System.Windows.Forms.dll','System.Drawing.dll')
 [Windows.Forms.Application]::EnableVisualStyles()
 
 $Ink = [Drawing.ColorTranslator]::FromHtml('#20373d')
@@ -14,13 +15,14 @@ $Background = [Drawing.ColorTranslator]::FromHtml('#f4f6f1')
 $Manage = Join-Path $PSScriptRoot 'manage.ps1'
 $Server = Join-Path $PSScriptRoot 'aidex-server.exe'
 $Launcher = Join-Path $PSScriptRoot 'AIDEX.exe'
+$BrandIcon = Join-Path $PSScriptRoot 'aidex.ico'
 $Data = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'AIDEX'
 
 function Show-Notice([string]$Message, [Windows.Forms.MessageBoxIcon]$Icon = 'Information') {
     [Windows.Forms.MessageBox]::Show($Message, 'Centro de Control de AIDEX', [Windows.Forms.MessageBoxButtons]::OK, $Icon) | Out-Null
 }
 function New-Button([string]$Text, [bool]$Primary = $false) {
-    $Button = [Windows.Forms.Button]::new()
+    $Button = [Aidex.ControlCenter.ActionButton]::new()
     $Button.Text = $Text
     $Button.AutoSize = $true
     $Button.MinimumSize = [Drawing.Size]::new(0, 36)
@@ -40,7 +42,7 @@ function New-Label([string]$Text, [bool]$Heading = $false) {
     return $Label
 }
 function New-Form([string]$Title, [Drawing.Size]$Size) {
-    $Window = [Windows.Forms.Form]::new()
+    $Window = [Aidex.ControlCenter.BrandedForm]::new($Launcher, $BrandIcon)
     $Window.Text = $Title
     $Window.StartPosition = 'CenterScreen'
     $Window.Font = [Drawing.Font]::new('Segoe UI', [single]10)
@@ -50,7 +52,6 @@ function New-Form([string]$Title, [Drawing.Size]$Size) {
     $Window.MinimizeBox = $false
     $Window.MaximizeBox = $false
     $Window.FormBorderStyle = 'FixedDialog'
-    $Window.Icon = [Drawing.Icon]::ExtractAssociatedIcon($Launcher)
     return $Window
 }
 function New-Column {
@@ -251,9 +252,9 @@ $StopButton = New-Button 'Detener'
 $RestartButton = New-Button 'Reiniciar'
 $ServiceActions.Controls.AddRange(@($StartButton, $StopButton, $RestartButton))
 $Body.Controls.Add($ServiceActions)
-$Body.Controls.Add((New-Label 'PostgreSQL privado' $true))
+$Body.Controls.Add((New-Label 'Servidor de base de datos' $true))
 $DatabaseState = New-Label 'Consultando…'
-$DatabaseState.AccessibleName = 'Estado de PostgreSQL privado'
+$DatabaseState.AccessibleName = 'Estado del servidor de base de datos'
 $Body.Controls.Add($DatabaseState)
 $PortTitle = New-Label 'Puerto de AIDEX' $true
 $PortTitle.Margin = [Windows.Forms.Padding]::new(3, 8, 3, 0)
@@ -266,6 +267,11 @@ $PortField.Maximum = 65535
 $PortField.Value = 18090
 $PortField.Width = 96
 $PortField.Margin = [Windows.Forms.Padding]::new(3, 8, 6, 3)
+$PortField.Add_EnabledChanged({
+    param($Field, $EventArgs)
+    $Field.BackColor = if ($Field.Enabled) { [Drawing.SystemColors]::Window } else { [Drawing.Color]::FromArgb(232, 236, 234) }
+    $Field.ForeColor = if ($Field.Enabled) { [Drawing.SystemColors]::WindowText } else { [Drawing.Color]::FromArgb(77, 88, 84) }
+})
 $SavePort = New-Button 'Cambiar puerto'
 $CurrentPort = New-Label 'Consultando puerto…'
 $CurrentPort.Margin = [Windows.Forms.Padding]::new(7, 11, 3, 3)
@@ -314,7 +320,7 @@ function Update-Controls {
     $SavePort.Enabled = $PortField.Enabled
     if ($script:Status.Port -gt 0) {
         if ($script:LastPort -ne $script:Status.Port) { $PortField.Value = $script:Status.Port; $script:LastPort = $script:Status.Port }
-        $CurrentPort.Text = "Actual: $($script:Status.Port)"
+        $CurrentPort.Text = "Puerto actual: $($script:Status.Port)"
     } else { $CurrentPort.Text = 'Puerto no disponible' }
 }
 function Start-Operation([string]$Action, [int]$SelectedPort = 0) {
@@ -341,7 +347,7 @@ $SavePort.Add_Click({
     if ($Confirm -eq 'Yes') { Start-Operation 'Port' ([int]$PortField.Value) }
 })
 $DiagnosticButton.Add_Click({
-    $Lines = @("Servicio: $($ServiceState.Text)", "PostgreSQL: $($DatabaseState.Text)", "Puerto de AIDEX: $($script:Status.Port)")
+    $Lines = @("Servicio: $($ServiceState.Text)", "Servidor de base de datos: $($DatabaseState.Text)", "Puerto de AIDEX: $($script:Status.Port)")
     try {
         $Event = Get-WinEvent -FilterHashtable @{ LogName='Application'; ProviderName='AIDEX'; Level=2 } -MaxEvents 1
         $Cause = switch -Regex ($Event.Message) {
@@ -375,10 +381,10 @@ $Timer.Add_Tick({
     }
     if ($script:Probe -and $script:Probe.HasExited) {
         $DatabaseState.Text = switch ($script:Probe.ExitCode) {
-            0 { 'En ejecución y aceptando conexiones' }
+            0 { 'En ejecución' }
             1 { 'Iniciando o deteniéndose' }
-            2 { if ($script:Status.Service -eq 'Stopped') { 'Detenido' } else { 'No responde. Consulta Diagnóstico.' } }
-            default { 'No se pudo comprobar' }
+            2 { if ($script:Status.Service -eq 'Stopped') { 'Detenido' } else { 'No disponible' } }
+            default { 'No disponible' }
         }
         $script:Probe.Dispose()
         $script:Probe = $null
@@ -388,7 +394,7 @@ $Timer.Add_Tick({
         if (!$script:Probe) {
             try { $script:Probe = Start-DatabaseProbe $script:Status.Postgres }
             catch { $script:Probe = $null }
-            if (!$script:Probe) { $DatabaseState.Text = 'No se pudo comprobar el puerto privado.' }
+            if (!$script:Probe) { $DatabaseState.Text = 'No disponible' }
         }
         $script:NextProbe = [DateTime]::UtcNow.AddSeconds(4)
     }

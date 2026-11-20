@@ -475,6 +475,7 @@ def windows(output, work, prefix, makensis, postgres_archive, powershell=None, p
     payload = work / "root"
     copy(ROOT / "packaging/windows/manage.ps1", payload / "manage.ps1", template=True)
     copy(ROOT / "packaging/windows/control-center.ps1", payload / "control-center.ps1", template=True)
+    copy(ROOT / "packaging/windows/control-appearance.cs", payload / "control-appearance.cs")
     copy(ROOT / "packaging/windows/installer-action.ps1", payload / "installer-action.ps1", template=True)
     run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-File", ROOT / "scripts/check_windows_script.ps1", "-Path", payload / "manage.ps1"])

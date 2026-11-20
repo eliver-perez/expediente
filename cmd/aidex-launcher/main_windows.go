@@ -147,12 +147,12 @@ func openApplication() string {
 	}
 	file, err := os.Open(publicPath)
 	if err != nil {
-		return "Falta la dirección de AIDEX. Ejecuta «Configurar AIDEX» desde Inicio."
+		return "Falta la dirección de AIDEX. Abre «Centro de Control de AIDEX» desde Inicio."
 	}
 	target, serviceName, err := launcher.ReadInstallation(file)
 	file.Close()
 	if err != nil {
-		return "La dirección de AIDEX no es válida. Ejecuta «Configurar AIDEX» desde Inicio."
+		return "La dirección de AIDEX no es válida. Abre «Centro de Control de AIDEX» desde Inicio."
 	}
 	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
@@ -162,7 +162,7 @@ func openApplication() string {
 	name, _ := windows.UTF16PtrFromString(serviceName)
 	service, err := windows.OpenService(manager, name, windows.SERVICE_QUERY_STATUS)
 	if err != nil {
-		return "El servicio de AIDEX no está disponible. Ejecuta «Configurar AIDEX» desde Inicio."
+		return "El servicio de AIDEX no está disponible. Abre «Centro de Control de AIDEX» desde Inicio."
 	}
 	defer windows.CloseServiceHandle(service)
 	deadline := time.Now().Add(15 * time.Second)
@@ -175,7 +175,7 @@ func openApplication() string {
 			break
 		}
 		if status.CurrentState != windows.SERVICE_START_PENDING || time.Now().After(deadline) {
-			return "AIDEX todavía no está iniciado.\n\nSi acabas de encender la PC, espera un momento y vuelve a abrirlo.\n\nSi es la primera vez o el problema continúa, ejecuta «Configurar AIDEX» desde Inicio o solicita ayuda al administrador."
+			return "AIDEX todavía no está iniciado.\n\nSi acabas de encender la PC, espera un momento y vuelve a abrirlo.\n\nSi es la primera vez o el problema continúa, abre «Centro de Control de AIDEX» desde Inicio o solicita ayuda al administrador."
 		}
 		time.Sleep(250 * time.Millisecond)
 	}

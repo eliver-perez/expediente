@@ -30,11 +30,11 @@ BrandingText "AIDEX — Tu biblioteca digital, ordenada y al alcance."
 ; Texto informativo de bienvenida; el CLUF se acepta en la aplicación.
 !define MUI_WELCOMEPAGE_TITLE "Bienvenido al Asistente de Instalación de AIDEX 1.0.0."
 !define MUI_WELCOMEPAGE_TITLE_3LINES
-!define MUI_WELCOMEPAGE_TEXT "Al finalizar la instalación, abre Configurar AIDEX para crear la cuenta del administrador e iniciar el servicio.$\r$\n$\r$\nEn el primer acceso deberás leer y aceptar el Contrato de Licencia de Usuario Final (CLUF) para utilizar las funciones de AIDEX. Posteriormente podrás activar tu licencia.$\r$\n$\r$\nSi ya tienes una instalación de AIDEX, el asistente conservará sus datos y configuración durante la actualización."
+!define MUI_WELCOMEPAGE_TEXT "Al finalizar la instalación, abre Centro de Control de AIDEX para crear la cuenta del administrador e iniciar el servicio.$\r$\n$\r$\nEn el primer acceso deberás leer y aceptar el Contrato de Licencia de Usuario Final (CLUF) para utilizar las funciones de AIDEX. Posteriormente podrás activar tu licencia.$\r$\n$\r$\nSi ya tienes una instalación de AIDEX, el asistente conservará sus datos y configuración durante la actualización."
 !insertmacro MUI_PAGE_WELCOME
 Page custom PortPage PortPageLeave
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TEXT "Abre Configurar AIDEX desde Inicio para crear el administrador e iniciar el servicio. Al entrar por primera vez, lee y acepta el CLUF antes de utilizar el sistema.$\r$\n$\r$\nDespués usa AIDEX desde el Escritorio o Inicio: abrirá el navegador sin pedir permisos de administrador."
+!define MUI_FINISHPAGE_TEXT "Abre Centro de Control de AIDEX desde Inicio para crear el administrador e iniciar el servicio. Al entrar por primera vez, lee y acepta el CLUF antes de utilizar el sistema.$\r$\n$\r$\nDespués usa AIDEX desde el Escritorio o Inicio: abrirá el navegador sin pedir permisos de administrador."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.DataOptions un.ConfirmDataOptions
@@ -195,12 +195,13 @@ Section "Instalar"
     ${EndIf}
     WriteUninstaller "$INSTDIR\Desinstalar.exe"
     CreateDirectory "$SMPROGRAMS\AIDEX"
-    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk" "$INSTDIR\AIDEX.exe" "--control-center"
-    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar servidor AIDEX.lnk" "$INSTDIR\server-port.cmd"
+    Delete "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Centro de Control de AIDEX.lnk" "$INSTDIR\AIDEX.exe" "--control-center" "$INSTDIR\aidex.ico" 0
+    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar servidor AIDEX.lnk" "$INSTDIR\server-port.cmd" "" "$INSTDIR\aidex.ico" 0
     CreateShortCut "$SMPROGRAMS\AIDEX\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
     Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"
-    CreateShortCut "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk" "$INSTDIR\AIDEX.exe"
-    CreateShortCut "$DESKTOP\AIDEX.lnk" "$INSTDIR\AIDEX.exe"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk" "$INSTDIR\AIDEX.exe" "" "$INSTDIR\aidex.ico" 0
+    CreateShortCut "$DESKTOP\AIDEX.lnk" "$INSTDIR\AIDEX.exe" "" "$INSTDIR\aidex.ico" 0
     ; The browser sends only a one-use random ticket to the local launcher.
     ; The launcher invokes the installed utility with UAC; no path is accepted
     ; from the URL, and the service API itself never modifies ACLs.
@@ -251,6 +252,7 @@ Section "Uninstall"
     ${EndIf}
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDEX"
     Delete "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk"
+    Delete "$SMPROGRAMS\AIDEX\Centro de Control de AIDEX.lnk"
     Delete "$SMPROGRAMS\AIDEX\Configurar servidor AIDEX.lnk"
     Delete "$SMPROGRAMS\AIDEX\Desinstalar.lnk"
     Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.lnk"
