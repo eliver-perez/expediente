@@ -34,6 +34,8 @@ La investigación posterior de eventos, hashes, código y componentes está en [
 
 El 20 de noviembre, Defender dejó de detectar localmente el instalador y el ejecutable exactos con la inteligencia `1.463.374.0`. Microsoft mostró el envío como `Completed` y mantuvo `Final determination: Pending`. La reinstalación del paquete original sigue pendiente. El [seguimiento](defender-windows-20261113.md#seguimiento-del-20-de-noviembre-de-2026) distingue esos resultados de las comprobaciones del servicio con el paquete posterior.
 
+Ese mismo día el titular confirmó el cierre favorable del caso por parte del analista de Microsoft. Se completó la reinstalación con el EXE original, sin reconstruirlo. El instalador terminó con código 0, la protección en tiempo real permaneció activa y Defender no registró detecciones nuevas. AIDEX arrancó en el puerto 18090 con PostgreSQL 18.6, conservó el clúster, los datos, el usuario y la configuración, y aceptó el inicio de sesión del usuario existente. Queda validada la reinstalación que había quedado pendiente. [Resultados y comprobaciones](defender-windows-20261113.md#cierre-del-caso-por-microsoft-y-reinstalación)
+
 ## Evidencia
 
 Registros locales ignorados por Git: `.tools/packaging/build.log`, `smoke-result.json`, `continue-result.json`, `service-diagnostic.txt`, `cleanup-result.json`, `ms-submit.log`, `ms-submission-result.txt` y `aidex-server-defender-sample.zip`. Los JSON de resultados no contienen la contraseña temporal; su archivo se borró tras la prueba. `scripts/build_installers.py`, `packaging/windows/installer.nsi`, `packaging/windows/postgresql.lock.json`, `packaging/windows/manage.ps1` y `scripts/check_production_packages.py` son los archivos de producto y paquete modificados.
