@@ -45,7 +45,7 @@ jobs:
       - if: runner.os != 'Windows'
         run: python3 scripts/build_installers.py --target ${{ matrix.target }}
       - if: runner.os == 'macOS'
-        run: python3 scripts/smoke_macos_installer.py dist/aidex-1.0.0/AIDEX-1.0.0-macOS-arm64.pkg
+        run: python3 scripts/smoke_macos_lifecycle.py dist/aidex-1.0.0/AIDEX-1.0.0-macOS-arm64.pkg
       - if: runner.os == 'Linux'
         run: dpkg-deb --info dist/aidex-1.0.0/aidex_1.0.0_amd64.deb
       - if: runner.os == 'Windows'

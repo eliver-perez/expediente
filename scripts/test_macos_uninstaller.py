@@ -44,6 +44,9 @@ class UninstallerTest(unittest.TestCase):
         self.selection=self.apps/'Seleccionar carpeta AIDEX.app/Contents/MacOS/applet'
         self.selection.parent.mkdir(parents=True)
         self.selection.write_text('aplicación selectora de prueba')
+        self.control_center=self.apps/'Centro de Control de AIDEX.app/Contents/MacOS/AIDEXControlCenter'
+        self.control_center.parent.mkdir(parents=True)
+        self.control_center.write_text('centro de control de prueba')
         self.receipt.write_text("installed")
         self.running.write_text("running")
         self.fake = self.root / "fake"
@@ -77,7 +80,7 @@ class UninstallerTest(unittest.TestCase):
         self.script.chmod(0o755)
 
     def write_manifest(self):
-        files = [self.binary, self.folder_helper, self.picker, self.selection, self.plist, self.apps / "Abrir AIDEX.webloc",
+        files = [self.binary, self.folder_helper, self.picker, self.selection, self.control_center, self.plist, self.apps / "Abrir AIDEX.webloc",
                  self.app / "Contents/Resources/uninstall-helper.sh"]
         self.manifest.write_text("".join(hashlib.sha256(path.read_bytes()).hexdigest() + "\t" + str(path) + "\n" for path in files))
 
@@ -98,6 +101,7 @@ class UninstallerTest(unittest.TestCase):
         self.assertFalse(self.binary.exists())
         self.assertFalse(self.picker.exists())
         self.assertFalse(self.selection.exists())
+        self.assertFalse(self.control_center.parent.parent.parent.exists())
         self.assertFalse(self.plist.exists())
         self.assertFalse(self.running.exists())
         self.assertFalse(self.receipt.exists())

@@ -63,7 +63,7 @@ elif name == 'sudo':
     if op == 'recover-macos-installation':
         # Doble del inventario para probar la orquestación del shell. Las
         # decisiones de seguridad se prueban con Go y con el binario del PKG.
-        if (config.parent/'state/documental.db').exists():
+        if (config.parent/'state/documental.db').exists() or (config.parent/'state/postgresql').exists():
             print('Error: falta config.json: base de datos potencialmente recuperable; no se inicializó ni borró ningún dato',file=sys.stderr)
             rc=1
         else:
@@ -75,9 +75,11 @@ elif name == 'sudo':
         if config.exists(): sys.exit(22)
         config.write_text(json.dumps({'listen_address':'127.0.0.1:18090'}))
     elif op == 'migrate' and s.get('migration_error'): rc=73
-    elif op == 'bootstrap-ready':
+    elif op in ('bootstrap-ready', 'bootstrap-status'):
         if s.get('ready_error'):
             print('Error: synthetic database failure',file=sys.stderr); rc=1
+        elif op == 'bootstrap-status':
+            print('configured' if s['admin'] else 'required')
         elif not s['admin']:
             print('Error: falta crear el primer administrador',file=sys.stderr); rc=1
 elif name == 'launchctl':
@@ -85,6 +87,7 @@ elif name == 'launchctl':
     if a[0] == 'print':
         if s.get('probe_error'): rc=s['probe_error']
         elif not s['loaded']: rc=113
+        elif s.get('native_pid'): print('state = running')
         else: print('state = waiting')
     elif a[0] == 'bootout':
         if s.get('bootout_error'):
@@ -119,7 +122,7 @@ elif name == 'launchctl':
         if not s['loaded']: rc=5
         else: s['loaded_arguments']=plistlib.loads(pathlib.Path(s['plist']).read_bytes())['ProgramArguments']
 elif name == 'install':
-    for p in a[-2:]: pathlib.Path(p).mkdir(parents=True,exist_ok=True)
+    for p in a[7:]: pathlib.Path(p).mkdir(parents=True,exist_ok=True)
 elif name == 'lsof': rc=0 if s.get('occupied') else 1
 elif name == 'curl':
     s['health_urls'].append(a[-1])
@@ -149,8 +152,8 @@ class InstallScriptsTest(unittest.TestCase):
         self.data = self.base/'data'
         self.data.mkdir(parents=True)
         self.config = self.data/'config.json'
-        self.config.write_text('{"listen_address":"127.0.0.1:18973","fixture":"conservar"}\n')
-        self.originals = [self.data/'state/documental.db',self.data/'state/license/installation.json',
+        self.config.write_text(json.dumps({'listen_address':'127.0.0.1:18973','state_directory':str(self.data/'state'),'fixture':'conservar'})+'\n')
+        self.originals = [self.data/'state/postgresql/installation.json',self.data/'state/license/installation.json',
                           self.data/'state/uploads/original.pdf',self.root/'originales/administrada.pdf',
                           self.root/'Library/Application Support/AIBID/data/existing.db']
         for p in self.originals:
@@ -263,6 +266,7 @@ class InstallScriptsTest(unittest.TestCase):
         self.change(users={},groups={},admin=False,loaded=False)
         self.config.unlink(); (self.data/'package-version').unlink()
         for p in self.originals[:3]: p.unlink()
+        (self.data/'state/postgresql').rmdir()
         self.run_script('preinstall')
         result=self.run_script('postinstall')
         self.assertIn('primer administrador',result.stdout)
@@ -306,6 +310,7 @@ class InstallScriptsTest(unittest.TestCase):
     def test_legacy_uninstall_residues_recover_without_uninstaller(self):
         self.config.unlink()
         for path in self.originals[:3]: path.unlink()
+        (self.data/'state/postgresql').rmdir()
         (self.data/'logs').mkdir()
         (self.data/'logs/service.log').write_text('registro anterior')
         (self.data/'state/service.lock').touch()
@@ -327,6 +332,15 @@ class InstallScriptsTest(unittest.TestCase):
         result=self.run_script('preinstall',False)
         self.assertIn('launchctl print, código 5',result.stderr)
         self.assertFalse(self.state()['backend'])
+
+    def test_sqlite_upgrade_is_rejected_before_stopping_service(self):
+        legacy = self.data/'state/documental.db'
+        legacy.write_bytes(b'base anterior')
+        result = self.run_script('preinstall',False)
+        self.assertIn('utiliza SQLite', result.stderr)
+        self.assertEqual(legacy.read_bytes(), b'base anterior')
+        self.assertTrue(self.state()['loaded'])
+        self.assertFalse(self.state()['launch_calls'])
 
     def test_bootout_real_error_stops_installation(self):
         self.change(bootout_error=5)
@@ -351,7 +365,7 @@ class InstallScriptsTest(unittest.TestCase):
     def test_real_bootstrap_error_not_reported_as_missing_admin(self):
         self.change(ready_error=True)
         result=self.run_script('postinstall',False)
-        self.assertIn('bootstrap-ready',result.stderr)
+        self.assertIn('verificar-administrador',result.stderr)
         self.assertFalse(self.state()['loaded'])
 
     def test_failing_command_logs_stage_line_and_code(self):

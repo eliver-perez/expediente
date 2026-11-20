@@ -168,11 +168,16 @@ func TestMacOSEraseRefusesLinkedState(t *testing.T) {
 }
 
 func TestMacOSEraseRecoversPreviousPartialEraseWithoutReinitializing(t *testing.T) {
-	path, _ := macOSFixture(t)
+	path, cfg := macOSFixture(t)
 	data := filepath.Dir(path)
 	writeFixture(t, filepath.Join(data, "logs/service.log"))
 	writeFixture(t, filepath.Join(data, "state/uploads/original.pdf"))
 	if err := EraseInternal(path); err != nil {
+		t.Fatal(err)
+	}
+	// The old residue pattern has no database left. A surviving private
+	// cluster without its configuration is covered by the refusal test.
+	if err := storage.ErasePrivatePostgres(cfg.StateDirectory); err != nil {
 		t.Fatal(err)
 	}
 	archive, err := EraseMacOSInstallation(path)
