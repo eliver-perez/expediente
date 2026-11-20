@@ -1,5 +1,5 @@
 ﻿#Requires -Version 5.1
-param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor','Port','CheckPort','AuthorizeFolder')][string]$Action,
+param([ValidateSet('Preflight','Configure','Admin','Remove','Doctor','Port','CheckPort','AuthorizeFolder','Start','Stop','Restart','SetupStatus','SetupComplete')][string]$Action,
       [string]$InstallRoot = $PSScriptRoot,
       [string]$PreflightBinary = '',
       [int]$Port = 0,
@@ -79,6 +79,39 @@ function Stop-Aidex {
         Stop-Service $ServiceName -ErrorAction Stop
         $Service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
     }
+}
+function Start-Aidex {
+    Start-Service $ServiceName -ErrorAction Stop
+    (Get-Service $ServiceName -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+}
+function Publish-ControlStatus {
+    $Configuration = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
+    $Descriptor = Join-Path $Configuration.state_directory 'postgresql\installation.json'
+    Assert-PrivatePath $Descriptor
+    $Postgres = Get-Content -LiteralPath $Descriptor -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($Postgres.format -ne 1 -or [int]$Postgres.port -lt 1024 -or [int]$Postgres.port -gt 65535) {
+        throw 'No se pudo identificar el puerto de PostgreSQL de AIDEX.'
+    }
+    $Ready = [int](Test-Path -LiteralPath (Join-Path $DataRoot 'service-enabled') -PathType Leaf)
+    New-ItemProperty -LiteralPath 'HKLM:\Software\AIDEX' -Name PostgresPort -Value ([int]$Postgres.port) -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -LiteralPath 'HKLM:\Software\AIDEX' -Name SetupComplete -Value $Ready -PropertyType DWord -Force | Out-Null
+}
+function Enable-AidexService {
+    Invoke-Native sc.exe @('config',$ServiceName,'start=','delayed-auto')
+    Write-LauncherTarget
+    Set-AidexFirewall
+    $Marker = Join-Path $DataRoot 'service-enabled'
+    Assert-PrivatePath $Marker
+    if (!(Test-Path -LiteralPath $Marker)) { New-Item -ItemType File -Path $Marker | Out-Null }
+    Publish-ControlStatus
+    Start-Aidex
+}
+function Get-AidexSetupStatus {
+    if ((Get-Service $ServiceName -ErrorAction Stop).Status -ne 'Stopped') { return 'configured' }
+    # Distinguish a new database from an unreadable database or an incomplete setup.
+    $Status = & $Binary bootstrap-status --config $Config --windows-service $ServiceName
+    if ($LASTEXITCODE -ne 0 -or $Status -notin @('required','configured')) { throw 'No se pudo verificar la configuración inicial de AIDEX.' }
+    return $Status
 }
 function Assert-PrivatePath([string]$Path) {
     $Current = $Path
@@ -258,25 +291,33 @@ try {
             Invoke-Native $Binary @('migrate','--config',$Config)
             Write-LauncherTarget
             Set-AidexFirewall
+            Publish-ControlStatus
             Set-Content -LiteralPath (Join-Path $DataRoot 'package-version') -Value $Version -Encoding ASCII
-            if (Test-Path (Join-Path $DataRoot 'service-enabled')) { Start-Service $ServiceName; (Get-Service $ServiceName).WaitForStatus('Running', [TimeSpan]::FromSeconds(60)) }
+            if (Test-Path (Join-Path $DataRoot 'service-enabled')) { Start-Aidex }
         }
         'Admin' {
             Invoke-Native $Binary @('doctor','--config',$Config,'--sample-directory',(Join-Path $InstallRoot 'docs\pdf'))
             if (!(Test-Path (Join-Path $DataRoot 'service-enabled'))) {
-                & $Binary bootstrap-ready --config $Config --windows-service $ServiceName
-                if ($LASTEXITCODE -ne 0) { Invoke-Native $Binary @('bootstrap','--config',$Config) }
-                New-Item -ItemType File -Path (Join-Path $DataRoot 'service-enabled') -Force | Out-Null
+                if ((Get-AidexSetupStatus) -eq 'required') { Invoke-Native $Binary @('bootstrap','--config',$Config) }
             }
-            Invoke-Native sc.exe @('config',$ServiceName,'start=','delayed-auto')
-            Write-LauncherTarget
-            Set-AidexFirewall
-            Start-Service $ServiceName
-            (Get-Service $ServiceName).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+            Enable-AidexService
             $Configuration = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
             Write-Host "AIDEX: $($Configuration.public_url). Puedes cerrar la consola."
             Start-Process ([string]$Configuration.public_url)
         }
+        'SetupStatus' { Get-AidexSetupStatus }
+        'SetupComplete' {
+            if ((Get-AidexSetupStatus) -ne 'configured') { throw 'Crea el administrador inicial antes de iniciar AIDEX.' }
+            Enable-AidexService
+        }
+        'Start' {
+            if (!(Test-Path -LiteralPath (Join-Path $DataRoot 'service-enabled'))) {
+                if ((Get-AidexSetupStatus) -eq 'required') { throw 'AIDEX necesita un administrador inicial. Usa Configuración inicial.' }
+                Enable-AidexService
+            } else { Start-Aidex }
+        }
+        'Stop' { Stop-Aidex }
+        'Restart' { Stop-Aidex; Start-Aidex }
         'Port' {
             if (!(Test-Path $Config)) { throw 'Primero instala y configura AIDEX.' }
             $Old = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -292,8 +333,7 @@ try {
                 Write-LauncherTarget
                 Set-AidexFirewall
                 if ($WasRunning -or (Test-Path (Join-Path $DataRoot 'service-enabled'))) {
-                    Start-Service $ServiceName
-                    (Get-Service $ServiceName).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+                    Start-Aidex
                     $Ready = $false
                     for ($Attempt = 0; $Attempt -lt 30 -and !$Ready; $Attempt++) {
                         $Client = New-Object Net.Sockets.TcpClient
@@ -311,7 +351,7 @@ try {
                 Invoke-Native $Binary @('configure-port','--config',$Config,'--port',([string]$OldPort))
                 Write-LauncherTarget
                 Set-AidexFirewall
-                if ($WasRunning) { Start-Service $ServiceName; (Get-Service $ServiceName).WaitForStatus('Running', [TimeSpan]::FromSeconds(60)) }
+                if ($WasRunning) { Start-Aidex }
                 throw $Failure
             }
         }

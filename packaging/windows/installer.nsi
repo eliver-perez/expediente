@@ -195,7 +195,7 @@ Section "Instalar"
     ${EndIf}
     WriteUninstaller "$INSTDIR\Desinstalar.exe"
     CreateDirectory "$SMPROGRAMS\AIDEX"
-    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk" "$INSTDIR\admin.cmd"
+    CreateShortCut "$SMPROGRAMS\AIDEX\Configurar AIDEX.lnk" "$INSTDIR\AIDEX.exe" "--control-center"
     CreateShortCut "$SMPROGRAMS\AIDEX\Configurar servidor AIDEX.lnk" "$INSTDIR\server-port.cmd"
     CreateShortCut "$SMPROGRAMS\AIDEX\Desinstalar.lnk" "$INSTDIR\Desinstalar.exe"
     Delete "$SMPROGRAMS\AIDEX\Abrir AIDEX.url"

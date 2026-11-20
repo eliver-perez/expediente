@@ -171,7 +171,12 @@ func run(ctx context.Context, ready func()) error {
 		return nil
 	}
 
-	if command != "serve" && command != "doctor" && command != "check-state" && command != "configure-port" && command != "bootstrap-ready" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
+	if command == "bootstrap-status" || command == "bootstrap-ui" {
+		if err := authorizeWindowsBootstrap(command == "bootstrap-ui"); err != nil {
+			return err
+		}
+	}
+	if command != "serve" && command != "doctor" && command != "check-state" && command != "configure-port" && command != "bootstrap-ready" && command != "bootstrap-status" && command != "bootstrap-ui" && command != "bootstrap" && command != "recover-admin" && command != "migrate" && command != "rollback-empty" && command != "recover-license" {
 		return fmt.Errorf("comando no reconocido")
 	}
 	var configuration config.Config
@@ -212,6 +217,21 @@ func run(ctx context.Context, ready func()) error {
 		return err
 	}
 	defer database.Close()
+	if command == "bootstrap-status" {
+		var configured, usersExist bool
+		if err := database.Reader.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM bootstrap_state), EXISTS(SELECT 1 FROM users)").Scan(&configured, &usersExist); err != nil {
+			return err
+		}
+		switch {
+		case configured:
+			fmt.Println("configured")
+		case usersExist:
+			return fmt.Errorf("ya existen usuarios; utiliza la recuperación local de AIDEX")
+		default:
+			fmt.Println("required")
+		}
+		return nil
+	}
 	if command == "bootstrap-ready" {
 		var count int
 		if err := database.Reader.QueryRowContext(ctx, "SELECT count(*) FROM bootstrap_state").Scan(&count); err != nil {
@@ -243,12 +263,16 @@ func run(ctx context.Context, ready func()) error {
 	if err != nil {
 		return err
 	}
-	if command == "bootstrap" || command == "recover-admin" {
-		username, displayName, password, err := readCredentials(command == "bootstrap")
+	if command == "bootstrap" || command == "bootstrap-ui" || command == "recover-admin" {
+		credentials := func() (string, string, string, error) { return readCredentials(command == "bootstrap") }
+		if command == "bootstrap-ui" {
+			credentials = func() (string, string, string, error) { return readBootstrapForm(os.Stdin) }
+		}
+		username, displayName, password, err := credentials()
 		if err != nil {
 			return err
 		}
-		if command == "bootstrap" {
+		if command != "recover-admin" {
 			err = service.Bootstrap(ctx, username, displayName, password)
 		} else {
 			err = service.RecoverAdministrator(ctx, username, password)

@@ -474,11 +474,14 @@ def windows(output, work, prefix, makensis, postgres_archive, powershell=None, p
         raise RuntimeError("Windows packaging requires PowerShell to validate the generated script; use --powershell")
     payload = work / "root"
     copy(ROOT / "packaging/windows/manage.ps1", payload / "manage.ps1", template=True)
+    copy(ROOT / "packaging/windows/control-center.ps1", payload / "control-center.ps1", template=True)
     copy(ROOT / "packaging/windows/installer-action.ps1", payload / "installer-action.ps1", template=True)
     run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-File", ROOT / "scripts/check_windows_script.ps1", "-Path", payload / "manage.ps1"])
     run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-File", ROOT / "scripts/check_windows_script.ps1", "-Kind", "Transport", "-Path", payload / "installer-action.ps1"])
+    run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", ROOT / "scripts/check_windows_script.ps1", "-Kind", "Control", "-Path", payload / "control-center.ps1"])
     # The checked-in .syso resources are reproducible from the existing brand SVG.
     copy(ROOT / "packaging/windows/aidex.ico", payload / "aidex.ico")
     binary(payload / "aidex-server.exe", "windows", "amd64")

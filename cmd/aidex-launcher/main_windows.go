@@ -6,13 +6,22 @@ import (
 	"gestor-documental/internal/launcher"
 	"golang.org/x/sys/windows"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--control-center" {
+		if err := openControlCenter(); err != nil {
+			showMessage("No se pudo abrir el Centro de Control. Vuelve a ejecutar el instalador de AIDEX.")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && (os.Args[1] == "--folder-authorization" || os.Args[1] == "--folder-acl-worker") {
 		if !folderTicket.MatchString("aidex-auth://authorize/" + os.Args[2]) {
 			os.Exit(2)
@@ -51,6 +60,21 @@ func main() {
 		showMessage(message)
 		os.Exit(1)
 	}
+}
+
+func openControlCenter() error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	system, err := windows.GetSystemDirectory()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe"),
+		"-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(filepath.Dir(executable), "control-center.ps1"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
+	return cmd.Run()
 }
 
 func showMessage(message string) {
